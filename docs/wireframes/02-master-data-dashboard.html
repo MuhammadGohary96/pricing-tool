@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1440">
+<title>Breadfast Pricing Intelligence — Master Data Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --primary:#7C3AED;--primary-dark:#6D28D9;--darkest:#4C1D95;--light:#C4B5FD;--lightest:#EDE9FE;
+  --bg:#F9FAFB;--card:#FFFFFF;--shadow:0 1px 3px rgba(0,0,0,0.08),0 1px 2px rgba(0,0,0,0.06);
+  --shadow-md:0 4px 6px rgba(0,0,0,0.07),0 2px 4px rgba(0,0,0,0.06);--border:#E5E7EB;
+  --text-primary:#111827;--text-secondary:#6B7280;--text-muted:#9CA3AF;
+  --success:#059669;--success-bg:#ECFDF5;--warning:#D97706;--warning-bg:#FFFBEB;
+  --danger:#DC2626;--danger-bg:#FEF2F2;--info:#2563EB;--info-bg:#EFF6FF;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text-primary);font-size:13px;line-height:1.5;}
+.topnav{background:var(--darkest);height:56px;display:flex;align-items:center;padding:0 24px;gap:32px;position:sticky;top:0;z-index:100;}
+.topnav .logo{display:flex;align-items:center;gap:10px;color:#fff;font-weight:700;font-size:16px;letter-spacing:-0.3px;}
+.topnav .logo svg{width:28px;height:28px;}
+.topnav .tabs{display:flex;gap:4px;margin-left:24px;}
+.topnav .tab{padding:8px 16px;border-radius:8px;color:rgba(255,255,255,0.65);font-size:13px;font-weight:500;cursor:pointer;transition:all 0.15s;}
+.topnav .tab:hover{color:#fff;background:rgba(255,255,255,0.1);}
+.topnav .tab.active{color:#fff;background:var(--primary);}
+.topnav .right{margin-left:auto;display:flex;align-items:center;gap:16px;}
+.topnav .right .avatar{width:32px;height:32px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:600;}
+.topnav .right .refresh-badge{font-size:11px;color:rgba(255,255,255,0.5);display:flex;align-items:center;gap:6px;}
+.topnav .right .refresh-badge .dot{width:6px;height:6px;border-radius:50%;background:#34D399;}
+.main{max-width:1440px;margin:0 auto;padding:20px 24px;}
+.filter-bar{background:var(--card);border-radius:8px;box-shadow:var(--shadow);padding:12px 16px;display:flex;align-items:center;gap:12px;margin-bottom:16px;}
+.filter-bar .filter-label{font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap;}
+.filter-dropdown{padding:6px 32px 6px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;background:var(--card) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") right 10px center no-repeat;appearance:none;cursor:pointer;color:var(--text-primary);min-width:140px;}
+.filter-dropdown:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--lightest);}
+.filter-clear{padding:6px 12px;border:1px solid var(--border);border-radius:8px;font-size:12px;font-family:inherit;background:var(--card);cursor:pointer;color:var(--text-secondary);}
+.filter-sep{width:1px;height:24px;background:var(--border);}
+.card{background:var(--card);border-radius:8px;box-shadow:var(--shadow);overflow:hidden;margin-bottom:16px;}
+.card-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+.card-header h3{font-size:14px;font-weight:600;}
+.card-header .card-badge{font-size:11px;padding:2px 8px;border-radius:10px;background:var(--lightest);color:var(--primary);font-weight:500;}
+
+/* ACTION SUMMARY KPIs */
+.action-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;}
+.action-kpi{background:var(--card);border-radius:8px;box-shadow:var(--shadow);padding:16px;display:flex;align-items:center;gap:14px;cursor:pointer;transition:all 0.15s;border:2px solid transparent;}
+.action-kpi:hover{border-color:var(--light);}
+.action-kpi.selected{border-color:var(--primary);background:var(--lightest);}
+.action-kpi .icon-circle{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}
+.action-kpi .kpi-data .kpi-val{font-size:24px;font-weight:700;letter-spacing:-0.5px;}
+.action-kpi .kpi-data .kpi-lbl{font-size:11px;font-weight:500;color:var(--text-secondary);margin-top:2px;}
+
+/* ACTION BREAKDOWN */
+.breakdown-container{padding:16px;}
+.bar-row{display:flex;align-items:center;gap:12px;margin-bottom:10px;cursor:pointer;padding:4px 0;border-radius:4px;transition:background 0.1s;}
+.bar-row:hover{background:var(--lightest);}
+.bar-label{width:120px;font-size:12px;font-weight:500;text-align:right;flex-shrink:0;}
+.bar-track{flex:1;height:28px;display:flex;border-radius:4px;overflow:hidden;background:#F3F4F6;}
+.bar-seg{height:100%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:#fff;transition:width 0.3s;}
+.bar-seg.mapping{background:#EF4444;}
+.bar-seg.review{background:#F59E0B;}
+.bar-seg.update{background:#3B82F6;}
+.bar-seg.complete{background:#10B981;}
+.bar-count{width:50px;font-size:12px;font-weight:600;color:var(--text-secondary);text-align:right;flex-shrink:0;}
+
+/* LEGEND */
+.legend{display:flex;gap:16px;padding:8px 16px;border-top:1px solid var(--border);}
+.legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-secondary);}
+.legend-dot{width:10px;height:10px;border-radius:2px;}
+
+/* WORKLIST TABLE */
+table{width:100%;border-collapse:collapse;font-size:12px;}
+thead{position:sticky;top:0;z-index:5;}
+th{background:#F9FAFB;padding:9px 10px;text-align:left;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-secondary);border-bottom:2px solid var(--border);cursor:pointer;white-space:nowrap;}
+td{padding:7px 10px;border-bottom:1px solid #F3F4F6;vertical-align:middle;}
+tr:hover td{background:var(--lightest);}
+.badge{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;white-space:nowrap;}
+.badge-eligible{background:#DBEAFE;color:#1D4ED8;}
+.action-badge{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;}
+.action-mapping{background:#FEE2E2;color:#DC2626;}
+.action-review{background:#FEF3C7;color:#D97706;}
+.action-update{background:#DBEAFE;color:#2563EB;}
+.action-complete{background:#D1FAE5;color:#059669;}
+.days-fresh{color:var(--success);font-weight:600;}
+.days-stale{color:var(--warning);font-weight:600;}
+.days-old{color:var(--danger);font-weight:600;}
+.stars{color:#F59E0B;font-size:10px;letter-spacing:1px;}
+.badge-topplus{background:linear-gradient(135deg,#FDE68A,#F59E0B);color:#92400E;}
+.badge-top{background:#FEF3C7;color:#B45309;}
+.badge-high{background:#E0E7FF;color:#4338CA;}
+.badge-mid{background:#F3F4F6;color:#374151;}
+
+.pagination{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-top:1px solid var(--border);}
+.pagination .page-info{font-size:12px;color:var(--text-secondary);}
+.pagination .page-btns{display:flex;gap:4px;}
+.page-btn{padding:5px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:inherit;background:var(--card);cursor:pointer;color:var(--text-secondary);}
+.page-btn.active{background:var(--primary);color:#fff;border-color:var(--primary);}
+
+/* TWO COL BOTTOM */
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;}
+
+/* AI MATCH PANEL */
+.ai-panel{padding:12px;max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;}
+.ai-card{border:1px solid var(--border);border-radius:8px;padding:14px;transition:all 0.15s;}
+.ai-card:hover{border-color:var(--light);box-shadow:var(--shadow);}
+.ai-card .match-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
+.ai-card .similarity{font-size:12px;font-weight:700;padding:3px 8px;border-radius:6px;}
+.ai-card .similarity.high{background:#D1FAE5;color:#047857;}
+.ai-card .similarity.mid{background:#FEF3C7;color:#92400E;}
+.ai-card .similarity.low{background:#FEE2E2;color:#991B1B;}
+.ai-card .product-pair{display:flex;align-items:center;gap:12px;margin-bottom:12px;}
+.ai-card .product-box{flex:1;background:#F9FAFB;border-radius:6px;padding:10px;}
+.ai-card .product-box .label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:3px;}
+.ai-card .product-box .name{font-size:12px;font-weight:500;}
+.ai-card .product-box .price{font-size:13px;font-weight:700;margin-top:2px;}
+.ai-card .arrow{font-size:18px;color:var(--text-muted);flex-shrink:0;}
+.ai-card .score-bar{height:4px;background:#E5E7EB;border-radius:2px;margin-bottom:10px;overflow:hidden;}
+.ai-card .score-bar-fill{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--primary),#34D399);}
+.ai-card .actions{display:flex;gap:8px;}
+.ai-card .actions button{flex:1;padding:7px;border-radius:6px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;transition:all 0.15s;border:none;}
+.btn-accept{background:var(--success);color:#fff;}
+.btn-accept:hover{background:#047857;}
+.btn-reject{background:#F3F4F6;color:var(--text-secondary);border:1px solid var(--border) !important;}
+.btn-reject:hover{background:#FEE2E2;color:var(--danger);border-color:var(--danger) !important;}
+
+/* STALENESS HEATMAP */
+.heatmap-container{padding:12px;}
+.heatmap{display:grid;gap:2px;}
+.heatmap-header{display:grid;grid-template-columns:120px repeat(4,1fr);gap:2px;margin-bottom:4px;}
+.heatmap-header span{font-size:10px;font-weight:600;color:var(--text-secondary);text-align:center;padding:4px;}
+.heatmap-header span:first-child{text-align:right;padding-right:8px;}
+.heatmap-row{display:grid;grid-template-columns:120px repeat(4,1fr);gap:2px;}
+.heatmap-row .row-label{font-size:11px;font-weight:500;text-align:right;padding:8px 8px 8px 0;display:flex;align-items:center;justify-content:flex-end;}
+.heatmap-cell{border-radius:4px;padding:8px;text-align:center;font-size:11px;font-weight:600;cursor:pointer;transition:all 0.15s;min-height:36px;display:flex;align-items:center;justify-content:center;}
+.heatmap-cell:hover{outline:2px solid var(--primary);outline-offset:-2px;}
+/* Intensity levels */
+.heat-0{background:#F3F4F6;color:var(--text-muted);}
+.heat-1{background:#EDE9FE;color:var(--primary);}
+.heat-2{background:#C4B5FD;color:var(--darkest);}
+.heat-3{background:#8B5CF6;color:#fff;}
+.heat-4{background:#6D28D9;color:#fff;}
+.heat-5{background:#4C1D95;color:#fff;}
+
+.toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:8px;font-size:13px;font-weight:500;color:#fff;box-shadow:var(--shadow-md);transform:translateY(100px);opacity:0;transition:all 0.3s ease;z-index:200;display:flex;align-items:center;gap:8px;}
+.toast.show{transform:translateY(0);opacity:1;}
+.toast.success{background:#059669;}
+.toast.info{background:#2563EB;}
+::-webkit-scrollbar{width:6px;height:6px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:#D1D5DB;border-radius:3px;}
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="logo">
+    <svg viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#7C3AED"/><path d="M7 14h14M14 7v14" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/></svg>
+    Pricing Intelligence
+  </div>
+  <div class="tabs">
+    <div class="tab" onclick="window.location='01-commercial-dashboard.html'">Commercial</div>
+    <div class="tab active">Master Data</div>
+    <div class="tab" onclick="window.location='03-executive-dashboard.html'">Executive</div>
+  </div>
+  <div class="right">
+    <div class="refresh-badge"><div class="dot"></div> Data synced 3h ago</div>
+    <div class="avatar">ME</div>
+  </div>
+</nav>
+
+<div class="main">
+
+  <!-- FILTER BAR -->
+  <div class="filter-bar">
+    <div class="filter-label">Filters</div>
+    <select class="filter-dropdown">
+      <option>All Main Categories</option>
+      <option>Dairy & Eggs</option><option>Baby Care</option><option>Cleaning</option>
+      <option>Beverages</option><option>Personal Care</option><option>Snacks</option><option>Pantry</option>
+    </select>
+    <select class="filter-dropdown">
+      <option>All Subcategories</option>
+    </select>
+    <select class="filter-dropdown">
+      <option>All Tiers</option>
+    </select>
+    <select class="filter-dropdown active" style="border-color:var(--primary);background-color:var(--lightest);">
+      <option>All Actions</option>
+      <option>⊘ Needs Mapping</option>
+      <option selected>⚡ Review AI Match</option>
+      <option>⟳ Needs Price Update</option>
+      <option>✓ Complete</option>
+    </select>
+    <div class="filter-sep"></div>
+    <button class="filter-clear">Clear all</button>
+  </div>
+
+  <!-- ACTION SUMMARY KPIs -->
+  <div class="action-kpis">
+    <div class="action-kpi selected">
+      <div class="icon-circle" style="background:var(--danger-bg);color:var(--danger);">⚠</div>
+      <div class="kpi-data">
+        <div class="kpi-val">1,438</div>
+        <div class="kpi-lbl">Total Need Action</div>
+      </div>
+    </div>
+    <div class="action-kpi" onclick="this.classList.toggle('selected')">
+      <div class="icon-circle" style="background:#FEE2E2;color:#DC2626;">⊘</div>
+      <div class="kpi-data">
+        <div class="kpi-val">312</div>
+        <div class="kpi-lbl">Needs Mapping</div>
+      </div>
+    </div>
+    <div class="action-kpi" onclick="this.classList.toggle('selected')">
+      <div class="icon-circle" style="background:#FEF3C7;color:#D97706;">⚡</div>
+      <div class="kpi-data">
+        <div class="kpi-val">87</div>
+        <div class="kpi-lbl">Review AI Match</div>
+      </div>
+    </div>
+    <div class="action-kpi" onclick="this.classList.toggle('selected')">
+      <div class="icon-circle" style="background:#DBEAFE;color:#2563EB;">⟳</div>
+      <div class="kpi-data">
+        <div class="kpi-val">1,039</div>
+        <div class="kpi-lbl">Needs Price Update</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ACTION BREAKDOWN CHART -->
+  <div class="card">
+    <div class="card-header">
+      <h3>Action Breakdown by Category</h3>
+      <span class="card-badge">Click a category to filter</span>
+    </div>
+    <div class="breakdown-container">
+      <div class="bar-row">
+        <div class="bar-label">Baby Care</div>
+        <div class="bar-track">
+          <div class="bar-seg mapping" style="width:25%;">78</div>
+          <div class="bar-seg review" style="width:12%;">32</div>
+          <div class="bar-seg update" style="width:38%;">112</div>
+          <div class="bar-seg complete" style="width:25%;">76</div>
+        </div>
+        <div class="bar-count">298</div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label">Dairy & Eggs</div>
+        <div class="bar-track">
+          <div class="bar-seg mapping" style="width:15%;">42</div>
+          <div class="bar-seg review" style="width:8%;">18</div>
+          <div class="bar-seg update" style="width:42%;">198</div>
+          <div class="bar-seg complete" style="width:35%;">156</div>
+        </div>
+        <div class="bar-count">414</div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label">Cleaning</div>
+        <div class="bar-track">
+          <div class="bar-seg mapping" style="width:20%;">56</div>
+          <div class="bar-seg review" style="width:10%;">15</div>
+          <div class="bar-seg update" style="width:45%;">198</div>
+          <div class="bar-seg complete" style="width:25%;">87</div>
+        </div>
+        <div class="bar-count">356</div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label">Beverages</div>
+        <div class="bar-track">
+          <div class="bar-seg mapping" style="width:18%;">34</div>
+          <div class="bar-seg review" style="width:7%;">12</div>
+          <div class="bar-seg update" style="width:50%;">145</div>
+          <div class="bar-seg complete" style="width:25%;">67</div>
+        </div>
+        <div class="bar-count">258</div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label">Personal Care</div>
+        <div class="bar-track">
+          <div class="bar-seg mapping" style="width:30%;">67</div>
+          <div class="bar-seg review" style="width:5%;">6</div>
+          <div class="bar-seg update" style="width:40%;">112</div>
+          <div class="bar-seg complete" style="width:25%;">45</div>
+        </div>
+        <div class="bar-count">230</div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label">Snacks</div>
+        <div class="bar-track">
+          <div class="bar-seg mapping" style="width:22%;">23</div>
+          <div class="bar-seg review" style="width:4%;">3</div>
+          <div class="bar-seg update" style="width:48%;">167</div>
+          <div class="bar-seg complete" style="width:26%;">89</div>
+        </div>
+        <div class="bar-count">282</div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label">Pantry</div>
+        <div class="bar-track">
+          <div class="bar-seg mapping" style="width:10%;">12</div>
+          <div class="bar-seg review" style="width:2%;">1</div>
+          <div class="bar-seg update" style="width:55%;">107</div>
+          <div class="bar-seg complete" style="width:33%;">67</div>
+        </div>
+        <div class="bar-count">187</div>
+      </div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#EF4444;"></div> Needs Mapping</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#F59E0B;"></div> Review AI Match</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#3B82F6;"></div> Needs Price Update</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#10B981;"></div> Complete</div>
+    </div>
+  </div>
+
+  <!-- PRIORITY WORKLIST TABLE -->
+  <div class="card">
+    <div class="card-header">
+      <h3>Priority Worklist</h3>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span style="font-size:11px;color:var(--text-muted);">Sorted by revenue impact ↓</span>
+        <span style="font-size:11px;color:var(--text-muted);">87 items (AI Match filter active)</span>
+      </div>
+    </div>
+    <div style="overflow-x:auto;">
+      <table style="min-width:1100px;">
+        <thead>
+          <tr>
+            <th style="min-width:200px;">Product</th>
+            <th>Brand</th>
+            <th>Subcategory</th>
+            <th>Tier</th>
+            <th>Action</th>
+            <th>Competitor Match</th>
+            <th>AI Candidate</th>
+            <th>BF Price</th>
+            <th>Talabat</th>
+            <th>Updated</th>
+            <th>Revenue</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span style="font-weight:500;">Nescafé Gold 100g</span> <span class="badge badge-eligible">Eligible</span></td>
+            <td style="color:var(--text-secondary);">Nescafé</td>
+            <td>Coffee</td>
+            <td><span class="badge badge-high"><span class="stars">★★★</span></span></td>
+            <td><span class="action-badge action-review">⚡ Review</span></td>
+            <td style="color:var(--text-muted);font-style:italic;">Pending review</td>
+            <td>Nescafe Gold Jar 95g <span style="background:#FEF3C7;padding:1px 5px;border-radius:3px;font-size:10px;color:#92400E;">87%</span></td>
+            <td style="font-weight:600;">EGP 142</td>
+            <td style="font-weight:600;">EGP 139</td>
+            <td><span class="days-stale">18d</span></td>
+            <td style="font-weight:600;">EGP 245K</td>
+          </tr>
+          <tr>
+            <td><span style="font-weight:500;">Fairy Dishwash 750ml</span> <span class="badge badge-eligible">Eligible</span></td>
+            <td style="color:var(--text-secondary);">Fairy</td>
+            <td>Cleaning</td>
+            <td><span class="badge badge-top"><span class="stars">★★★★</span></span></td>
+            <td><span class="action-badge action-review">⚡ Review</span></td>
+            <td style="color:var(--text-muted);font-style:italic;">Pending review</td>
+            <td>Fairy Dish Liquid Lemon 750ml <span style="background:#D1FAE5;padding:1px 5px;border-radius:3px;font-size:10px;color:#047857;">94%</span></td>
+            <td style="font-weight:600;">EGP 78</td>
+            <td style="font-weight:600;">EGP 82</td>
+            <td><span class="days-stale">22d</span></td>
+            <td style="font-weight:600;">EGP 198K</td>
+          </tr>
+          <tr>
+            <td><span style="font-weight:500;">Ariel Powder 2.5kg</span> <span class="badge badge-eligible">Eligible</span></td>
+            <td style="color:var(--text-secondary);">Ariel</td>
+            <td>Detergent</td>
+            <td><span class="badge badge-topplus"><span class="stars">★★★★★</span></span></td>
+            <td><span class="action-badge action-review">⚡ Review</span></td>
+            <td style="color:var(--text-muted);font-style:italic;">Pending review</td>
+            <td>Ariel Automatic Powder 2.5 KG <span style="background:#D1FAE5;padding:1px 5px;border-radius:3px;font-size:10px;color:#047857;">92%</span></td>
+            <td style="font-weight:600;">EGP 215</td>
+            <td style="font-weight:600;">EGP 209</td>
+            <td><span class="days-old">31d</span></td>
+            <td style="font-weight:600;">EGP 178K</td>
+          </tr>
+          <tr>
+            <td><span style="font-weight:500;">Activia Yogurt Strawberry 4pk</span></td>
+            <td style="color:var(--text-secondary);">Activia</td>
+            <td>Yogurt</td>
+            <td><span class="badge badge-mid"><span class="stars">★★</span></span></td>
+            <td><span class="action-badge action-review">⚡ Review</span></td>
+            <td style="color:var(--text-muted);font-style:italic;">Pending review</td>
+            <td>Activia Stirred Yoghurt Strawberry x4 <span style="background:#FEF3C7;padding:1px 5px;border-radius:3px;font-size:10px;color:#92400E;">79%</span></td>
+            <td style="font-weight:600;">EGP 56</td>
+            <td style="font-weight:600;">EGP 54</td>
+            <td><span class="days-stale">14d</span></td>
+            <td style="font-weight:600;">EGP 134K</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination">
+      <div class="page-info">Showing <strong>1–50</strong> of <strong>87</strong> items</div>
+      <div class="page-btns">
+        <button class="page-btn" disabled>← Prev</button>
+        <button class="page-btn active">1</button>
+        <button class="page-btn">2</button>
+        <button class="page-btn">Next →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TWO-COLUMN: AI MATCH PANEL + STALENESS HEATMAP -->
+  <div class="two-col">
+    <!-- AI MATCH REVIEW PANEL -->
+    <div class="card">
+      <div class="card-header">
+        <h3>AI Match Review</h3>
+        <span class="card-badge">87 pending · Accept or Reject</span>
+      </div>
+      <div class="ai-panel">
+        <!-- Card 1 -->
+        <div class="ai-card">
+          <div class="match-header">
+            <span style="font-size:11px;color:var(--text-muted);">#1 · Coffee</span>
+            <span class="similarity high">92% match</span>
+          </div>
+          <div class="product-pair">
+            <div class="product-box">
+              <div class="label">Breadfast</div>
+              <div class="name">Nescafé Gold 100g</div>
+              <div class="price">EGP 142</div>
+            </div>
+            <div class="arrow">↔</div>
+            <div class="product-box">
+              <div class="label">Talabat</div>
+              <div class="name">Nescafe Gold Jar 95g</div>
+              <div class="price">EGP 139</div>
+            </div>
+          </div>
+          <div class="score-bar"><div class="score-bar-fill" style="width:92%;"></div></div>
+          <div class="actions">
+            <button class="btn-accept" onclick="acceptMatch(this)">✓ Accept</button>
+            <button class="btn-reject" onclick="rejectMatch(this)">✕ Reject</button>
+          </div>
+        </div>
+        <!-- Card 2 -->
+        <div class="ai-card">
+          <div class="match-header">
+            <span style="font-size:11px;color:var(--text-muted);">#2 · Cleaning</span>
+            <span class="similarity high">94% match</span>
+          </div>
+          <div class="product-pair">
+            <div class="product-box">
+              <div class="label">Breadfast</div>
+              <div class="name">Fairy Dishwash 750ml</div>
+              <div class="price">EGP 78</div>
+            </div>
+            <div class="arrow">↔</div>
+            <div class="product-box">
+              <div class="label">Talabat</div>
+              <div class="name">Fairy Dish Liquid Lemon 750ml</div>
+              <div class="price">EGP 82</div>
+            </div>
+          </div>
+          <div class="score-bar"><div class="score-bar-fill" style="width:94%;"></div></div>
+          <div class="actions">
+            <button class="btn-accept" onclick="acceptMatch(this)">✓ Accept</button>
+            <button class="btn-reject" onclick="rejectMatch(this)">✕ Reject</button>
+          </div>
+        </div>
+        <!-- Card 3 -->
+        <div class="ai-card">
+          <div class="match-header">
+            <span style="font-size:11px;color:var(--text-muted);">#3 · Yogurt</span>
+            <span class="similarity mid">79% match</span>
+          </div>
+          <div class="product-pair">
+            <div class="product-box">
+              <div class="label">Breadfast</div>
+              <div class="name">Activia Yogurt Strawberry 4pk</div>
+              <div class="price">EGP 56</div>
+            </div>
+            <div class="arrow">↔</div>
+            <div class="product-box">
+              <div class="label">Talabat</div>
+              <div class="name">Activia Stirred Yoghurt Strawberry x4</div>
+              <div class="price">EGP 54</div>
+            </div>
+          </div>
+          <div class="score-bar"><div class="score-bar-fill" style="width:79%;"></div></div>
+          <div class="actions">
+            <button class="btn-accept" onclick="acceptMatch(this)">✓ Accept</button>
+            <button class="btn-reject" onclick="rejectMatch(this)">✕ Reject</button>
+          </div>
+        </div>
+        <!-- Card 4 -->
+        <div class="ai-card">
+          <div class="match-header">
+            <span style="font-size:11px;color:var(--text-muted);">#4 · Detergent</span>
+            <span class="similarity high">92% match</span>
+          </div>
+          <div class="product-pair">
+            <div class="product-box">
+              <div class="label">Breadfast</div>
+              <div class="name">Ariel Powder 2.5kg</div>
+              <div class="price">EGP 215</div>
+            </div>
+            <div class="arrow">↔</div>
+            <div class="product-box">
+              <div class="label">Talabat</div>
+              <div class="name">Ariel Automatic Powder 2.5 KG</div>
+              <div class="price">EGP 209</div>
+            </div>
+          </div>
+          <div class="score-bar"><div class="score-bar-fill" style="width:92%;"></div></div>
+          <div class="actions">
+            <button class="btn-accept" onclick="acceptMatch(this)">✓ Accept</button>
+            <button class="btn-reject" onclick="rejectMatch(this)">✕ Reject</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STALENESS HEATMAP -->
+    <div class="card">
+      <div class="card-header">
+        <h3>Price Staleness Heatmap</h3>
+        <span class="card-badge">Darker = more stale products</span>
+      </div>
+      <div class="heatmap-container">
+        <div class="heatmap-header">
+          <span></span>
+          <span>0–7 days</span>
+          <span>8–14 days</span>
+          <span>15–21 days</span>
+          <span>21+ days</span>
+        </div>
+        <div class="heatmap">
+          <div class="heatmap-row">
+            <div class="row-label">Fresh Milk</div>
+            <div class="heatmap-cell heat-3">156</div>
+            <div class="heatmap-cell heat-1">42</div>
+            <div class="heatmap-cell heat-0">12</div>
+            <div class="heatmap-cell heat-0">8</div>
+          </div>
+          <div class="heatmap-row">
+            <div class="row-label">Diapers</div>
+            <div class="heatmap-cell heat-1">34</div>
+            <div class="heatmap-cell heat-2">67</div>
+            <div class="heatmap-cell heat-3">89</div>
+            <div class="heatmap-cell heat-4">128</div>
+          </div>
+          <div class="heatmap-row">
+            <div class="row-label">Yogurt</div>
+            <div class="heatmap-cell heat-4">198</div>
+            <div class="heatmap-cell heat-1">45</div>
+            <div class="heatmap-cell heat-0">12</div>
+            <div class="heatmap-cell heat-0">4</div>
+          </div>
+          <div class="heatmap-row">
+            <div class="row-label">Cheese</div>
+            <div class="heatmap-cell heat-2">89</div>
+            <div class="heatmap-cell heat-2">78</div>
+            <div class="heatmap-cell heat-1">34</div>
+            <div class="heatmap-cell heat-1">22</div>
+          </div>
+          <div class="heatmap-row">
+            <div class="row-label">Detergent</div>
+            <div class="heatmap-cell heat-1">45</div>
+            <div class="heatmap-cell heat-1">34</div>
+            <div class="heatmap-cell heat-2">67</div>
+            <div class="heatmap-cell heat-3">88</div>
+          </div>
+          <div class="heatmap-row">
+            <div class="row-label">Baby Food</div>
+            <div class="heatmap-cell heat-0">12</div>
+            <div class="heatmap-cell heat-1">23</div>
+            <div class="heatmap-cell heat-3">89</div>
+            <div class="heatmap-cell heat-5">163</div>
+          </div>
+          <div class="heatmap-row">
+            <div class="row-label">Juice</div>
+            <div class="heatmap-cell heat-2">78</div>
+            <div class="heatmap-cell heat-1">45</div>
+            <div class="heatmap-cell heat-1">23</div>
+            <div class="heatmap-cell heat-1">34</div>
+          </div>
+          <div class="heatmap-row">
+            <div class="row-label">Shampoo</div>
+            <div class="heatmap-cell heat-1">34</div>
+            <div class="heatmap-cell heat-2">56</div>
+            <div class="heatmap-cell heat-2">67</div>
+            <div class="heatmap-cell heat-2">41</div>
+          </div>
+          <div class="heatmap-row">
+            <div class="row-label">Coffee</div>
+            <div class="heatmap-cell heat-1">23</div>
+            <div class="heatmap-cell heat-1">34</div>
+            <div class="heatmap-cell heat-2">56</div>
+            <div class="heatmap-cell heat-2">54</div>
+          </div>
+          <div class="heatmap-row">
+            <div class="row-label">Snacks</div>
+            <div class="heatmap-cell heat-2">67</div>
+            <div class="heatmap-cell heat-2">78</div>
+            <div class="heatmap-cell heat-1">45</div>
+            <div class="heatmap-cell heat-1">44</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast success" id="toast">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+  <span id="toast-msg">Match accepted</span>
+</div>
+
+<script>
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.className = 'toast ' + (type || 'success');
+  document.getElementById('toast-msg').textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+function acceptMatch(btn) {
+  const card = btn.closest('.ai-card');
+  card.style.opacity = '0.5';
+  card.style.pointerEvents = 'none';
+  showToast('Match accepted — product moved to Complete', 'success');
+}
+function rejectMatch(btn) {
+  const card = btn.closest('.ai-card');
+  card.style.opacity = '0.5';
+  card.style.pointerEvents = 'none';
+  showToast('Match rejected — product moved to Needs Mapping', 'info');
+}
+</script>
+</body>
+</html>

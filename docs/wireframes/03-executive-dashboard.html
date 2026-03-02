@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1440">
+<title>Breadfast Pricing Intelligence — Executive Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --primary:#7C3AED;--primary-dark:#6D28D9;--darkest:#4C1D95;--light:#C4B5FD;--lightest:#EDE9FE;
+  --bg:#F9FAFB;--card:#FFFFFF;--shadow:0 1px 3px rgba(0,0,0,0.08),0 1px 2px rgba(0,0,0,0.06);
+  --shadow-md:0 4px 6px rgba(0,0,0,0.07),0 2px 4px rgba(0,0,0,0.06);--border:#E5E7EB;
+  --text-primary:#111827;--text-secondary:#6B7280;--text-muted:#9CA3AF;
+  --success:#059669;--success-bg:#ECFDF5;--warning:#D97706;--danger:#DC2626;--danger-bg:#FEF2F2;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text-primary);font-size:13px;line-height:1.5;}
+.topnav{background:var(--darkest);height:56px;display:flex;align-items:center;padding:0 24px;gap:32px;position:sticky;top:0;z-index:100;}
+.topnav .logo{display:flex;align-items:center;gap:10px;color:#fff;font-weight:700;font-size:16px;letter-spacing:-0.3px;}
+.topnav .logo svg{width:28px;height:28px;}
+.topnav .tabs{display:flex;gap:4px;margin-left:24px;}
+.topnav .tab{padding:8px 16px;border-radius:8px;color:rgba(255,255,255,0.65);font-size:13px;font-weight:500;cursor:pointer;transition:all 0.15s;}
+.topnav .tab:hover{color:#fff;background:rgba(255,255,255,0.1);}
+.topnav .tab.active{color:#fff;background:var(--primary);}
+.topnav .right{margin-left:auto;display:flex;align-items:center;gap:16px;}
+.topnav .right .avatar{width:32px;height:32px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:600;}
+.topnav .right .refresh-badge{font-size:11px;color:rgba(255,255,255,0.5);display:flex;align-items:center;gap:6px;}
+.topnav .right .refresh-badge .dot{width:6px;height:6px;border-radius:50%;background:#34D399;}
+.main{max-width:1100px;margin:0 auto;padding:32px 24px;}
+.card{background:var(--card);border-radius:8px;box-shadow:var(--shadow);overflow:hidden;}
+
+/* HERO GAUGE */
+.hero{display:grid;grid-template-columns:1fr 300px;gap:24px;margin-bottom:24px;}
+.gauge-card{background:var(--card);border-radius:12px;box-shadow:var(--shadow-md);padding:48px 40px;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;}
+.gauge-ring{width:220px;height:220px;border-radius:50%;background:conic-gradient(var(--success) 0deg,var(--success) 252deg,#E5E7EB 252deg);display:flex;align-items:center;justify-content:center;position:relative;margin-bottom:20px;}
+.gauge-ring::before{content:'';position:absolute;width:180px;height:180px;border-radius:50%;background:var(--card);}
+.gauge-inner{position:relative;z-index:1;text-align:center;}
+.gauge-value{font-size:52px;font-weight:700;color:var(--text-primary);letter-spacing:-2px;line-height:1;}
+.gauge-label{font-size:14px;color:var(--text-secondary);margin-top:4px;}
+.gauge-interp{font-size:18px;font-weight:600;color:var(--success);margin-top:16px;}
+.gauge-trend{font-size:13px;color:var(--text-muted);margin-top:6px;}
+.gauge-trend span{color:var(--success);font-weight:600;}
+
+/* SIDE KPIS */
+.side-kpis{display:flex;flex-direction:column;gap:16px;}
+.side-kpi{background:var(--card);border-radius:12px;box-shadow:var(--shadow);padding:24px;flex:1;display:flex;align-items:center;gap:16px;}
+.side-kpi .icon-circle{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;}
+.side-kpi .kpi-data .kpi-val{font-size:28px;font-weight:700;letter-spacing:-0.5px;}
+.side-kpi .kpi-data .kpi-lbl{font-size:12px;color:var(--text-secondary);margin-top:2px;}
+.side-kpi .kpi-data .kpi-sub{font-size:11px;color:var(--text-muted);margin-top:2px;}
+
+/* TOP/BOTTOM SUBCATEGORIES */
+.top-bottom{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:24px;}
+.rank-card{background:var(--card);border-radius:12px;box-shadow:var(--shadow);overflow:hidden;}
+.rank-card .rank-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;}
+.rank-card .rank-header h3{font-size:14px;font-weight:600;}
+.rank-card .rank-header .dot{width:8px;height:8px;border-radius:50%;}
+.rank-list{padding:8px 0;}
+.rank-item{display:flex;align-items:center;padding:10px 20px;gap:12px;transition:background 0.1s;cursor:pointer;}
+.rank-item:hover{background:var(--lightest);}
+.rank-num{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;}
+.rank-item .name{flex:1;font-size:13px;font-weight:500;}
+.rank-item .pi{font-size:15px;font-weight:700;min-width:50px;text-align:right;}
+.rank-item .delta{font-size:11px;font-weight:600;min-width:50px;text-align:right;}
+
+/* CATEGORY PERFORMANCE CHART */
+.perf-card{background:var(--card);border-radius:12px;box-shadow:var(--shadow);overflow:hidden;margin-bottom:24px;}
+.perf-header{padding:16px 20px;border-bottom:1px solid var(--border);}
+.perf-header h3{font-size:14px;font-weight:600;}
+.perf-chart{padding:24px 20px;}
+.perf-row{display:flex;align-items:center;margin-bottom:14px;gap:12px;}
+.perf-label{width:130px;font-size:13px;font-weight:500;text-align:right;flex-shrink:0;}
+.perf-bar-container{flex:1;display:flex;align-items:center;position:relative;height:32px;}
+.perf-center-line{position:absolute;left:50%;top:0;bottom:0;width:2px;background:var(--border);z-index:1;}
+.perf-bar-area{width:100%;height:32px;position:relative;}
+.perf-bar{position:absolute;top:0;height:100%;border-radius:4px;display:flex;align-items:center;transition:width 0.5s;}
+.perf-bar.cheaper{background:linear-gradient(90deg,var(--lightest),var(--primary));right:50%;justify-content:flex-start;padding-left:8px;}
+.perf-bar.expensive{background:linear-gradient(90deg,#FCA5A5,#EF4444);left:50%;justify-content:flex-end;padding-right:8px;}
+.perf-bar span{font-size:11px;font-weight:700;color:var(--text-primary);white-space:nowrap;}
+.perf-bar.cheaper span{color:var(--darkest);}
+.perf-bar.expensive span{color:#7F1D1D;}
+.perf-pi{width:60px;font-size:14px;font-weight:700;text-align:center;flex-shrink:0;}
+.perf-axis{display:flex;justify-content:space-between;padding:0 142px;margin-top:4px;}
+.perf-axis span{font-size:10px;color:var(--text-muted);}
+.perf-axis-center{text-align:center;font-weight:600;color:var(--text-secondary) !important;}
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="logo">
+    <svg viewBox="0 0 28 28" fill="none"><rect width="28" height="28" rx="6" fill="#7C3AED"/><path d="M7 14h14M14 7v14" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/></svg>
+    Pricing Intelligence
+  </div>
+  <div class="tabs">
+    <div class="tab" onclick="window.location='01-commercial-dashboard.html'">Commercial</div>
+    <div class="tab" onclick="window.location='02-master-data-dashboard.html'">Master Data</div>
+    <div class="tab active">Executive</div>
+  </div>
+  <div class="right">
+    <div class="refresh-badge"><div class="dot"></div> Data synced 3h ago</div>
+    <div class="avatar">ME</div>
+  </div>
+</nav>
+
+<div class="main">
+
+  <!-- HERO: BIG GAUGE + SIDE KPIs -->
+  <div class="hero">
+    <div class="gauge-card">
+      <div class="gauge-ring">
+        <div class="gauge-inner">
+          <div class="gauge-value">1.07</div>
+          <div class="gauge-label">Blended PI</div>
+        </div>
+      </div>
+      <div class="gauge-interp">Breadfast is 7% cheaper overall</div>
+      <div class="gauge-trend">vs. last week: <span>▲ 0.3% improvement</span></div>
+    </div>
+
+    <div class="side-kpis">
+      <div class="side-kpi">
+        <div class="icon-circle" style="background:var(--lightest);color:var(--primary);">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v-2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg>
+        </div>
+        <div class="kpi-data">
+          <div class="kpi-val" style="color:var(--warning);">47.5%</div>
+          <div class="kpi-lbl">Coverage Rate</div>
+          <div class="kpi-sub">2,087 of 4,392 eligible products</div>
+        </div>
+      </div>
+      <div class="side-kpi">
+        <div class="icon-circle" style="background:var(--success-bg);color:var(--success);">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        </div>
+        <div class="kpi-data">
+          <div class="kpi-val">2,087</div>
+          <div class="kpi-lbl">Products Used in PI</div>
+          <div class="kpi-sub">↑ 124 from last week</div>
+        </div>
+      </div>
+      <div class="side-kpi">
+        <div class="icon-circle" style="background:var(--danger-bg);color:var(--danger);">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </div>
+        <div class="kpi-data">
+          <div class="kpi-val" style="color:var(--danger);">1,438</div>
+          <div class="kpi-lbl">Actions Remaining</div>
+          <div class="kpi-sub">312 mapping · 87 AI review · 1,039 update</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOP / BOTTOM SUBCATEGORIES -->
+  <div class="top-bottom">
+    <div class="rank-card">
+      <div class="rank-header">
+        <div class="dot" style="background:var(--success);"></div>
+        <h3>Where We're Cheapest</h3>
+      </div>
+      <div class="rank-list">
+        <div class="rank-item">
+          <div class="rank-num" style="background:var(--success-bg);color:var(--success);">1</div>
+          <div class="name">Detergent</div>
+          <div class="pi" style="color:var(--success);">1.18</div>
+          <div class="delta" style="color:var(--success);">▲ 0.02</div>
+        </div>
+        <div class="rank-item">
+          <div class="rank-num" style="background:var(--success-bg);color:var(--success);">2</div>
+          <div class="name">Eggs</div>
+          <div class="pi" style="color:var(--success);">1.14</div>
+          <div class="delta" style="color:var(--success);">▲ 0.04</div>
+        </div>
+        <div class="rank-item">
+          <div class="rank-num" style="background:var(--success-bg);color:var(--success);">3</div>
+          <div class="name">Fresh Milk</div>
+          <div class="pi" style="color:var(--success);">1.12</div>
+          <div class="delta" style="color:var(--success);">▲ 0.03</div>
+        </div>
+        <div class="rank-item">
+          <div class="rank-num" style="background:var(--success-bg);color:var(--success);">4</div>
+          <div class="name">Yogurt</div>
+          <div class="pi" style="color:var(--success);">1.08</div>
+          <div class="delta" style="color:var(--text-muted);">— 0.00</div>
+        </div>
+        <div class="rank-item">
+          <div class="rank-num" style="background:var(--success-bg);color:var(--success);">5</div>
+          <div class="name">Juice</div>
+          <div class="pi" style="color:var(--success);">1.06</div>
+          <div class="delta" style="color:var(--success);">▲ 0.01</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="rank-card">
+      <div class="rank-header">
+        <div class="dot" style="background:var(--danger);"></div>
+        <h3>Where We're Most Expensive</h3>
+      </div>
+      <div class="rank-list">
+        <div class="rank-item">
+          <div class="rank-num" style="background:var(--danger-bg);color:var(--danger);">1</div>
+          <div class="name">Wipes</div>
+          <div class="pi" style="color:var(--danger);">0.82</div>
+          <div class="delta" style="color:var(--danger);">▼ 0.03</div>
+        </div>
+        <div class="rank-item">
+          <div class="rank-num" style="background:var(--danger-bg);color:var(--danger);">2</div>
+          <div class="name">Baby Food</div>
+          <div class="pi" style="color:var(--danger);">0.89</div>
+          <div class="delta" style="color:var(--danger);">▼ 0.01</div>
+        </div>
+        <div class="rank-item">
+          <div class="rank-num" style="background:var(--danger-bg);color:var(--danger);">3</div>
+          <div class="name">Diapers</div>
+          <div class="pi" style="color:var(--danger);">0.94</div>
+          <div class="delta" style="color:var(--success);">▲ 0.02</div>
+        </div>
+        <div class="rank-item">
+          <div class="rank-num" style="background:var(--danger-bg);color:var(--danger);">4</div>
+          <div class="name">Shampoo</div>
+          <div class="pi" style="color:var(--danger);">0.96</div>
+          <div class="delta" style="color:var(--text-muted);">— 0.00</div>
+        </div>
+        <div class="rank-item">
+          <div class="rank-num" style="background:#FEF3C7;color:var(--warning);">5</div>
+          <div class="name">Cheese</div>
+          <div class="pi" style="color:var(--text-primary);">1.01</div>
+          <div class="delta" style="color:var(--success);">▲ 0.01</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CATEGORY PERFORMANCE DIVERGING BAR -->
+  <div class="perf-card">
+    <div class="perf-header">
+      <h3>Category Performance vs. Parity (PI = 1.0)</h3>
+    </div>
+    <div class="perf-chart">
+      <div class="perf-row">
+        <div class="perf-label">Dairy & Eggs</div>
+        <div class="perf-bar-container">
+          <div class="perf-center-line"></div>
+          <div class="perf-bar-area">
+            <div class="perf-bar cheaper" style="width:18%;"><span>+9%</span></div>
+          </div>
+        </div>
+        <div class="perf-pi" style="color:var(--success);">1.09</div>
+      </div>
+      <div class="perf-row">
+        <div class="perf-label">Cleaning</div>
+        <div class="perf-bar-container">
+          <div class="perf-center-line"></div>
+          <div class="perf-bar-area">
+            <div class="perf-bar cheaper" style="width:22%;"><span>+14%</span></div>
+          </div>
+        </div>
+        <div class="perf-pi" style="color:var(--success);">1.14</div>
+      </div>
+      <div class="perf-row">
+        <div class="perf-label">Baby Care</div>
+        <div class="perf-bar-container">
+          <div class="perf-center-line"></div>
+          <div class="perf-bar-area">
+            <div class="perf-bar expensive" style="width:12%;"><span>-8%</span></div>
+          </div>
+        </div>
+        <div class="perf-pi" style="color:var(--danger);">0.92</div>
+      </div>
+      <div class="perf-row">
+        <div class="perf-label">Beverages</div>
+        <div class="perf-bar-container">
+          <div class="perf-center-line"></div>
+          <div class="perf-bar-area">
+            <div class="perf-bar cheaper" style="width:10%;"><span>+5%</span></div>
+          </div>
+        </div>
+        <div class="perf-pi" style="color:var(--success);">1.05</div>
+      </div>
+      <div class="perf-row">
+        <div class="perf-label">Personal Care</div>
+        <div class="perf-bar-container">
+          <div class="perf-center-line"></div>
+          <div class="perf-bar-area">
+            <div class="perf-bar expensive" style="width:6%;"><span>-3%</span></div>
+          </div>
+        </div>
+        <div class="perf-pi" style="color:var(--danger);">0.97</div>
+      </div>
+      <div class="perf-row">
+        <div class="perf-label">Snacks</div>
+        <div class="perf-bar-container">
+          <div class="perf-center-line"></div>
+          <div class="perf-bar-area">
+            <div class="perf-bar cheaper" style="width:8%;"><span>+4%</span></div>
+          </div>
+        </div>
+        <div class="perf-pi" style="color:var(--success);">1.04</div>
+      </div>
+      <div class="perf-row">
+        <div class="perf-label">Pantry</div>
+        <div class="perf-bar-container">
+          <div class="perf-center-line"></div>
+          <div class="perf-bar-area">
+            <div class="perf-bar cheaper" style="width:4%;"><span>+2%</span></div>
+          </div>
+        </div>
+        <div class="perf-pi" style="color:var(--text-primary);">1.02</div>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:center;gap:48px;padding:0 20px 16px;font-size:11px;color:var(--text-muted);">
+      <span>← We're more expensive</span>
+      <span style="font-weight:600;color:var(--text-secondary);">Parity (1.0)</span>
+      <span>We're cheaper →</span>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

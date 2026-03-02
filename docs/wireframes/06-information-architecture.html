@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1440">
+<title>Breadfast Pricing Intelligence — Information Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --primary:#7C3AED;--darkest:#4C1D95;--light:#C4B5FD;--lightest:#EDE9FE;
+  --bg:#F9FAFB;--card:#FFFFFF;--shadow:0 1px 3px rgba(0,0,0,0.08),0 1px 2px rgba(0,0,0,0.06);
+  --border:#E5E7EB;--text-primary:#111827;--text-secondary:#6B7280;--text-muted:#9CA3AF;
+  --success:#059669;--warning:#D97706;--danger:#DC2626;--info:#2563EB;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text-primary);font-size:13px;line-height:1.5;}
+.page-header{background:var(--darkest);padding:32px 40px;color:#fff;}
+.page-header h1{font-size:24px;font-weight:700;}
+.page-header p{font-size:14px;opacity:0.7;margin-top:4px;}
+.main{max-width:1200px;margin:0 auto;padding:32px 24px;}
+.section{margin-bottom:48px;}
+.section h2{font-size:18px;font-weight:700;margin-bottom:6px;}
+.section .desc{font-size:13px;color:var(--text-secondary);margin-bottom:20px;}
+
+/* SITEMAP TREE */
+.sitemap{display:flex;flex-direction:column;align-items:center;}
+.site-node{background:var(--card);border-radius:8px;box-shadow:var(--shadow);padding:12px 20px;text-align:center;border:2px solid var(--border);position:relative;margin-bottom:8px;}
+.site-node.root{background:var(--darkest);color:#fff;border-color:var(--darkest);font-weight:700;font-size:14px;}
+.site-node.view{background:var(--lightest);border-color:var(--primary);font-weight:600;font-size:13px;color:var(--darkest);}
+.site-node.component{font-size:12px;color:var(--text-primary);border-color:var(--border);}
+.site-node.component span{display:block;font-size:10px;color:var(--text-muted);margin-top:2px;}
+
+.tree-level{display:flex;justify-content:center;gap:20px;width:100%;position:relative;margin-top:12px;}
+.tree-level::before{content:'';position:absolute;top:-12px;left:50%;width:2px;height:12px;background:var(--border);}
+.tree-branch{display:flex;flex-direction:column;align-items:center;position:relative;}
+.tree-branch::before{content:'';position:absolute;top:-12px;width:2px;height:12px;background:var(--border);}
+.tree-children{display:flex;gap:8px;margin-top:12px;position:relative;}
+.tree-children::before{content:'';position:absolute;top:-12px;left:0;right:0;height:2px;background:var(--border);}
+.tree-child{display:flex;flex-direction:column;align-items:center;position:relative;}
+.tree-child::before{content:'';position:absolute;top:-12px;width:2px;height:12px;background:var(--border);}
+
+/* CONNECTOR LINES */
+.connector-h{position:absolute;height:2px;background:var(--border);top:-12px;}
+
+/* DATA HIERARCHY */
+.hierarchy{display:flex;gap:24px;align-items:flex-start;}
+.hier-col{flex:1;background:var(--card);border-radius:8px;box-shadow:var(--shadow);overflow:hidden;}
+.hier-header{padding:12px 16px;background:#F9FAFB;border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:var(--text-secondary);display:flex;align-items:center;gap:8px;}
+.hier-header .count{background:var(--lightest);color:var(--primary);padding:1px 6px;border-radius:4px;font-size:10px;}
+.hier-list{padding:8px 0;}
+.hier-item{padding:6px 16px;font-size:12px;display:flex;align-items:center;gap:8px;cursor:pointer;transition:background 0.1s;}
+.hier-item:hover{background:var(--lightest);}
+.hier-item.selected{background:var(--lightest);font-weight:600;color:var(--primary);}
+.hier-item .arrow{color:var(--text-muted);font-size:10px;margin-left:auto;}
+.hier-arrow{display:flex;align-items:center;justify-content:center;font-size:24px;color:var(--text-muted);padding:40px 0;}
+
+/* FILTER RELATIONSHIP DIAGRAM */
+.filter-diagram{background:var(--card);border-radius:8px;box-shadow:var(--shadow);padding:24px;overflow-x:auto;}
+.fd-row{display:flex;align-items:center;gap:16px;margin-bottom:16px;}
+.fd-box{background:#F9FAFB;border:2px solid var(--border);border-radius:8px;padding:12px 16px;min-width:160px;text-align:center;}
+.fd-box.active{border-color:var(--primary);background:var(--lightest);}
+.fd-box .fd-label{font-size:10px;font-weight:600;text-transform:uppercase;color:var(--text-muted);margin-bottom:4px;}
+.fd-box .fd-value{font-size:13px;font-weight:600;color:var(--text-primary);}
+.fd-arrow{font-size:16px;color:var(--text-muted);}
+.fd-affects{font-size:11px;padding:4px 8px;background:var(--lightest);border-radius:4px;color:var(--primary);font-weight:500;white-space:nowrap;}
+
+/* CROSS-VIEW NAV */
+.cross-nav{background:var(--card);border-radius:8px;box-shadow:var(--shadow);overflow:hidden;}
+.cn-header{padding:14px 20px;border-bottom:1px solid var(--border);font-size:14px;font-weight:600;}
+.cn-table{width:100%;border-collapse:collapse;font-size:12px;}
+.cn-table th{background:#F9FAFB;padding:10px 16px;text-align:left;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-secondary);border-bottom:2px solid var(--border);}
+.cn-table td{padding:10px 16px;border-bottom:1px solid #F3F4F6;vertical-align:top;}
+.cn-table tr:hover td{background:var(--lightest);}
+.cn-from{font-weight:600;color:var(--primary);}
+.cn-trigger{font-size:11px;background:#F9FAFB;padding:2px 6px;border-radius:4px;color:var(--text-secondary);}
+.cn-to{font-weight:600;color:var(--darkest);}
+.cn-filter{font-size:11px;color:var(--text-muted);margin-top:2px;}
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Information Architecture</h1>
+  <p>Breadfast Pricing Intelligence — Sitemap, data hierarchy, filter relationships, and cross-view navigation</p>
+</div>
+
+<div class="main">
+
+  <!-- 1. SITEMAP -->
+  <div class="section">
+    <h2>1. Application Sitemap</h2>
+    <div class="desc">Navigation structure with 3 main views plus authentication</div>
+    <div style="background:var(--card);border-radius:8px;box-shadow:var(--shadow);padding:32px;overflow-x:auto;">
+      <!-- Root -->
+      <div style="display:flex;flex-direction:column;align-items:center;">
+        <div class="site-node root" style="min-width:200px;">Pricing Intelligence App</div>
+        <div style="width:2px;height:20px;background:var(--border);"></div>
+
+        <!-- Auth Layer -->
+        <div style="display:flex;gap:32px;align-items:flex-start;">
+          <div style="display:flex;flex-direction:column;align-items:center;">
+            <div class="site-node" style="background:#FEF3C7;border-color:#FCD34D;font-weight:600;">
+              Login Page<br><span style="font-size:10px;color:#92400E;">Google OAuth · @breadfast.com</span>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;align-items:center;">
+            <div style="font-size:10px;color:var(--text-muted);margin-bottom:8px;font-weight:600;">AUTHENTICATED</div>
+            <!-- 3 Views -->
+            <div style="display:flex;gap:20px;">
+              <!-- Commercial -->
+              <div style="display:flex;flex-direction:column;align-items:center;gap:8px;">
+                <div class="site-node view" style="min-width:160px;">Commercial Dashboard</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;max-width:300px;">
+                  <div class="site-node component">Filter Bar</div>
+                  <div class="site-node component">KPI Strip<span>5 cards</span></div>
+                  <div class="site-node component">Treemap<span>Subcategory</span></div>
+                  <div class="site-node component">PI Ranking<span>Table</span></div>
+                  <div class="site-node component">Product Table<span>Inline editing</span></div>
+                  <div class="site-node component">Coverage Funnel<span>5 stages</span></div>
+                </div>
+              </div>
+
+              <!-- Master Data -->
+              <div style="display:flex;flex-direction:column;align-items:center;gap:8px;">
+                <div class="site-node view" style="min-width:160px;">Master Data Dashboard</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;max-width:300px;">
+                  <div class="site-node component">Filter Bar</div>
+                  <div class="site-node component">Action Summary<span>4 KPIs</span></div>
+                  <div class="site-node component">Action Chart<span>Stacked bars</span></div>
+                  <div class="site-node component">Priority Worklist<span>Table</span></div>
+                  <div class="site-node component">AI Match Panel<span>Review cards</span></div>
+                  <div class="site-node component">Staleness Heatmap<span>Days × Subcat</span></div>
+                </div>
+              </div>
+
+              <!-- Executive -->
+              <div style="display:flex;flex-direction:column;align-items:center;gap:8px;">
+                <div class="site-node view" style="min-width:160px;">Executive Dashboard</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;max-width:200px;">
+                  <div class="site-node component">PI Gauge<span>Big number</span></div>
+                  <div class="site-node component">Side KPIs<span>3 cards</span></div>
+                  <div class="site-node component">Top/Bottom 5<span>Rankings</span></div>
+                  <div class="site-node component">Category Chart<span>Diverging bar</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;align-items:center;">
+            <div class="site-node" style="font-size:11px;color:var(--text-muted);">
+              Logout<br><span style="font-size:10px;">→ Login Page</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. DATA HIERARCHY -->
+  <div class="section">
+    <h2>2. Data Hierarchy</h2>
+    <div class="desc">Three-level drill-down: Main Category → Subcategory → Product</div>
+    <div class="hierarchy">
+      <div class="hier-col">
+        <div class="hier-header">Main Category <span class="count">7</span></div>
+        <div class="hier-list">
+          <div class="hier-item selected">Dairy & Eggs <span class="arrow">→</span></div>
+          <div class="hier-item">Baby Care <span class="arrow">→</span></div>
+          <div class="hier-item">Cleaning <span class="arrow">→</span></div>
+          <div class="hier-item">Beverages <span class="arrow">→</span></div>
+          <div class="hier-item">Personal Care <span class="arrow">→</span></div>
+          <div class="hier-item">Snacks <span class="arrow">→</span></div>
+          <div class="hier-item">Pantry <span class="arrow">→</span></div>
+        </div>
+      </div>
+
+      <div class="hier-arrow">→</div>
+
+      <div class="hier-col">
+        <div class="hier-header">Subcategory <span class="count">~180 total</span></div>
+        <div class="hier-list">
+          <div class="hier-item selected">Fresh Milk <span class="arrow">→</span></div>
+          <div class="hier-item">Yogurt <span class="arrow">→</span></div>
+          <div class="hier-item">Cheese <span class="arrow">→</span></div>
+          <div class="hier-item">Eggs <span class="arrow">→</span></div>
+          <div class="hier-item">Butter & Ghee <span class="arrow">→</span></div>
+          <div class="hier-item" style="color:var(--text-muted);font-style:italic;">+ 12 more...</div>
+        </div>
+      </div>
+
+      <div class="hier-arrow">→</div>
+
+      <div class="hier-col">
+        <div class="hier-header">Product <span class="count">~9,000 total</span></div>
+        <div class="hier-list">
+          <div class="hier-item">Juhayna Full Cream 1L</div>
+          <div class="hier-item">Juhayna Half Cream 1L</div>
+          <div class="hier-item">Labanita Fresh Milk 1L</div>
+          <div class="hier-item">Almarai Full Cream 1L</div>
+          <div class="hier-item">Beyti Full Cream 900ml</div>
+          <div class="hier-item" style="color:var(--text-muted);font-style:italic;">+ 451 more...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. FILTER RELATIONSHIPS -->
+  <div class="section">
+    <h2>3. Filter Relationships</h2>
+    <div class="desc">How selecting one filter constrains others — cascading dependency model</div>
+    <div class="filter-diagram">
+      <div style="margin-bottom:24px;">
+        <div style="font-size:12px;font-weight:600;margin-bottom:12px;color:var(--text-secondary);">Filter cascade: selecting one filter updates downstream options</div>
+
+        <div class="fd-row">
+          <div class="fd-box active">
+            <div class="fd-label">1. Main Category</div>
+            <div class="fd-value">Baby Care</div>
+          </div>
+          <div class="fd-arrow">→</div>
+          <div class="fd-affects">constrains</div>
+          <div class="fd-arrow">→</div>
+          <div class="fd-box active">
+            <div class="fd-label">2. Subcategory</div>
+            <div class="fd-value">Diapers, Baby Food, Wipes...</div>
+          </div>
+          <div class="fd-arrow">→</div>
+          <div class="fd-affects">constrains</div>
+          <div class="fd-arrow">→</div>
+          <div class="fd-box">
+            <div class="fd-label">3. Product List</div>
+            <div class="fd-value">Filtered rows</div>
+          </div>
+        </div>
+
+        <div class="fd-row" style="margin-top:12px;">
+          <div class="fd-box">
+            <div class="fd-label">Global Tier</div>
+            <div class="fd-value">Top+, Top, High...</div>
+          </div>
+          <div class="fd-arrow">→</div>
+          <div class="fd-affects">independent filter</div>
+          <div class="fd-arrow">→</div>
+          <div class="fd-box">
+            <div class="fd-label">Product List</div>
+            <div class="fd-value">Additive filter</div>
+          </div>
+        </div>
+
+        <div class="fd-row" style="margin-top:12px;">
+          <div class="fd-box">
+            <div class="fd-label">Action Type</div>
+            <div class="fd-value">Mapping, Review, Update...</div>
+          </div>
+          <div class="fd-arrow">→</div>
+          <div class="fd-affects">independent filter</div>
+          <div class="fd-arrow">→</div>
+          <div class="fd-box">
+            <div class="fd-label">Product List</div>
+            <div class="fd-value">Additive filter</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="background:#F9FAFB;border-radius:6px;padding:12px 16px;border-left:3px solid var(--primary);">
+        <div style="font-size:12px;font-weight:600;color:var(--primary);margin-bottom:4px;">Filter Logic</div>
+        <div style="font-size:12px;color:var(--text-secondary);line-height:1.6;">
+          <strong>Cascading:</strong> Main Category → Subcategory (selecting "Baby Care" shows only its subcategories)<br>
+          <strong>Independent:</strong> Tier and Action Type filter additively (AND logic with category filters)<br>
+          <strong>Treemap click:</strong> Sets both Main Category + Subcategory filters simultaneously<br>
+          <strong>URL state:</strong> Filters encoded in URL params for shareability: <code style="background:#E5E7EB;padding:1px 4px;border-radius:3px;font-size:11px;">?cat=baby-care&sub=diapers&tier=top</code>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. CROSS-VIEW NAVIGATION -->
+  <div class="section">
+    <h2>4. Cross-View Navigation</h2>
+    <div class="desc">How clicking items in one view can navigate to another with context preserved</div>
+    <div class="cross-nav">
+      <div class="cn-header">Navigation Paths</div>
+      <table class="cn-table">
+        <thead>
+          <tr>
+            <th>From View</th>
+            <th>Trigger</th>
+            <th>Destination</th>
+            <th>Filter Applied</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="cn-from">Executive</span></td>
+            <td><span class="cn-trigger">Click category in Top/Bottom 5</span></td>
+            <td><span class="cn-to">Commercial Dashboard</span></td>
+            <td><div class="cn-filter">Main Category = clicked value</div></td>
+          </tr>
+          <tr>
+            <td><span class="cn-from">Executive</span></td>
+            <td><span class="cn-trigger">Click category bar in Performance Chart</span></td>
+            <td><span class="cn-to">Commercial Dashboard</span></td>
+            <td><div class="cn-filter">Main Category = clicked value</div></td>
+          </tr>
+          <tr>
+            <td><span class="cn-from">Commercial</span></td>
+            <td><span class="cn-trigger">Click "Needs Mapping" product</span></td>
+            <td><span class="cn-to">Master Data Dashboard</span></td>
+            <td><div class="cn-filter">Action = Needs Mapping · Product highlighted in worklist</div></td>
+          </tr>
+          <tr>
+            <td><span class="cn-from">Commercial</span></td>
+            <td><span class="cn-trigger">Click "Review AI Match" product</span></td>
+            <td><span class="cn-to">Master Data Dashboard</span></td>
+            <td><div class="cn-filter">Action = Review AI Match · AI panel scrolled to product</div></td>
+          </tr>
+          <tr>
+            <td><span class="cn-from">Master Data</span></td>
+            <td><span class="cn-trigger">Click accepted match product name</span></td>
+            <td><span class="cn-to">Commercial Dashboard</span></td>
+            <td><div class="cn-filter">Subcategory + Product search applied</div></td>
+          </tr>
+          <tr>
+            <td><span class="cn-from">Master Data</span></td>
+            <td><span class="cn-trigger">Click heatmap cell</span></td>
+            <td><span class="cn-to">Master Data (self)</span></td>
+            <td><div class="cn-filter">Subcategory + Days bucket filters applied to worklist</div></td>
+          </tr>
+          <tr>
+            <td><span class="cn-from">Commercial</span></td>
+            <td><span class="cn-trigger">Click treemap cell</span></td>
+            <td><span class="cn-to">Commercial (self)</span></td>
+            <td><div class="cn-filter">Subcategory filter applied to all components</div></td>
+          </tr>
+          <tr>
+            <td><span class="cn-from">Master Data</span></td>
+            <td><span class="cn-trigger">Click breakdown bar segment</span></td>
+            <td><span class="cn-to">Master Data (self)</span></td>
+            <td><div class="cn-filter">Main Category + Action Type filters applied</div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 5. VUE.JS COMPONENT TREE -->
+  <div class="section">
+    <h2>5. Vue.js Component Tree (Suggested)</h2>
+    <div class="desc">Recommended Vue component structure for implementation</div>
+    <div style="background:var(--card);border-radius:8px;box-shadow:var(--shadow);padding:24px;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:2;color:var(--text-primary);">
+<pre style="margin:0;white-space:pre-wrap;">
+App.vue
+├── AppNav.vue                    <span style="color:var(--text-muted);">// Top navigation with tabs</span>
+├── stores/
+│   ├── usePricingStore.ts        <span style="color:var(--text-muted);">// Pinia store: products, filters, KPIs</span>
+│   └── useAuthStore.ts           <span style="color:var(--text-muted);">// Auth state, user role</span>
+├── composables/
+│   ├── useFilters.ts             <span style="color:var(--text-muted);">// Shared filter logic + URL sync</span>
+│   ├── usePriceEditor.ts         <span style="color:var(--text-muted);">// Inline edit, debounce, undo</span>
+│   └── useToast.ts               <span style="color:var(--text-muted);">// Toast notification manager</span>
+├── views/
+│   ├── CommercialView.vue
+│   │   ├── FilterBar.vue         <span style="color:var(--text-muted);">// Shared across Commercial + Master Data</span>
+│   │   ├── KpiStrip.vue
+│   │   │   └── KpiCard.vue
+│   │   ├── SubcategoryTreemap.vue
+│   │   ├── PiRankingTable.vue
+│   │   ├── ProductDetailTable.vue
+│   │   │   ├── EditablePrice.vue
+│   │   │   ├── TierBadge.vue
+│   │   │   └── ActionBadge.vue
+│   │   ├── CoverageFunnel.vue
+│   │   └── Pagination.vue        <span style="color:var(--text-muted);">// Shared</span>
+│   ├── MasterDataView.vue
+│   │   ├── FilterBar.vue
+│   │   ├── ActionSummary.vue
+│   │   ├── ActionBreakdownChart.vue
+│   │   ├── PriorityWorklist.vue
+│   │   ├── AiMatchPanel.vue
+│   │   │   └── AiMatchCard.vue
+│   │   └── StalenessHeatmap.vue
+│   └── ExecutiveView.vue
+│       ├── PiGauge.vue
+│       ├── SideKpis.vue
+│       ├── TopBottomRanking.vue
+│       └── CategoryPerformanceChart.vue
+└── components/
+    ├── PiBar.vue                 <span style="color:var(--text-muted);">// Inline PI bar (0.70–1.30)</span>
+    ├── DirectionArrow.vue        <span style="color:var(--text-muted);">// ▲/▼/— with color</span>
+    ├── Toast.vue                 <span style="color:var(--text-muted);">// Success/Error/Info</span>
+    ├── SkeletonLoader.vue        <span style="color:var(--text-muted);">// Card/Table/Chart variants</span>
+    └── EmptyState.vue            <span style="color:var(--text-muted);">// No results view</span>
+</pre>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

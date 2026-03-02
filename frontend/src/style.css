@@ -1,0 +1,6 @@
+@import './assets/styles/breadfast.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+

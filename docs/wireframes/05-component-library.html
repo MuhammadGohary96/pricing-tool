@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1440">
+<title>Breadfast Pricing Intelligence — Component Library</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --primary:#7C3AED;--primary-dark:#6D28D9;--darkest:#4C1D95;--light:#C4B5FD;--lightest:#EDE9FE;
+  --bg:#F9FAFB;--card:#FFFFFF;--shadow:0 1px 3px rgba(0,0,0,0.08),0 1px 2px rgba(0,0,0,0.06);
+  --border:#E5E7EB;--text-primary:#111827;--text-secondary:#6B7280;--text-muted:#9CA3AF;
+  --success:#059669;--success-bg:#ECFDF5;--warning:#D97706;--warning-bg:#FFFBEB;
+  --danger:#DC2626;--danger-bg:#FEF2F2;--info:#2563EB;--info-bg:#EFF6FF;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text-primary);font-size:13px;line-height:1.5;}
+.page-header{background:var(--darkest);padding:32px 40px;color:#fff;}
+.page-header h1{font-size:24px;font-weight:700;}
+.page-header p{font-size:14px;opacity:0.7;margin-top:4px;}
+.main{max-width:1200px;margin:0 auto;padding:32px 24px;}
+.section{margin-bottom:40px;}
+.section-title{font-size:18px;font-weight:700;margin-bottom:4px;color:var(--text-primary);}
+.section-desc{font-size:13px;color:var(--text-secondary);margin-bottom:16px;}
+.component-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;}
+.comp-card{background:var(--card);border-radius:8px;box-shadow:var(--shadow);overflow:hidden;}
+.comp-header{padding:12px 16px;background:#F9FAFB;border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:var(--text-secondary);display:flex;justify-content:space-between;align-items:center;}
+.comp-header .vue-tag{font-size:10px;padding:2px 6px;border-radius:4px;background:var(--lightest);color:var(--primary);font-weight:500;}
+.comp-body{padding:16px;}
+.comp-body .state-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin:12px 0 6px;}
+.comp-body .state-label:first-child{margin-top:0;}
+
+/* SPEC TABLE */
+.spec-table{width:100%;border-collapse:collapse;font-size:11px;margin-top:12px;border-top:1px solid var(--border);}
+.spec-table td{padding:4px 8px;border-bottom:1px solid #F3F4F6;}
+.spec-table td:first-child{font-weight:600;color:var(--text-secondary);width:100px;}
+.spec-table td:last-child{font-family:'SF Mono','Fira Code',monospace;font-size:10px;color:var(--text-primary);}
+
+/* === ACTUAL COMPONENTS === */
+/* KPI Card */
+.kpi-card{background:var(--card);border-radius:8px;box-shadow:var(--shadow);padding:14px;border:1px solid var(--border);}
+.kpi-card .kpi-label{font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;}
+.kpi-card .kpi-value{font-size:22px;font-weight:700;letter-spacing:-0.5px;}
+.kpi-card .kpi-sub{font-size:11px;color:var(--text-muted);margin-top:2px;}
+.kpi-trend{display:inline-flex;align-items:center;gap:2px;font-size:11px;font-weight:600;padding:1px 5px;border-radius:4px;}
+.kpi-trend.up{color:var(--success);background:var(--success-bg);}
+.kpi-trend.down{color:var(--danger);background:var(--danger-bg);}
+.kpi-highlight{border-left:3px solid var(--primary);}
+
+/* Badges */
+.badge{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;white-space:nowrap;}
+.badge-eligible{background:#DBEAFE;color:#1D4ED8;}
+.badge-used{background:#D1FAE5;color:#047857;}
+.badge-topplus{background:linear-gradient(135deg,#FDE68A,#F59E0B);color:#92400E;}
+.badge-top{background:#FEF3C7;color:#B45309;}
+.badge-high{background:#E0E7FF;color:#4338CA;}
+.badge-mid{background:#F3F4F6;color:#374151;}
+.badge-low{background:#F9FAFB;color:#6B7280;border:1px solid var(--border);}
+.badge-vlow{background:#FEE2E2;color:#991B1B;}
+.stars{color:#F59E0B;font-size:10px;letter-spacing:1px;}
+
+.action-badge{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;}
+.action-mapping{background:#FEE2E2;color:#DC2626;}
+.action-review{background:#FEF3C7;color:#D97706;}
+.action-update{background:#DBEAFE;color:#2563EB;}
+.action-complete{background:#D1FAE5;color:#059669;}
+
+/* Direction arrows */
+.direction{font-size:12px;font-weight:600;}
+.direction.up{color:var(--success);}
+.direction.down{color:var(--danger);}
+.direction.flat{color:var(--text-muted);}
+
+/* PI Bar */
+.pi-bar-wrap{display:flex;align-items:center;gap:8px;width:200px;}
+.pi-bar{height:6px;border-radius:3px;background:#E5E7EB;flex:1;overflow:hidden;}
+.pi-bar-fill{height:100%;border-radius:3px;}
+.pi-bar-fill.green{background:linear-gradient(90deg,#34D399,#059669);}
+.pi-bar-fill.yellow{background:linear-gradient(90deg,#FCD34D,#F59E0B);}
+.pi-bar-fill.red{background:linear-gradient(90deg,#FCA5A5,#EF4444);}
+.pi-value{font-weight:700;font-size:13px;min-width:40px;text-align:right;}
+
+/* Filter dropdown */
+.filter-dropdown{padding:6px 32px 6px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;background:var(--card) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") right 10px center no-repeat;appearance:none;cursor:pointer;color:var(--text-primary);}
+.filter-dropdown:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--lightest);}
+.filter-active{border-color:var(--primary);background-color:var(--lightest);}
+
+/* Table row states */
+.demo-table{width:100%;border-collapse:collapse;font-size:12px;}
+.demo-table th{background:#F9FAFB;padding:8px 10px;text-align:left;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-secondary);border-bottom:2px solid var(--border);}
+.demo-table td{padding:7px 10px;border-bottom:1px solid #F3F4F6;}
+.demo-table tr.hover td{background:var(--lightest);}
+.demo-table tr.selected td{background:#EDE9FE;}
+.demo-table tr.editing td{background:#fff;}
+.demo-table .editing-cell{border:2px solid var(--primary);border-radius:4px;padding:3px 6px;font-weight:600;}
+
+/* Toast */
+.toast-demo{padding:10px 16px;border-radius:8px;font-size:12px;font-weight:500;color:#fff;display:flex;align-items:center;gap:8px;margin-bottom:8px;max-width:300px;}
+.toast-success{background:#059669;}
+.toast-error{background:#DC2626;}
+.toast-info{background:#2563EB;}
+
+/* Funnel */
+.funnel-demo{display:flex;align-items:center;gap:4px;}
+.funnel-stage-demo{text-align:center;}
+.funnel-bar-demo{height:36px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700;}
+
+/* Empty state */
+.empty-state{text-align:center;padding:32px;color:var(--text-muted);}
+.empty-state .empty-icon{font-size:36px;margin-bottom:8px;opacity:0.4;}
+.empty-state .empty-msg{font-size:13px;margin-bottom:12px;}
+.empty-state .empty-btn{padding:6px 14px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:inherit;background:var(--card);cursor:pointer;color:var(--primary);}
+
+/* Skeleton */
+.skeleton{background:linear-gradient(90deg,#E5E7EB 25%,#F3F4F6 50%,#E5E7EB 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:4px;}
+@keyframes shimmer{0%{background-position:200% 0;}100%{background-position:-200% 0;}}
+.skel-text{height:12px;margin-bottom:8px;}
+.skel-title{height:20px;width:60%;margin-bottom:12px;}
+.skel-bar{height:32px;}
+
+/* color swatch */
+.swatch-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;}
+.swatch{width:48px;height:48px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;border:1px solid rgba(0,0,0,0.08);}
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Component Library</h1>
+  <p>Breadfast Pricing Intelligence — Reusable UI components with all states · Vue.js component mapping</p>
+</div>
+
+<div class="main">
+
+  <!-- COLOR PALETTE -->
+  <div class="section">
+    <div class="section-title">Color Palette</div>
+    <div class="section-desc">Brand and semantic colors used across all views</div>
+    <div class="swatch-row">
+      <div class="swatch" style="background:#7C3AED;color:#fff;">Primary</div>
+      <div class="swatch" style="background:#6D28D9;color:#fff;">Dark</div>
+      <div class="swatch" style="background:#4C1D95;color:#fff;">Darkest</div>
+      <div class="swatch" style="background:#C4B5FD;color:#4C1D95;">Light</div>
+      <div class="swatch" style="background:#EDE9FE;color:#4C1D95;">Lightest</div>
+      <div class="swatch" style="background:#F9FAFB;color:#6B7280;">BG</div>
+      <div class="swatch" style="background:#FFFFFF;color:#6B7280;">Card</div>
+    </div>
+    <div class="swatch-row">
+      <div class="swatch" style="background:#059669;color:#fff;">Success</div>
+      <div class="swatch" style="background:#D97706;color:#fff;">Warning</div>
+      <div class="swatch" style="background:#DC2626;color:#fff;">Danger</div>
+      <div class="swatch" style="background:#2563EB;color:#fff;">Info</div>
+      <div class="swatch" style="background:#111827;color:#fff;">Text</div>
+      <div class="swatch" style="background:#6B7280;color:#fff;">Secondary</div>
+      <div class="swatch" style="background:#9CA3AF;color:#fff;">Muted</div>
+    </div>
+  </div>
+
+  <!-- TYPOGRAPHY -->
+  <div class="section">
+    <div class="section-title">Typography</div>
+    <div class="section-desc">Inter font family — all sizes in the system</div>
+    <div style="background:var(--card);border-radius:8px;box-shadow:var(--shadow);padding:20px;">
+      <div style="font-size:18px;font-weight:700;margin-bottom:4px;">Heading — 18px Bold</div>
+      <div style="font-size:14px;font-weight:700;margin-bottom:4px;">Subheading — 14px Bold</div>
+      <div style="font-size:13px;margin-bottom:4px;">Body — 13px Regular</div>
+      <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">Caption — 12px</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">Micro — 11px</div>
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);">Label — 10px Bold Uppercase</div>
+    </div>
+  </div>
+
+  <!-- KPI CARDS -->
+  <div class="section">
+    <div class="section-title">KPI Card</div>
+    <div class="section-desc">3 variants: Default, PI format (highlighted), and Percentage</div>
+    <div class="component-grid">
+      <div class="comp-card">
+        <div class="comp-header">Default <span class="vue-tag">&lt;KpiCard /&gt;</span></div>
+        <div class="comp-body">
+          <div class="kpi-card">
+            <div class="kpi-label">Total Products</div>
+            <div class="kpi-value">9,247</div>
+            <div class="kpi-sub">Across 7 categories</div>
+          </div>
+        </div>
+      </div>
+      <div class="comp-card">
+        <div class="comp-header">PI Format (Highlighted) <span class="vue-tag">&lt;KpiCard variant="pi" /&gt;</span></div>
+        <div class="comp-body">
+          <div class="kpi-card kpi-highlight">
+            <div class="kpi-label">Avg Blended PI</div>
+            <div class="kpi-value">1.0724 <span class="kpi-trend up">▲ 0.3%</span></div>
+            <div class="kpi-sub">BF is 7.2% cheaper overall</div>
+          </div>
+        </div>
+      </div>
+      <div class="comp-card">
+        <div class="comp-header">Percentage + Trend <span class="vue-tag">&lt;KpiCard variant="pct" /&gt;</span></div>
+        <div class="comp-body">
+          <div class="kpi-card">
+            <div class="kpi-label">Coverage Rate</div>
+            <div class="kpi-value" style="color:var(--warning);">47.5% <span class="kpi-trend down">▼ 1.2%</span></div>
+            <div class="kpi-sub">2,087 of 4,392 eligible</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <table class="spec-table" style="max-width:500px;margin-top:16px;">
+      <tr><td>Padding</td><td>16px</td></tr>
+      <tr><td>Border radius</td><td>8px</td></tr>
+      <tr><td>Shadow</td><td>0 1px 3px rgba(0,0,0,0.08)</td></tr>
+      <tr><td>Highlight</td><td>3px left border, var(--primary)</td></tr>
+      <tr><td>Value size</td><td>26px / bold / -0.5px tracking</td></tr>
+    </table>
+  </div>
+
+  <!-- TIER BADGES -->
+  <div class="section">
+    <div class="section-title">Tier Badges</div>
+    <div class="section-desc">5 tier levels with star ratings</div>
+    <div style="background:var(--card);border-radius:8px;box-shadow:var(--shadow);padding:20px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+      <span class="badge badge-topplus"><span class="stars">★★★★★</span> Top+</span>
+      <span class="badge badge-top"><span class="stars">★★★★</span> Top</span>
+      <span class="badge badge-high"><span class="stars">★★★</span> High</span>
+      <span class="badge badge-mid"><span class="stars">★★</span> Mid</span>
+      <span class="badge badge-low"><span class="stars">★</span> Low</span>
+      <span class="badge badge-vlow">Very Low</span>
+    </div>
+    <table class="spec-table" style="max-width:500px;margin-top:12px;">
+      <tr><td>Vue comp</td><td>&lt;TierBadge :level="5" /&gt;</td></tr>
+      <tr><td>Padding</td><td>2px 8px</td></tr>
+      <tr><td>Font</td><td>10px / 600</td></tr>
+      <tr><td>Stars color</td><td>#F59E0B</td></tr>
+    </table>
+  </div>
+
+  <!-- ACTION BADGES -->
+  <div class="section">
+    <div class="section-title">Action Badges</div>
+    <div class="section-desc">4 action states for product workflow status</div>
+    <div style="background:var(--card);border-radius:8px;box-shadow:var(--shadow);padding:20px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+      <span class="action-badge action-mapping">⊘ Needs Mapping</span>
+      <span class="action-badge action-review">⚡ Review AI Match</span>
+      <span class="action-badge action-update">⟳ Needs Price Update</span>
+      <span class="action-badge action-complete">✓ Complete</span>
+    </div>
+    <table class="spec-table" style="max-width:500px;margin-top:12px;">
+      <tr><td>Vue comp</td><td>&lt;ActionBadge :type="'mapping'" /&gt;</td></tr>
+      <tr><td>Mapping</td><td>bg:#FEE2E2 text:#DC2626</td></tr>
+      <tr><td>Review</td><td>bg:#FEF3C7 text:#D97706</td></tr>
+      <tr><td>Update</td><td>bg:#DBEAFE text:#2563EB</td></tr>
+      <tr><td>Complete</td><td>bg:#D1FAE5 text:#059669</td></tr>
+    </table>
+  </div>
+
+  <!-- DIRECTION ARROWS -->
+  <div class="section">
+    <div class="section-title">Direction Arrows</div>
+    <div class="section-desc">Week-over-week change indicators</div>
+    <div style="background:var(--card);border-radius:8px;box-shadow:var(--shadow);padding:20px;display:flex;gap:24px;align-items:center;">
+      <span class="direction up">▲ 0.03</span>
+      <span class="direction down">▼ 0.02</span>
+      <span class="direction flat">— 0.00</span>
+    </div>
+    <table class="spec-table" style="max-width:500px;margin-top:12px;">
+      <tr><td>Vue comp</td><td>&lt;DirectionArrow :value="0.03" /&gt;</td></tr>
+      <tr><td>Up</td><td>color: #059669</td></tr>
+      <tr><td>Down</td><td>color: #DC2626</td></tr>
+      <tr><td>Flat</td><td>color: #9CA3AF (threshold ±0.005)</td></tr>
+    </table>
+  </div>
+
+  <!-- PI INLINE BAR -->
+  <div class="section">
+    <div class="section-title">PI Inline Bar</div>
+    <div class="section-desc">Horizontal bar showing PI on 0.70–1.30 scale with gradient coloring</div>
+    <div style="background:var(--card);border-radius:8px;box-shadow:var(--shadow);padding:20px;display:flex;flex-direction:column;gap:12px;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span style="width:80px;font-size:12px;color:var(--text-secondary);">Expensive:</span>
+        <div class="pi-bar-wrap">
+          <div class="pi-bar"><div class="pi-bar-fill red" style="width:20%;"></div></div>
+          <span class="pi-value" style="color:var(--danger);">0.82</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span style="width:80px;font-size:12px;color:var(--text-secondary);">Near parity:</span>
+        <div class="pi-bar-wrap">
+          <div class="pi-bar"><div class="pi-bar-fill yellow" style="width:55%;"></div></div>
+          <span class="pi-value" style="color:var(--text-primary);">1.01</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span style="width:80px;font-size:12px;color:var(--text-secondary);">Cheaper:</span>
+        <div class="pi-bar-wrap">
+          <div class="pi-bar"><div class="pi-bar-fill green" style="width:85%;"></div></div>
+          <span class="pi-value" style="color:var(--success);">1.18</span>
+        </div>
+      </div>
+    </div>
+    <table class="spec-table" style="max-width:500px;margin-top:12px;">
+      <tr><td>Vue comp</td><td>&lt;PiBar :value="1.18" /&gt;</td></tr>
+      <tr><td>Scale</td><td>0.70 (0%) to 1.30 (100%)</td></tr>
+      <tr><td>Red</td><td>PI < 0.97</td></tr>
+      <tr><td>Yellow</td><td>0.97 ≤ PI ≤ 1.03</td></tr>
+      <tr><td>Green</td><td>PI > 1.03</td></tr>
+      <tr><td>Height</td><td>6px, radius 3px</td></tr>
+    </table>
+  </div>
+
+  <!-- FILTER DROPDOWN -->
+  <div class="section">
+    <div class="section-title">Filter Dropdown</div>
+    <div class="section-desc">With default, focus, active (filter applied), and cleared states</div>
+    <div style="background:var(--card);border-radius:8px;box-shadow:var(--shadow);padding:20px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+      <div>
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px;">DEFAULT</div>
+        <select class="filter-dropdown"><option>All Categories</option></select>
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px;">ACTIVE FILTER</div>
+        <select class="filter-dropdown filter-active"><option>Baby Care</option></select>
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px;">CLEAR BUTTON</div>
+        <button style="padding:6px 12px;border:1px solid var(--border);border-radius:8px;font-size:12px;font-family:inherit;background:var(--card);cursor:pointer;color:var(--text-secondary);">Clear all</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TABLE ROW STATES -->
+  <div class="section">
+    <div class="section-title">Table Row States</div>
+    <div class="section-desc">Normal, hover, selected, and editing states</div>
+    <div style="background:var(--card);border-radius:8px;box-shadow:var(--shadow);overflow:hidden;">
+      <table class="demo-table">
+        <thead>
+          <tr><th>Product</th><th>BF Price</th><th>Sale PI</th><th>State</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Juhayna Milk 1L</td><td>EGP 32</td><td>1.17</td>
+            <td><span style="font-size:10px;color:var(--text-muted);font-weight:500;">Normal</span></td>
+          </tr>
+          <tr class="hover">
+            <td>Pampers S4 58ct</td><td>EGP 389</td><td style="color:var(--danger);">0.95</td>
+            <td><span style="font-size:10px;color:var(--primary);font-weight:500;">Hovered</span></td>
+          </tr>
+          <tr class="selected">
+            <td>Persil Gel 2.6L</td><td>EGP 189</td><td>—</td>
+            <td><span style="font-size:10px;color:var(--primary);font-weight:500;">Selected</span></td>
+          </tr>
+          <tr class="editing">
+            <td>Clorox Bleach 1L</td>
+            <td><span class="editing-cell">36</span></td>
+            <td>0.83</td>
+            <td><span style="font-size:10px;color:var(--primary);font-weight:500;">Editing</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATIONS -->
+  <div class="section">
+    <div class="section-title">Toast Notifications</div>
+    <div class="section-desc">Slide-in from bottom-right, auto-dismiss after 3s</div>
+    <div style="background:var(--card);border-radius:8px;box-shadow:var(--shadow);padding:20px;display:flex;flex-direction:column;gap:8px;">
+      <div class="toast-demo toast-success">✓ Price updated: EGP 42 → EGP 36</div>
+      <div class="toast-demo toast-error">✕ Sync failed — Click to retry</div>
+      <div class="toast-demo toast-info">ℹ Filtered by: Wipes subcategory</div>
+    </div>
+    <table class="spec-table" style="max-width:500px;margin-top:12px;">
+      <tr><td>Vue comp</td><td>&lt;Toast :type="'success'" :message="'...'" /&gt;</td></tr>
+      <tr><td>Position</td><td>fixed, bottom:24px, right:24px</td></tr>
+      <tr><td>Animation</td><td>translateY(100px) → 0, 0.3s ease</td></tr>
+      <tr><td>Auto-dismiss</td><td>3000ms</td></tr>
+    </table>
+  </div>
+
+  <!-- FUNNEL STAGE -->
+  <div class="section">
+    <div class="section-title">Funnel Stage</div>
+    <div class="section-desc">Progressive width stages with count and percentage</div>
+    <div style="background:var(--card);border-radius:8px;box-shadow:var(--shadow);padding:20px;">
+      <div class="funnel-demo">
+        <div class="funnel-stage-demo">
+          <div class="funnel-bar-demo" style="background:var(--darkest);width:180px;">9,247</div>
+          <div style="font-size:10px;color:var(--text-secondary);margin-top:4px;">All (100%)</div>
+        </div>
+        <div style="color:var(--text-muted);margin:0 4px;">→</div>
+        <div class="funnel-stage-demo">
+          <div class="funnel-bar-demo" style="background:#6D28D9;width:150px;">4,392</div>
+          <div style="font-size:10px;color:var(--text-secondary);margin-top:4px;">Eligible (47.5%)</div>
+        </div>
+        <div style="color:var(--text-muted);margin:0 4px;">→</div>
+        <div class="funnel-stage-demo">
+          <div class="funnel-bar-demo" style="background:var(--primary);width:120px;">3,124</div>
+          <div style="font-size:10px;color:var(--text-secondary);margin-top:4px;">Mapped (33.8%)</div>
+        </div>
+        <div style="color:var(--text-muted);margin:0 4px;">→</div>
+        <div class="funnel-stage-demo">
+          <div class="funnel-bar-demo" style="background:var(--light);width:100px;color:var(--darkest);">2,456</div>
+          <div style="font-size:10px;color:var(--text-secondary);margin-top:4px;">Updated (26.6%)</div>
+        </div>
+        <div style="color:var(--text-muted);margin:0 4px;">→</div>
+        <div class="funnel-stage-demo">
+          <div class="funnel-bar-demo" style="background:var(--lightest);width:80px;color:var(--darkest);">2,087</div>
+          <div style="font-size:10px;color:var(--text-secondary);margin-top:4px;">Used (22.6%)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- EMPTY STATE -->
+  <div class="section">
+    <div class="section-title">Empty State</div>
+    <div class="section-desc">Shown when no data matches current filters</div>
+    <div style="background:var(--card);border-radius:8px;box-shadow:var(--shadow);overflow:hidden;">
+      <div class="empty-state">
+        <div class="empty-icon">📭</div>
+        <div class="empty-msg">No products match your current filters</div>
+        <button class="empty-btn">Clear filters</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOADING SKELETON -->
+  <div class="section">
+    <div class="section-title">Loading Skeleton</div>
+    <div class="section-desc">Shimmer animation for cards, tables, and charts during data loading</div>
+    <div class="component-grid">
+      <div class="comp-card">
+        <div class="comp-header">KPI Skeleton</div>
+        <div class="comp-body">
+          <div style="padding:14px;">
+            <div class="skeleton skel-text" style="width:60%;"></div>
+            <div class="skeleton skel-title"></div>
+            <div class="skeleton skel-text" style="width:80%;"></div>
+          </div>
+        </div>
+      </div>
+      <div class="comp-card">
+        <div class="comp-header">Table Row Skeleton</div>
+        <div class="comp-body">
+          <div style="display:flex;gap:12px;align-items:center;padding:8px 0;">
+            <div class="skeleton" style="width:40%;height:12px;"></div>
+            <div class="skeleton" style="width:15%;height:12px;"></div>
+            <div class="skeleton" style="width:20%;height:12px;"></div>
+            <div class="skeleton" style="width:25%;height:12px;"></div>
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;padding:8px 0;">
+            <div class="skeleton" style="width:35%;height:12px;"></div>
+            <div class="skeleton" style="width:18%;height:12px;"></div>
+            <div class="skeleton" style="width:22%;height:12px;"></div>
+            <div class="skeleton" style="width:20%;height:12px;"></div>
+          </div>
+        </div>
+      </div>
+      <div class="comp-card">
+        <div class="comp-header">Chart Skeleton</div>
+        <div class="comp-body">
+          <div class="skeleton skel-bar" style="margin-bottom:6px;width:90%;"></div>
+          <div class="skeleton skel-bar" style="margin-bottom:6px;width:75%;"></div>
+          <div class="skeleton skel-bar" style="margin-bottom:6px;width:85%;"></div>
+          <div class="skeleton skel-bar" style="width:60%;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

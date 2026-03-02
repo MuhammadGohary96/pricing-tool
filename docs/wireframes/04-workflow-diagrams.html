@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1440">
+<title>Breadfast Pricing Intelligence — User Workflow Diagrams</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --primary:#7C3AED;--darkest:#4C1D95;--light:#C4B5FD;--lightest:#EDE9FE;
+  --bg:#F9FAFB;--card:#FFFFFF;--shadow:0 1px 3px rgba(0,0,0,0.08),0 1px 2px rgba(0,0,0,0.06);
+  --border:#E5E7EB;--text-primary:#111827;--text-secondary:#6B7280;--text-muted:#9CA3AF;
+  --success:#059669;--warning:#D97706;--danger:#DC2626;--info:#2563EB;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--text-primary);font-size:13px;line-height:1.6;}
+.page-header{background:var(--darkest);padding:32px 40px;color:#fff;}
+.page-header h1{font-size:24px;font-weight:700;letter-spacing:-0.5px;}
+.page-header p{font-size:14px;opacity:0.7;margin-top:4px;}
+.main{max-width:1200px;margin:0 auto;padding:32px 24px;}
+.workflow{background:var(--card);border-radius:12px;box-shadow:var(--shadow);margin-bottom:32px;overflow:hidden;}
+.wf-header{padding:20px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;}
+.wf-header .wf-icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;}
+.wf-header h2{font-size:16px;font-weight:700;}
+.wf-header .wf-persona{font-size:12px;padding:3px 10px;border-radius:6px;font-weight:500;}
+.wf-body{padding:24px;}
+
+/* FLOW */
+.flow{display:flex;flex-wrap:wrap;gap:0;align-items:flex-start;padding:8px 0;}
+.flow-step{position:relative;display:flex;flex-direction:column;align-items:center;min-width:110px;max-width:140px;text-align:center;}
+.step-box{width:100%;padding:12px 10px;border-radius:8px;font-size:11px;font-weight:500;line-height:1.3;border:2px solid;min-height:56px;display:flex;align-items:center;justify-content:center;}
+.step-user{background:#EDE9FE;border-color:#C4B5FD;color:var(--darkest);}
+.step-system{background:#DBEAFE;border-color:#93C5FD;color:#1E40AF;}
+.step-decision{background:#FEF3C7;border-color:#FCD34D;color:#92400E;border-radius:0;transform:rotate(0deg);clip-path:polygon(50% 0%,100% 50%,50% 100%,0% 50%);padding:20px 10px;font-size:10px;min-height:80px;min-width:100px;}
+.step-success{background:#D1FAE5;border-color:#6EE7B7;color:#065F46;}
+.step-error{background:#FEE2E2;border-color:#FCA5A5;color:#991B1B;}
+.step-label{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-top:6px;color:var(--text-muted);}
+.flow-arrow{display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:18px;min-width:32px;height:56px;flex-shrink:0;}
+
+/* DECISION DIAMOND — simplified */
+.diamond-wrap{min-width:110px;max-width:140px;display:flex;flex-direction:column;align-items:center;}
+.diamond{width:80px;height:80px;background:#FEF3C7;border:2px solid #FCD34D;transform:rotate(45deg);display:flex;align-items:center;justify-content:center;}
+.diamond span{transform:rotate(-45deg);font-size:10px;font-weight:600;color:#92400E;text-align:center;line-height:1.2;}
+
+/* NOTES */
+.flow-notes{margin-top:16px;padding:12px 16px;background:#F9FAFB;border-radius:8px;border-left:3px solid var(--primary);}
+.flow-notes h4{font-size:12px;font-weight:600;color:var(--primary);margin-bottom:6px;}
+.flow-notes ul{list-style:none;padding:0;}
+.flow-notes li{font-size:12px;color:var(--text-secondary);padding:2px 0;padding-left:16px;position:relative;}
+.flow-notes li::before{content:'→';position:absolute;left:0;color:var(--primary);}
+
+/* TIMELINE ALTERNATIVE */
+.timeline{position:relative;padding:20px 0 20px 40px;}
+.timeline::before{content:'';position:absolute;left:18px;top:0;bottom:0;width:2px;background:var(--border);}
+.tl-step{position:relative;margin-bottom:20px;padding-left:24px;}
+.tl-step::before{content:'';position:absolute;left:-26px;top:6px;width:14px;height:14px;border-radius:50%;border:2px solid;background:var(--card);z-index:1;}
+.tl-step.user::before{border-color:var(--primary);background:var(--lightest);}
+.tl-step.system::before{border-color:var(--info);background:#DBEAFE;}
+.tl-step.success::before{border-color:var(--success);background:#D1FAE5;}
+.tl-step.error::before{border-color:var(--danger);background:#FEE2E2;}
+.tl-step .tl-type{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px;}
+.tl-step.user .tl-type{color:var(--primary);}
+.tl-step.system .tl-type{color:var(--info);}
+.tl-step.success .tl-type{color:var(--success);}
+.tl-step.error .tl-type{color:var(--danger);}
+.tl-step .tl-desc{font-size:13px;font-weight:500;color:var(--text-primary);}
+.tl-step .tl-detail{font-size:12px;color:var(--text-secondary);margin-top:2px;}
+.tl-branch{margin-left:24px;padding:8px 0 8px 20px;border-left:2px dashed var(--warning);}
+.tl-branch .tl-branch-label{font-size:10px;font-weight:600;color:var(--warning);margin-bottom:8px;}
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>User Workflow Diagrams</h1>
+  <p>Breadfast Pricing Intelligence — Key user journeys with decision points and error paths</p>
+</div>
+
+<div class="main">
+
+  <!-- WORKFLOW A -->
+  <div class="workflow">
+    <div class="wf-header">
+      <div class="wf-icon" style="background:var(--lightest);color:var(--primary);">A</div>
+      <div>
+        <h2>Find and Fix Overpriced Products</h2>
+        <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">Target: Complete in under 60 seconds</div>
+      </div>
+      <span class="wf-persona" style="background:var(--lightest);color:var(--primary);margin-left:auto;">Commercial Analyst</span>
+    </div>
+    <div class="wf-body">
+      <div class="timeline">
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Log in → Land on Commercial Dashboard</div>
+          <div class="tl-detail">KPI strip loads immediately; treemap renders with latest data</div>
+        </div>
+        <div class="tl-step system">
+          <div class="tl-type">System</div>
+          <div class="tl-desc">Display KPI strip — Avg Blended PI: 1.0724</div>
+          <div class="tl-detail">User glances at PI, sees it's close to parity in some areas</div>
+        </div>
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Scan treemap → Notice red cells (PI &lt; 1.0)</div>
+          <div class="tl-detail">Wipes (0.82) and Baby Food (0.89) stand out as problem areas</div>
+        </div>
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Click "Wipes" cell in treemap</div>
+          <div class="tl-detail">Triggers filter cascade across entire page</div>
+        </div>
+        <div class="tl-step system">
+          <div class="tl-type">System Response</div>
+          <div class="tl-desc">All components filter to Wipes subcategory</div>
+          <div class="tl-detail">Ranking table highlights row; Product table shows 142 products; KPIs update</div>
+        </div>
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Sort Product table by Sale PI ascending</div>
+          <div class="tl-detail">Worst offenders (most overpriced) float to top</div>
+        </div>
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Find product where PI &lt; 1.0 → Click price cell</div>
+          <div class="tl-detail">Cell transforms to editable input with current value pre-filled</div>
+        </div>
+        <div class="tl-step system">
+          <div class="tl-type">System</div>
+          <div class="tl-desc">Inline editor appears with validation</div>
+          <div class="tl-detail">Input accepts numbers only; shows Talabat price for reference</div>
+        </div>
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Enter new price → Press Enter or Tab to next</div>
+        </div>
+
+        <div class="tl-branch">
+          <div class="tl-branch-label">Decision: API Response</div>
+          <div class="tl-step success">
+            <div class="tl-type">Success Path</div>
+            <div class="tl-desc">Toast: "Price updated: EGP 42 → EGP 36"</div>
+            <div class="tl-detail">Cell flashes green; PI recalculates inline; KPIs update</div>
+          </div>
+          <div class="tl-step error">
+            <div class="tl-type">Error Path</div>
+            <div class="tl-desc">Toast: "Sync failed — Retry?"</div>
+            <div class="tl-detail">Cell shows error state (red border); user can retry or undo</div>
+          </div>
+        </div>
+
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Continue editing prices or click "Export CSV"</div>
+          <div class="tl-detail">CSV includes all filtered products with old/new prices and PI</div>
+        </div>
+        <div class="tl-step success">
+          <div class="tl-type">Complete</div>
+          <div class="tl-desc">Session complete — all edits synced to backend</div>
+          <div class="tl-detail">Average time: 45 seconds for identify + fix cycle</div>
+        </div>
+      </div>
+
+      <div class="flow-notes">
+        <h4>Design Notes</h4>
+        <ul>
+          <li>Tab key advances to next editable price cell for keyboard-driven workflows</li>
+          <li>Esc cancels edit and restores previous value</li>
+          <li>Ctrl+Z provides undo within session (up to 50 actions)</li>
+          <li>Bulk select with Shift+Click allows multi-product price adjustments</li>
+          <li>Auto-save with 500ms debounce prevents accidental double-submissions</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- WORKFLOW B -->
+  <div class="workflow">
+    <div class="wf-header">
+      <div class="wf-icon" style="background:#FEF3C7;color:#92400E;">B</div>
+      <div>
+        <h2>Review AI-Suggested Matches</h2>
+        <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">Process 87 pending matches in a single session</div>
+      </div>
+      <span class="wf-persona" style="background:#FEF3C7;color:#92400E;margin-left:auto;">Master Data Specialist</span>
+    </div>
+    <div class="wf-body">
+      <div class="timeline">
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Navigate to Master Data tab</div>
+        </div>
+        <div class="tl-step system">
+          <div class="tl-type">System</div>
+          <div class="tl-desc">Action Summary loads — "87 Review AI Match" highlighted</div>
+          <div class="tl-detail">KPI card pulses subtly to draw attention</div>
+        </div>
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Click "Review AI Match" KPI card → Filter activates</div>
+          <div class="tl-detail">Worklist and AI Panel filter to show only AI match candidates</div>
+        </div>
+        <div class="tl-step system">
+          <div class="tl-type">System</div>
+          <div class="tl-desc">AI Match Review Panel shows scrollable cards</div>
+          <div class="tl-detail">Sorted by similarity score descending; highest confidence first</div>
+        </div>
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Review first card: BF product ↔ Talabat suggestion</div>
+          <div class="tl-detail">Card shows both product names, prices, and 92% similarity bar</div>
+        </div>
+
+        <div class="tl-branch">
+          <div class="tl-branch-label">Decision: Is this a correct match?</div>
+          <div class="tl-step success">
+            <div class="tl-type">Accept</div>
+            <div class="tl-desc">Click "Accept" → Product status → Complete</div>
+            <div class="tl-detail">Card fades out with green flash; counter: "86 remaining"</div>
+          </div>
+          <div class="tl-step error">
+            <div class="tl-type">Reject</div>
+            <div class="tl-desc">Click "Reject" → Product status → Needs Mapping</div>
+            <div class="tl-detail">Card fades out; product moves to manual mapping queue</div>
+          </div>
+        </div>
+
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Continue reviewing remaining cards (keyboard: A=Accept, R=Reject)</div>
+        </div>
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Check Staleness Heatmap for next priority area</div>
+          <div class="tl-detail">Dark cells in "21+ days" column indicate where to focus manual updates</div>
+        </div>
+        <div class="tl-step success">
+          <div class="tl-type">Complete</div>
+          <div class="tl-desc">Session complete — coverage % updated in real-time</div>
+        </div>
+      </div>
+
+      <div class="flow-notes">
+        <h4>Design Notes</h4>
+        <ul>
+          <li>Keyboard shortcuts: A to accept, R to reject, S to skip/defer</li>
+          <li>Cards pre-load next 5 in background for smooth scrolling</li>
+          <li>Undo last action available via Ctrl+Z or undo button in toast</li>
+          <li>Progress bar shows "12 of 87 reviewed" at top of panel</li>
+          <li>Low-confidence matches (below 70%) show warning amber border</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- WORKFLOW C -->
+  <div class="workflow">
+    <div class="wf-header">
+      <div class="wf-icon" style="background:#DBEAFE;color:#1E40AF;">C</div>
+      <div>
+        <h2>Weekly Competitive Check</h2>
+        <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">30-second executive overview</div>
+      </div>
+      <span class="wf-persona" style="background:#DBEAFE;color:#1E40AF;margin-left:auto;">VP Commercial / Executive</span>
+    </div>
+    <div class="wf-body">
+      <div class="timeline">
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Log in → Auto-lands on Executive Dashboard</div>
+          <div class="tl-detail">Executive role auto-routes to executive view (configurable)</div>
+        </div>
+        <div class="tl-step system">
+          <div class="tl-type">System — Instant (&lt;2s)</div>
+          <div class="tl-desc">PI Gauge shows 1.07 — "Breadfast is 7% cheaper overall"</div>
+          <div class="tl-detail">Green color = positive position; trend arrow shows WoW improvement</div>
+        </div>
+        <div class="tl-step user">
+          <div class="tl-type">User Scan — 5 seconds</div>
+          <div class="tl-desc">Glance at Coverage (47.5%), Used Products (2,087), Actions (1,438)</div>
+        </div>
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Check "Most Expensive" column → See Baby Care at 0.92</div>
+          <div class="tl-detail">Red indicators immediately flag problem areas</div>
+        </div>
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Click "Baby Care" row → Navigate to Commercial Dashboard</div>
+          <div class="tl-detail">Cross-view navigation: auto-applies Main Category = Baby Care filter</div>
+        </div>
+        <div class="tl-step system">
+          <div class="tl-type">System</div>
+          <div class="tl-desc">Commercial Dashboard opens filtered to Baby Care</div>
+          <div class="tl-detail">Treemap shows Diapers, Baby Food, Wipes subcategories</div>
+        </div>
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Review specific products → Forward to team</div>
+          <div class="tl-detail">Export CSV or share dashboard link with pre-applied filters</div>
+        </div>
+        <div class="tl-step success">
+          <div class="tl-type">Complete</div>
+          <div class="tl-desc">Total time: ~30 seconds for overview; ~2 min for drill-down</div>
+        </div>
+      </div>
+
+      <div class="flow-notes">
+        <h4>Design Notes</h4>
+        <ul>
+          <li>Executive view has no filter bar — designed for consumption, not manipulation</li>
+          <li>Clicking any category/subcategory navigates to Commercial with filters pre-applied</li>
+          <li>Shareable URLs encode filter state for team collaboration</li>
+          <li>Weekly email digest option sends this view as PDF every Monday</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- WORKFLOW D -->
+  <div class="workflow">
+    <div class="wf-header">
+      <div class="wf-icon" style="background:#D1FAE5;color:#065F46;">D</div>
+      <div>
+        <h2>First-Time Login &amp; Data Loading</h2>
+        <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">Onboarding and initial data sync</div>
+      </div>
+      <span class="wf-persona" style="background:#F3F4F6;color:var(--text-secondary);margin-left:auto;">All Users</span>
+    </div>
+    <div class="wf-body">
+      <div class="timeline">
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Open app URL → See login screen</div>
+          <div class="tl-detail">Branded login page with Breadfast logo and "Sign in with Google" button</div>
+        </div>
+        <div class="tl-step user">
+          <div class="tl-type">User Action</div>
+          <div class="tl-desc">Click "Sign in with Google" → Google OAuth flow</div>
+          <div class="tl-detail">Restricted to @breadfast.com domain</div>
+        </div>
+
+        <div class="tl-branch">
+          <div class="tl-branch-label">Decision: Valid @breadfast.com email?</div>
+          <div class="tl-step success">
+            <div class="tl-type">Valid</div>
+            <div class="tl-desc">Authentication succeeds → Redirect to app</div>
+          </div>
+          <div class="tl-step error">
+            <div class="tl-type">Invalid</div>
+            <div class="tl-desc">Error: "Please use your @breadfast.com account"</div>
+            <div class="tl-detail">Redirect back to login with error message</div>
+          </div>
+        </div>
+
+        <div class="tl-step system">
+          <div class="tl-type">System — Loading Phase 1 (3-5s)</div>
+          <div class="tl-desc">Loading BigQuery data → Progress bar: "Loading product catalog..."</div>
+          <div class="tl-detail">Skeleton loaders shown for all dashboard components</div>
+        </div>
+        <div class="tl-step system">
+          <div class="tl-type">System — Loading Phase 2 (5-10s)</div>
+          <div class="tl-desc">Fetching live catalog prices → "Enriching with live prices..."</div>
+          <div class="tl-detail">Progress: "2,450 of 9,247 products enriched" with animated bar</div>
+        </div>
+        <div class="tl-step system">
+          <div class="tl-type">System — Loading Phase 3 (1-2s)</div>
+          <div class="tl-desc">Computing PI metrics → "Calculating price indices..."</div>
+        </div>
+        <div class="tl-step success">
+          <div class="tl-type">Ready</div>
+          <div class="tl-desc">Dashboard fully loaded — all data ready</div>
+          <div class="tl-detail">Skeleton loaders dissolve into actual content with subtle fade-in</div>
+        </div>
+      </div>
+
+      <div class="flow-notes">
+        <h4>Design Notes</h4>
+        <ul>
+          <li>Loading screen shows Breadfast branding with animated progress</li>
+          <li>Subsequent logins skip BigQuery phase (cached) — only live prices refresh</li>
+          <li>If enrichment fails, show dashboard with stale data + warning banner</li>
+          <li>First-time users see optional 30-second feature tour tooltip sequence</li>
+          <li>Role-based routing: Executives → Executive tab; Analysts → Commercial tab</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
