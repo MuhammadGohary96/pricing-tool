@@ -1,0 +1,395 @@
+<template>
+  <div class="bg-white rounded-lg shadow-card overflow-hidden flex flex-col">
+    <!-- Header -->
+    <div class="px-4 py-3 border-b border-grey-100 flex items-center gap-3 flex-wrap shrink-0">
+      <div class="flex items-center gap-2 shrink-0">
+        <span class="text-subheading font-bold text-grey-900">Product Detail</span>
+        <span class="text-caption text-grey-500 bg-grey-100 px-2 py-0.5 rounded-full">{{ total.toLocaleString() }}</span>
+      </div>
+      <!-- Search -->
+      <div class="relative flex-1 min-w-[180px]">
+        <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-grey-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35m0 0A7 7 0 1010 17a7 7 0 006.65-4.35z"/></svg>
+        <input
+          v-model="search"
+          type="text"
+          placeholder="Search products..."
+          class="w-full pl-8 pr-7 py-1.5 text-body border border-grey-200 rounded-lg bg-white focus:border-brand-primary focus:ring-1 focus:ring-brand-lightest outline-none transition-colors"
+        />
+        <button v-if="search" class="absolute right-2 top-1/2 -translate-y-1/2 text-grey-400 hover:text-grey-700 text-lg leading-none" @click="search = ''">&times;</button>
+      </div>
+      <!-- Needs Action Only toggle -->
+      <label class="flex items-center gap-1.5 shrink-0 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          :checked="needsActionOnly"
+          class="w-3.5 h-3.5 rounded border-grey-300 accent-brand-primary cursor-pointer"
+          @change="$emit('toggleNeedsAction', $event.target.checked)"
+        />
+        <span class="text-body text-grey-700">Needs Action Only</span>
+      </label>
+      <ExportButton :fetcher="exportData" filename="pivot_products.csv" class="shrink-0" />
+    </div>
+
+    <!-- Table -->
+    <div class="overflow-auto flex-1 min-h-0">
+      <table class="w-full border-separate border-spacing-0">
+        <!-- Grouped header: fixed cols + one group per competitor -->
+        <thead class="sticky top-0 z-10">
+          <!-- Row 1: group labels -->
+          <tr class="bg-grey-100">
+            <th class="px-3 py-1.5 border-b border-r border-grey-200 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide whitespace-nowrap" :colspan="fixedCols.length">Product Info</th>
+            <th
+              v-for="comp in competitors"
+              :key="comp"
+              class="px-3 py-1.5 border-b border-r border-grey-200 text-center text-caption font-semibold text-grey-700 uppercase tracking-wide whitespace-nowrap"
+              colspan="2"
+            >{{ comp }}</th>
+            <th class="px-2 py-1.5 border-b border-grey-200 w-9"></th>
+          </tr>
+          <!-- Row 2: column headers -->
+          <tr class="bg-grey-50">
+            <th
+              v-for="col in fixedCols"
+              :key="col.key"
+              class="px-3 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide cursor-pointer hover:text-grey-900 border-b border-r border-grey-200 whitespace-nowrap select-none transition-colors"
+              :aria-sort="sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'"
+              @click="toggleSort(col.key)"
+            >
+              <span class="inline-flex items-center gap-1">
+                {{ col.label }}
+                <span class="text-[10px] transition-colors" :class="sortKey === col.key ? 'text-brand-primary' : 'text-grey-400'">
+                  {{ sortKey === col.key ? (sortDir === 'asc' ? '↑' : '↓') : '↕' }}
+                </span>
+              </span>
+            </th>
+            <template v-for="comp in competitors" :key="comp">
+              <th class="px-3 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide border-b border-grey-200 whitespace-nowrap">Price</th>
+              <th
+                class="px-3 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide cursor-pointer hover:text-grey-900 border-b border-r border-grey-200 whitespace-nowrap select-none transition-colors"
+                @click="toggleSort(`${comp}_pi`)"
+              >
+                <span class="inline-flex items-center gap-1 justify-end">
+                  PI
+                  <span class="text-[10px]" :class="sortKey === `${comp}_pi` ? 'text-brand-primary' : 'text-grey-400'">
+                    {{ sortKey === `${comp}_pi` ? (sortDir === 'asc' ? '↑' : '↓') : '↕' }}
+                  </span>
+                </span>
+              </th>
+            </template>
+            <th class="px-2 py-2 border-b border-grey-200 w-9"></th>
+          </tr>
+        </thead>
+
+        <tbody>
+          <tr
+            v-for="row in data"
+            :key="row.product_id"
+            class="border-b border-grey-100 hover:bg-brand-50 transition-colors"
+          >
+            <!-- Product -->
+            <td class="px-3 py-2 border-r border-grey-100" style="max-width: 200px; min-width: 160px">
+              <div class="text-body text-grey-900 truncate font-medium" :title="row.product_name">{{ row.product_name }}</div>
+              <div class="flex items-center gap-1 mt-0.5 flex-wrap">
+                <span v-if="row.eligible_product" class="inline-block px-1.5 py-px rounded-full text-micro font-medium bg-green-50 text-green-700 leading-tight">Eligible</span>
+                <span v-if="row.used_product" class="inline-block px-1.5 py-px rounded-full text-micro font-medium bg-brand-50 text-brand-darkest leading-tight">Used</span>
+              </div>
+            </td>
+            <!-- Tier -->
+            <td class="px-3 py-2 border-r border-grey-100"><TierBadge :tier="row.global_tier" /></td>
+            <!-- Action (multi-badge with counts, dynamic per visible competitors) -->
+            <td class="px-3 py-2 border-r border-grey-100">
+              <div class="flex items-center gap-1 flex-wrap">
+                <span
+                  v-for="(count, action) in effectiveActionCounts(row)"
+                  :key="action"
+                  class="inline-flex items-center gap-0.5 px-1.5 py-px rounded-full font-bold leading-tight whitespace-nowrap"
+                  style="font-size: 10px;"
+                  :style="ACTION_STYLE[action]"
+                >{{ ACTION_SHORT[action] || action }} ×{{ count }}</span>
+              </div>
+            </td>
+            <!-- BF Price — editable -->
+            <td class="px-3 py-2 border-r border-grey-100 text-right">
+              <div v-if="editingId === row.product_id" class="flex items-center justify-end gap-1">
+                <input
+                  ref="editInput"
+                  type="number" step="0.01"
+                  class="w-20 text-right border-2 border-brand-primary rounded-lg px-2 py-1 text-body outline-none bg-white font-mono"
+                  v-model.number="editValue"
+                  @keyup.enter="saveEdit(row)"
+                  @keyup.escape="cancelEdit"
+                />
+                <button class="px-2 py-1 bg-brand-primary text-white rounded-lg text-caption font-bold hover:bg-brand-dark transition-colors" @click="saveEdit(row)">✓</button>
+                <button class="px-2 py-1 bg-grey-100 text-grey-600 rounded-lg text-caption hover:bg-grey-200 transition-colors" @click="cancelEdit">✕</button>
+              </div>
+              <div
+                v-else
+                class="inline-flex flex-col items-end cursor-pointer group/edit"
+                @click="startEdit(row)"
+              >
+                <!-- Regular price: catalog now_price if available, else bf_regular_price -->
+                <span
+                  v-if="displayRegularPrice(row) != null && displayRegularPrice(row) !== displaySalePrice(row)"
+                  class="text-grey-400 font-mono line-through"
+                  style="font-size: 10px;"
+                >{{ displayRegularPrice(row).toFixed(2) }}</span>
+                <span class="inline-flex items-center gap-1">
+                  <!-- Sale price: catalog now_sale_price if available, else bf_sale_price -->
+                  <span class="text-grey-900 font-mono group-hover/edit:text-brand-primary transition-colors">
+                    {{ displaySalePrice(row)?.toFixed(2) ?? '—' }}
+                  </span>
+                  <svg class="w-3 h-3 text-grey-300 group-hover/edit:text-brand-primary transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                </span>
+              </div>
+            </td>
+            <!-- Worst PI (dynamic: max across visible competitors) -->
+            <td
+              class="px-3 py-2 border-r border-grey-100 text-right font-mono font-bold"
+              :class="[piBgClass(effectiveWorstPI(row)), piTextClass(effectiveWorstPI(row))]"
+            >{{ effectiveWorstPI(row)?.toFixed(2) ?? '—' }}</td>
+            <!-- Score (combined_score_global) -->
+            <td class="px-3 py-2 border-r border-grey-100 text-right text-body text-grey-600 font-mono">{{ row.weighted_score?.toFixed(3) ?? '—' }}</td>
+            <!-- Revenue -->
+            <td class="px-3 py-2 border-r border-grey-100 text-right text-body text-grey-600 font-mono">{{ formatRevenue(row.total_revenue) }}</td>
+
+            <!-- Competitor columns -->
+            <template v-for="comp in competitors" :key="comp">
+              <td class="px-3 py-2 text-right text-body text-grey-600 font-mono whitespace-nowrap">
+                <div class="flex flex-col items-end gap-0.5">
+                  <span>{{ row[`${comp}_price`]?.toFixed(2) ?? '—' }}</span>
+                  <span
+                    v-if="row[`${comp}_action`] && row[`${comp}_action`] !== 'Complete'"
+                    class="inline-block px-1.5 py-px rounded-full font-bold leading-tight"
+                    style="font-size: 9px;"
+                    :style="compActionStyle(row[`${comp}_action`])"
+                  >{{ compActionLabel(row[`${comp}_action`], row[`${comp}_days_stale`]) }}</span>
+                </div>
+              </td>
+              <td
+                class="px-3 py-2 text-right font-mono font-bold border-r border-grey-100 whitespace-nowrap"
+                :class="row[`${comp}_pi`] != null
+                  ? [piBgClass(row[`${comp}_pi`]), piTextClass(row[`${comp}_pi`])]
+                  : 'text-grey-300'"
+              >{{ row[`${comp}_pi`]?.toFixed(2) ?? '—' }}</td>
+            </template>
+
+            <!-- Saving indicator -->
+            <td class="px-2 py-2 text-center w-9">
+              <Loader2 v-if="saving === row.product_id" class="w-3.5 h-3.5 animate-spin text-brand-primary mx-auto" />
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <EmptyState v-if="!data.length" :icon="SearchIcon" title="No products found" message="No products match your search or filters." />
+    </div>
+
+    <!-- Pagination -->
+    <div class="px-4 py-2.5 border-t border-grey-100 flex items-center justify-between bg-grey-50 gap-3 shrink-0">
+      <span class="text-caption text-grey-500 shrink-0">
+        Showing {{ ((page - 1) * pageSize + 1).toLocaleString() }}–{{ Math.min(page * pageSize, total).toLocaleString() }} of {{ total.toLocaleString() }}
+      </span>
+      <div v-if="totalPages > 1" class="flex items-center gap-1">
+        <button :disabled="page <= 1" class="text-caption px-2.5 py-1 rounded-lg border border-grey-200 bg-white hover:bg-grey-100 disabled:opacity-40 transition-colors" @click="$emit('page', page - 1)">← Prev</button>
+        <template v-for="pg in pageNumbers" :key="pg ?? ('e-' + Math.random())">
+          <span v-if="pg === null" class="text-caption text-grey-400 px-1">…</span>
+          <button v-else class="text-caption w-8 py-1 rounded-lg border transition-colors"
+            :class="pg === page ? 'bg-brand-primary text-white border-brand-primary font-bold' : 'border-grey-200 bg-white hover:bg-grey-100 text-grey-700'"
+            @click="$emit('page', pg)"
+          >{{ pg }}</button>
+        </template>
+        <button :disabled="page >= totalPages" class="text-caption px-2.5 py-1 rounded-lg border border-grey-200 bg-white hover:bg-grey-100 disabled:opacity-40 transition-colors" @click="$emit('page', page + 1)">Next →</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, nextTick, watch } from 'vue'
+import { watchDebounced } from '@vueuse/core'
+import TierBadge from '../shared/TierBadge.vue'
+import EmptyState from '../shared/EmptyState.vue'
+import ExportButton from '../shared/ExportButton.vue'
+import { Search as SearchIcon, Loader2 } from 'lucide-vue-next'
+import { piTextClass, piBgClass } from '../../utils/piColor'
+import { useCommercialStore } from '../../stores/commercial'
+import { useToast } from '../../composables/useToast'
+
+const props = defineProps({
+  data: { type: Array, default: () => [] },
+  total: { type: Number, default: 0 },
+  page: { type: Number, default: 1 },
+  pageSize: { type: Number, default: 50 },
+  competitors: { type: Array, default: () => [] },
+  needsActionOnly: { type: Boolean, default: false },
+})
+
+const emit = defineEmits(['page', 'toggleNeedsAction'])
+
+const store = useCommercialStore()
+const toast = useToast()
+
+const fixedCols = [
+  { key: 'product_name', label: 'Product' },
+  { key: 'global_tier', label: 'Tier' },
+  { key: 'action_type', label: 'Action' },
+  { key: 'bf_sale_price', label: 'BF Price' },
+  { key: 'worst_pi', label: 'Worst PI' },
+  { key: 'weighted_score', label: 'Score' },
+  { key: 'total_revenue', label: 'Revenue' },
+]
+
+const sortKey = computed(() => store.sortBy)
+const sortDir = computed(() => store.sortDir)
+const totalPages = computed(() => Math.ceil(props.total / props.pageSize))
+
+const pageNumbers = computed(() => {
+  const total = totalPages.value
+  const cur = props.page
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+  const pageSet = new Set([1, total, cur, cur - 1, cur + 1].filter(p => p >= 1 && p <= total))
+  const sorted = [...pageSet].sort((a, b) => a - b)
+  const result = []
+  for (let i = 0; i < sorted.length; i++) {
+    if (i > 0 && sorted[i] - sorted[i - 1] > 1) result.push(null)
+    result.push(sorted[i])
+  }
+  return result
+})
+
+function toggleSort(key) {
+  const newDir = sortKey.value === key && sortDir.value === 'desc' ? 'asc' : 'desc'
+  store.setSort(key, newDir)
+}
+
+// Search with debounce
+const search = ref(store.search || '')
+watchDebounced(search, (val) => { store.setSearch(val) }, { debounce: 400 })
+
+// Inline price edit
+const editingId = ref(null)
+const editValue = ref(null)
+const saving = ref(null)
+const editInput = ref(null)
+
+function startEdit(row) {
+  if (saving.value) return
+  editingId.value = row.product_id
+  editValue.value = displaySalePrice(row)
+  nextTick(() => {
+    const el = Array.isArray(editInput.value) ? editInput.value[0] : editInput.value
+    el?.focus()
+    el?.select()
+  })
+}
+
+function cancelEdit() {
+  editingId.value = null
+  editValue.value = null
+}
+
+async function saveEdit(row) {
+  if (saving.value) return
+  const nowPrice = editValue.value !== row.bf_sale_price ? editValue.value : undefined
+  if (nowPrice === undefined) { cancelEdit(); return }
+  saving.value = row.product_id
+  editingId.value = null
+  try {
+    const result = await store.updateProductPrice(row.product_id, nowPrice, undefined)
+    if (result.catalog_synced) {
+      toast.success('Price updated', `${row.product_name} synced`)
+    } else {
+      toast.warning('Saved locally', result.catalog_error ? 'Catalog API: no write access' : 'Price saved in-memory only')
+    }
+    // Optimistically update the row
+    row.bf_sale_price = nowPrice
+  } catch (err) {
+    toast.error('Update failed', err.response?.data?.error || err.message)
+  } finally {
+    saving.value = null
+  }
+}
+
+// Normalize "Review AI Match" → "Review Match" on the fly
+function normAction(action) {
+  return action === 'Review AI Match' ? 'Review Match' : action
+}
+
+// Action column: multi-badge styles & short labels (includes Complete)
+const ACTION_STYLE = {
+  'Needs Mapping':      'background:#FEE2E2;color:#DC2626',
+  'Review Match':       'background:#FEF3C7;color:#D97706',
+  'Needs Price Update': 'background:#DBEAFE;color:#2563EB',
+  'Complete':           'background:#D1FAE5;color:#059669',
+}
+const ACTION_SHORT = {
+  'Needs Mapping':      'No Match',
+  'Review Match':       'Review Match',
+  'Needs Price Update': 'Outdated',
+  'Complete':           'Complete',
+}
+
+// Dynamic action counts from visible competitors only
+function effectiveActionCounts(row) {
+  const counts = {}
+  for (const comp of props.competitors) {
+    const action = normAction(row[`${comp}_action`] || 'Complete')
+    counts[action] = (counts[action] || 0) + 1
+  }
+  return counts
+}
+
+// Dynamic worst PI from visible competitors only
+function effectiveWorstPI(row) {
+  const pis = props.competitors.map(c => row[`${c}_pi`]).filter(v => v != null)
+  return pis.length > 0 ? Math.max(...pis) : null
+}
+
+// BF Price display: prefer catalog API prices (now_*), fall back to BigQuery prices
+function displaySalePrice(row) {
+  return row.now_sale_price ?? row.bf_sale_price
+}
+function displayRegularPrice(row) {
+  return row.now_price ?? row.bf_regular_price
+}
+
+// Per-competitor action badge
+const COMP_ACTION_MAP = {
+  'Needs Mapping':      { label: 'No Match', style: 'background:#FEE2E2;color:#DC2626' },
+  'Review Match':       { label: 'Review Match', style: 'background:#FEF3C7;color:#D97706' },
+  'Needs Price Update': { label: 'Outdated', style: 'background:#DBEAFE;color:#2563EB' },
+}
+function compActionLabel(action, daysStale) {
+  const norm = normAction(action)
+  const base = COMP_ACTION_MAP[norm]?.label ?? norm
+  if (norm === 'Needs Price Update' && daysStale != null) return `${base} ${daysStale}d`
+  return base
+}
+function compActionStyle(action) { return COMP_ACTION_MAP[normAction(action)]?.style ?? '' }
+
+function formatRevenue(val) {
+  if (val == null) return '—'
+  if (val >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}M`
+  if (val >= 1_000) return `${(val / 1_000).toFixed(0)}K`
+  return val.toFixed(0)
+}
+
+function exportData() {
+  return props.data.map(row => {
+    const out = {
+      product_name: row.product_name,
+      brand_name: row.brand_name,
+      sub_category_name: row.sub_category_name,
+      global_tier: row.global_tier,
+      action_type: row.action_type,
+      bf_sale_price: row.bf_sale_price,
+      worst_pi: row.worst_pi,
+      total_revenue: row.total_revenue,
+    }
+    for (const comp of props.competitors) {
+      out[`${comp}_price`] = row[`${comp}_price`]
+      out[`${comp}_pi`] = row[`${comp}_pi`]
+    }
+    return out
+  })
+}
+</script>

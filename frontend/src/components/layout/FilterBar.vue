@@ -43,6 +43,14 @@
         @update:model-value="filters.setFilter('brand', $event)"
       />
 
+      <MultiSelect
+        v-if="!hideCompetitor"
+        :model-value="filters.competitor"
+        :options="filters.competitors"
+        label="Competitor"
+        @update:model-value="filters.setFilter('competitor', $event)"
+      />
+
       <div class="h-5 w-px bg-grey-200"></div>
 
       <!-- Include Private Label checkbox -->
@@ -98,6 +106,10 @@
           {{ b }}
           <button class="hover:text-brand-dark" @click="removeChip('brand', b)">&times;</button>
         </span>
+        <span v-for="c in filters.competitor" :key="'comp-' + c" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
+          {{ c }}
+          <button class="hover:text-brand-dark" @click="removeChip('competitor', c)">&times;</button>
+        </span>
         <span v-if="!filters.includePrivateLabel" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-micro font-medium border border-amber-200">
           Excl. Private Label
           <button class="hover:text-amber-900" @click="filters.setFilter('includePrivateLabel', true)">&times;</button>
@@ -114,6 +126,7 @@ import { useFiltersStore } from '../../stores/filters'
 
 defineProps({
   loading: { type: Boolean, default: false },
+  hideCompetitor: { type: Boolean, default: false },
 })
 
 const filters = useFiltersStore()

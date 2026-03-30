@@ -82,7 +82,7 @@
               <span v-else class="text-grey-300">—</span>
             </td>
             <td class="px-3 py-2 text-body text-grey-700 text-right font-mono">{{ row.bf_sale_price?.toFixed(1) }}</td>
-            <td class="px-3 py-2 text-body text-grey-700 text-right font-mono">{{ row.talabat_sale_price?.toFixed(1) ?? '—' }}</td>
+            <td class="px-3 py-2 text-body text-grey-700 text-right font-mono">{{ row.competitor_sale_price?.toFixed(1) ?? '—' }}</td>
             <!-- Stale — color-coded -->
             <td class="px-3 py-2 text-body text-right font-mono">
               <span v-if="row.days_since_update != null" :class="staleClass(row.days_since_update)">
@@ -154,7 +154,7 @@ const columns = [
   { key: 'action_type', label: 'Action' },
   { key: 'similarity_score', label: 'Competitor Match' },
   { key: 'bf_sale_price', label: 'BF Price' },
-  { key: 'talabat_sale_price', label: 'Talabat' },
+  { key: 'competitor_sale_price', label: 'Competitor' },
   { key: 'days_since_update', label: 'Stale' },
   { key: 'total_revenue', label: 'Revenue' },
   { key: '_link', label: '' },
@@ -219,7 +219,8 @@ function exportWorklist() {
     global_tier: r.global_tier,
     action_type: r.action_type,
     bf_sale_price: r.bf_sale_price,
-    talabat_sale_price: r.talabat_sale_price,
+    competitor_name: r.competitor_name,
+    competitor_sale_price: r.competitor_sale_price,
     days_since_update: r.days_since_update,
     total_revenue: r.total_revenue,
     similarity_score: r.similarity_score,

@@ -66,5 +66,16 @@ class PricingDataServiceInterface(ABC):
         ...
 
     @abstractmethod
+    def get_products_pivoted(
+        self, filters: dict = None, page: int = 1, page_size: int = 50,
+        sort_by: str = None, sort_dir: str = "desc", search: str = None,
+    ) -> dict:
+        ...
+
+    @abstractmethod
     def get_filter_options(self, main_category: Optional[str] = None) -> dict:
+        ...
+
+    @abstractmethod
+    def get_executive_dashboard(self, filters: dict = None) -> dict:
         ...

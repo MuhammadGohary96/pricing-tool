@@ -41,6 +41,7 @@ export const filtersApi = {
   getCategories: () => api.get('/filters/categories'),
   getSubcategories: (main) => api.get('/filters/subcategories', { params: { main } }),
   getTiers: () => api.get('/filters/tiers'),
+  getCompetitors: () => api.get('/filters/competitors'),
 }
 
 export const catalogApi = {
@@ -53,6 +54,7 @@ export const commercialApi = {
   getBlendedPI: (params) => api.get('/commercial/blended-pi', { params }),
   getProducts: (params) => api.get('/commercial/products', { params }),
   getFunnel: (params) => api.get('/commercial/funnel', { params }),
+  getPivotedProducts: (params) => api.get('/commercial/products-pivoted', { params }),
   exportCSV: (params) => api.get('/commercial/export', { params, responseType: 'blob' }),
   updateProductPrice: (productId, payload) => api.patch(`/commercial/products/${productId}`, payload),
 }
@@ -71,5 +73,6 @@ export const executiveApi = {
   getCoverageTrend: () => api.get('/executive/coverage-trend'),
   getCategoryPerformance: (params) => api.get('/executive/category-performance', { params }),
   getWeekOverWeek: () => api.get('/executive/week-over-week'),
-  getTopActions: (limit = 10) => api.get('/executive/top-actions', { params: { limit } }),
+  getTopActions: (limit = 10, params = {}) => api.get('/executive/top-actions', { params: { limit, ...params } }),
+  getDashboard: (params) => api.get('/executive/dashboard', { params }),
 }

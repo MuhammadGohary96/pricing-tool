@@ -35,9 +35,9 @@
           </div>
           <div class="text-grey-300 text-heading shrink-0">↔</div>
           <div class="flex-1 bg-grey-50 rounded-md p-2.5 min-w-0">
-            <div class="text-micro font-bold uppercase tracking-wide text-grey-400 mb-1">Talabat</div>
-            <div class="text-body font-medium text-grey-800 truncate" :title="match.suggested_talabat_name">{{ match.suggested_talabat_name }}</div>
-            <div class="text-caption font-bold text-grey-700 mt-0.5">Est. EGP {{ match.estimated_talabat_price?.toFixed(1) }}</div>
+            <div class="text-micro font-bold uppercase tracking-wide text-grey-400 mb-1">{{ match.competitor_name || 'Competitor' }}</div>
+            <div class="text-body font-medium text-grey-800 truncate" :title="match.suggested_competitor_name">{{ match.suggested_competitor_name }}</div>
+            <div class="text-caption font-bold text-grey-700 mt-0.5">Est. EGP {{ match.estimated_competitor_price?.toFixed(1) }}</div>
           </div>
         </div>
 

@@ -9,6 +9,7 @@ def _filters(
     sub_category: Optional[str] = Query(None),
     global_tier: Optional[str] = Query(None),
     brand: Optional[str] = Query(None),
+    competitor: Optional[str] = Query(None),
     exclude_private_label: Optional[bool] = Query(None),
 ) -> dict:
     params = {}
@@ -20,6 +21,8 @@ def _filters(
         params["global_tier"] = global_tier
     if brand:
         params["brand"] = brand
+    if competitor:
+        params["competitor"] = competitor
     if exclude_private_label:
         params["exclude_private_label"] = True
     return params
@@ -29,6 +32,12 @@ def _filters(
 def get_summary(request: Request):
     svc = request.app.state.data_service
     return svc.get_executive_summary()
+
+
+@router.get("/dashboard")
+def get_dashboard(request: Request, filters: dict = Depends(_filters)):
+    svc = request.app.state.data_service
+    return svc.get_executive_dashboard(filters)
 
 
 @router.get("/pi-trend")
@@ -56,12 +65,12 @@ def get_week_over_week(request: Request):
 
 
 @router.get("/top-actions")
-def get_top_actions(request: Request, limit: int = Query(10, ge=1, le=50)):
+def get_top_actions(request: Request, limit: int = Query(10, ge=1, le=50), filters: dict = Depends(_filters)):
     """Top revenue products that need action, sorted by revenue descending."""
     import math
 
     svc = request.app.state.data_service
-    df = svc.get_all_products()
+    df = svc.get_all_products(filters)
     # Filter to eligible products needing action
     needs = df[(df["eligible_product"] == True) & (df["action_type"] != "Complete")]
     needs = needs.sort_values("total_revenue", ascending=False).head(limit)

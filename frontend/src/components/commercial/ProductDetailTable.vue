@@ -178,7 +178,7 @@
               </div>
             </td>
 
-            <td v-if="visibleSet.has('talabat_sale_price')" class="px-3 py-2 text-body text-grey-700 text-right font-mono">{{ row.talabat_sale_price?.toFixed(2) ?? '—' }}</td>
+            <td v-if="visibleSet.has('competitor_sale_price')" class="px-3 py-2 text-body text-grey-700 text-right font-mono">{{ row.competitor_sale_price?.toFixed(2) ?? '—' }}</td>
             <td v-if="visibleSet.has('sale_PI')" class="px-3 py-2 text-body font-bold text-right font-mono" :class="piClass(row.sale_PI)">
               {{ row.sale_PI?.toFixed(2) ?? '—' }}
             </td>
@@ -365,7 +365,7 @@ const ALL_COLUMNS = [
   { key: 'bf_sale_price', label: 'BF Price' },
   { key: 'now_price', label: 'Now Price' },
   { key: 'now_sale_price', label: 'Now Sale' },
-  { key: 'talabat_sale_price', label: 'Talabat' },
+  { key: 'competitor_sale_price', label: 'Competitor' },
   { key: 'sale_PI', label: 'PI' },
   { key: 'global_tier', label: 'Tier' },
   { key: 'subcat_tier', label: 'Sub Tier' },

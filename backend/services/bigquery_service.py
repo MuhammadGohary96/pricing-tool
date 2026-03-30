@@ -5,19 +5,21 @@ Reads from dbt_gohary.pricing_index_analysis (created by PI-query.sql)
 and provides the same interface as MockPricingDataService.
 
 Column mapping from BQ table → internal DataFrame:
-  product_name_en         → product_name
-  avg_daily_revenue       → total_revenue
-  breadfast_sale_price    → bf_sale_price
-  combined_score_global   → weighted_score
-  norm_revenue_global     → norm_revenue
-  norm_quantity_global     → norm_quantity
-  breadfast_last_updated_day → bf_price_updated_at
-  talabat_last_updated_day   → talabat_price_updated_at
+  product_name_en              → product_name
+  avg_daily_revenue            → total_revenue
+  breadfast_sale_price         → bf_sale_price
+  combined_score_global        → weighted_score
+  norm_revenue_global          → norm_revenue
+  norm_quantity_global         → norm_quantity
+  breadfast_last_updated_day   → bf_price_updated_at
+  competitor_last_updated_day  → competitor_price_updated_at
 
 Derived fields (computed after load):
-  action_type     ← from has_PI, match_potential, updated
-  pi_deviation    ← sale_PI - 1
-  days_since_update ← days since talabat_last_updated_day
+  pi_deviation      ← sale_PI - 1
+  days_since_update ← days since competitor_price_updated_at
+
+Multi-competitor: one row per product × competitor (from dim_competitors registry).
+Use competitor filter or aggregate with nunique() for product counts.
 """
 
 from datetime import datetime
@@ -43,7 +45,7 @@ COLUMN_MAP = {
     "norm_revenue_global": "norm_revenue",
     "norm_quantity_global": "norm_quantity",
     "breadfast_last_updated_day": "bf_price_updated_at",
-    "talabat_last_updated_day": "talabat_price_updated_at",
+    "competitor_last_updated_day": "competitor_price_updated_at",
 }
 
 BQ_QUERY = """
@@ -54,28 +56,33 @@ SELECT
     main_category_name,
     commercial_category_name,
     sub_category_name,
-    avg_daily_revenue,
-    avg_daily_quantity,
-    combined_score_global,
-    norm_revenue_global,
-    norm_quantity_global,
+    CAST(avg_daily_revenue          AS FLOAT64) AS avg_daily_revenue,
+    CAST(avg_daily_quantity         AS FLOAT64) AS avg_daily_quantity,
+    CAST(combined_score_global      AS FLOAT64) AS combined_score_global,
+    CAST(norm_revenue_global        AS FLOAT64) AS norm_revenue_global,
+    CAST(norm_quantity_global       AS FLOAT64) AS norm_quantity_global,
     global_tier,
     subcat_tier,
     eligible_product,
-    breadfast_sale_price,
-    talabat_sale_price,
-    sale_PI,
+    CAST(breadfast_sale_price       AS FLOAT64) AS breadfast_sale_price,
+    competitor_id,
+    competitor_name,
+    CAST(competitor_sale_price      AS FLOAT64) AS competitor_sale_price,
+    CAST(min_competitor_sale_price  AS FLOAT64) AS min_competitor_sale_price,
+    CAST(max_competitor_sale_price  AS FLOAT64) AS max_competitor_sale_price,
+    CAST(sale_PI                    AS FLOAT64) AS sale_PI,
     has_PI,
     updated,
-    similarity_score,
+    CAST(similarity_score           AS FLOAT64) AS similarity_score,
     match_potential,
     used_product,
+    action_type,
+    classification,
     breadfast_last_updated_day,
-    talabat_last_updated_day,
+    competitor_last_updated_day,
     competitor_product_name,
     match_potential_product_name
 FROM `{project}.{dataset}.{table}`
-ORDER BY combined_score_global DESC
 """
 
 
@@ -113,12 +120,21 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             self._df["now_sale_price"] = None
 
     def _load_from_bigquery(self) -> pd.DataFrame:
+        import time
         query = BQ_QUERY.format(
             project=self._project,
             dataset=self._dataset,
             table=self._table,
         )
-        df = self._client.query(query).to_dataframe()
+        print("[BigQuery] Submitting query...")
+        t0 = time.time()
+        job = self._client.query(query)
+        print(f"[BigQuery] Job submitted ({job.job_id}), waiting for BQ execution...")
+        rows = job.result()  # wait for query to finish — returns RowIterator
+        t1 = time.time()
+        print(f"[BigQuery] Query executed in {t1 - t0:.1f}s — building DataFrame from rows...")
+        df = pd.DataFrame([dict(row) for row in rows])
+        print(f"[BigQuery] Built DataFrame ({len(df)} rows) in {time.time() - t1:.1f}s (total {time.time() - t0:.1f}s)")
 
         # Rename columns to match internal names
         df = df.rename(columns=COLUMN_MAP)
@@ -127,8 +143,9 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         numeric_cols = [
             "total_revenue", "avg_daily_quantity", "weighted_score",
             "norm_revenue", "norm_quantity", "sale_PI",
-            "bf_sale_price", "talabat_sale_price", "similarity_score",
-            "cumulative_revenue_share",
+            "bf_sale_price", "competitor_sale_price", "competitor_regular_price",
+            "min_competitor_sale_price", "max_competitor_sale_price",
+            "similarity_score", "cumulative_revenue_share",
         ]
         for col in numeric_cols:
             if col in df.columns:
@@ -142,18 +159,6 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         # Cast product_id to string
         df["product_id"] = df["product_id"].astype(str)
 
-        # Derive action_type
-        def _action_type(row):
-            if not row["has_PI"] and not row["match_potential"]:
-                return "Needs Mapping"
-            elif not row["has_PI"] and row["match_potential"]:
-                return "Review Match"
-            elif row["has_PI"] and not row["updated"]:
-                return "Needs Price Update"
-            return "Complete"
-
-        df["action_type"] = df.apply(_action_type, axis=1)
-
         # Derive pi_deviation
         df["pi_deviation"] = df["sale_PI"].apply(
             lambda x: round(x - 1, 4) if pd.notna(x) else None
@@ -161,12 +166,12 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
 
         # Derive days_since_update
         now = datetime.now().date()
-        df["days_since_update"] = df["talabat_price_updated_at"].apply(
+        df["days_since_update"] = df["competitor_price_updated_at"].apply(
             lambda x: (now - x).days if pd.notna(x) else None
         )
 
         # Convert date columns to ISO strings for JSON serialization
-        for col in ["bf_price_updated_at", "talabat_price_updated_at"]:
+        for col in ["bf_price_updated_at", "competitor_price_updated_at"]:
             if col in df.columns:
                 df[col] = df[col].apply(
                     lambda x: x.isoformat() if pd.notna(x) else None
@@ -176,11 +181,140 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         if "bf_regular_price" not in df.columns:
             df["bf_regular_price"] = df["bf_sale_price"]
 
-        # Fill talabat_regular_price if missing
-        if "talabat_regular_price" not in df.columns:
-            df["talabat_regular_price"] = df["talabat_sale_price"]
+        # Fill competitor_regular_price if missing
+        if "competitor_regular_price" not in df.columns:
+            df["competitor_regular_price"] = df["competitor_sale_price"]
 
         return df.reset_index(drop=True)
+
+    def get_products_pivoted(
+        self, filters: dict = None, page: int = 1, page_size: int = 50,
+        sort_by: str = None, sort_dir: str = "desc", search: str = None,
+    ) -> dict:
+        # Strip competitor + action_type filters: competitor because we always show all as columns,
+        # action_type because we recompute it as the worst action across all competitors post-pivot.
+        clean_filters = {k: v for k, v in (filters or {}).items() if k not in ("competitor", "action_type")}
+        df = self._apply_filters(self._df, clean_filters)
+
+        competitors = sorted(df["competitor_name"].dropna().unique().tolist())
+
+        base_cols = [
+            "product_id", "product_name", "brand_name", "sub_category_name",
+            "global_tier", "bf_sale_price", "bf_regular_price",
+            "now_price", "now_sale_price",
+            "total_revenue", "eligible_product", "used_product", "weighted_score",
+        ]
+        product_df = df.drop_duplicates("product_id")[[c for c in base_cols if c in df.columns]].copy()
+
+        for comp in competitors:
+            comp_df = df[df["competitor_name"] == comp][
+                ["product_id", "competitor_sale_price", "sale_PI", "action_type", "days_since_update"]
+            ].drop_duplicates("product_id")
+            product_df = product_df.merge(
+                comp_df.rename(columns={
+                    "competitor_sale_price": f"{comp}_price",
+                    "sale_PI": f"{comp}_pi",
+                    "action_type": f"{comp}_action",
+                    "days_since_update": f"{comp}_days_stale",
+                }),
+                on="product_id", how="left",
+            )
+
+        pi_cols = [f"{c}_pi" for c in competitors if f"{c}_pi" in product_df.columns]
+        if pi_cols:
+            product_df["worst_pi"] = product_df[pi_cols].max(axis=1)
+        else:
+            product_df["worst_pi"] = None
+
+        # Compute product-level action as worst action across all competitors
+        action_cols = [f"{c}_action" for c in competitors if f"{c}_action" in product_df.columns]
+        _NORM = {"Review AI Match": "Review Match"}  # normalize legacy label
+        if action_cols:
+            _PRIO = {"Needs Mapping": 3, "Review Match": 2, "Review AI Match": 2, "Needs Price Update": 1, "Complete": 0}
+            _REV  = {3: "Needs Mapping", 2: "Review Match", 1: "Needs Price Update", 0: "Complete"}
+            product_df["action_type"] = product_df[action_cols].apply(
+                lambda row: _REV[max(_PRIO.get(v, 0) for v in row if pd.notna(v) and v)],
+                axis=1,
+            )
+        else:
+            product_df["action_type"] = "Complete"
+
+        # Compute action_counts per product (all actions including Complete, normalized)
+        if action_cols:
+            product_df["_action_counts"] = product_df[action_cols].apply(
+                lambda row: {
+                    a: sum(1 for v in row if _NORM.get(v, v) == a)
+                    for a in ["Needs Mapping", "Review Match", "Needs Price Update", "Complete"]
+                    if sum(1 for v in row if _NORM.get(v, v) == a) > 0
+                },
+                axis=1,
+            )
+        else:
+            product_df["_action_counts"] = [{} for _ in range(len(product_df))]
+
+        # Apply action_type filter post-pivot (using the computed worst action)
+        if filters and filters.get("action_type"):
+            allowed = {v.strip() for v in filters["action_type"].split(",")}
+            product_df = product_df[product_df["action_type"].isin(allowed)]
+
+        if search:
+            q = search.lower()
+            mask = product_df["product_name"].str.lower().str.contains(q, na=False)
+            product_df = product_df[mask]
+
+        SORTABLE = {"worst_pi", "total_revenue", "weighted_score", "product_name", "bf_sale_price", "global_tier", "action_type"}
+        if sort_by and sort_by in SORTABLE and sort_by in product_df.columns:
+            product_df = product_df.sort_values(sort_by, ascending=(sort_dir == "asc"), na_position="last")
+        else:
+            # Default: sort by combined_score_global (weighted_score) descending — most important products first
+            product_df = product_df.sort_values("weighted_score", ascending=False, na_position="last")
+
+        total = len(product_df)
+        page_df = product_df.iloc[(page - 1) * page_size: page * page_size]
+
+        def _s(val):
+            if val is None:
+                return None
+            try:
+                import math
+                if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+                    return None
+            except Exception:
+                pass
+            return val
+
+        items = []
+        for _, row in page_df.iterrows():
+            item = {
+                "product_id": row["product_id"],
+                "product_name": row["product_name"],
+                "brand_name": row["brand_name"],
+                "sub_category_name": row["sub_category_name"],
+                "global_tier": row["global_tier"],
+                "action_type": row["action_type"],
+                "bf_sale_price": _s(float(row["bf_sale_price"])) if pd.notna(row.get("bf_sale_price")) else None,
+                "bf_regular_price": _s(float(row["bf_regular_price"])) if pd.notna(row.get("bf_regular_price")) else None,
+                "now_price": _s(float(row["now_price"])) if pd.notna(row.get("now_price")) else None,
+                "now_sale_price": _s(float(row["now_sale_price"])) if pd.notna(row.get("now_sale_price")) else None,
+                "total_revenue": _s(float(row["total_revenue"])) if pd.notna(row.get("total_revenue")) else None,
+                "eligible_product": bool(row["eligible_product"]),
+                "used_product": bool(row["used_product"]),
+                "worst_pi": _s(float(row["worst_pi"])) if pd.notna(row.get("worst_pi")) else None,
+                "weighted_score": _s(float(row["weighted_score"])) if pd.notna(row.get("weighted_score")) else None,
+                "action_counts": row.get("_action_counts", {}),
+            }
+            for comp in competitors:
+                price_key = f"{comp}_price"
+                pi_key = f"{comp}_pi"
+                action_key = f"{comp}_action"
+                days_key = f"{comp}_days_stale"
+                item[price_key] = _s(float(row[price_key])) if pd.notna(row.get(price_key)) else None
+                item[pi_key] = _s(float(row[pi_key])) if pd.notna(row.get(pi_key)) else None
+                item[action_key] = row.get(action_key)
+                item[days_key] = int(row[days_key]) if pd.notna(row.get(days_key)) else None
+            items.append(item)
+
+        return {"items": items, "total_count": total, "competitors": competitors}
 
     def enrich_with_catalog_prices(self, token: str, progress_status: dict = None):
         """Fetch live prices from Breadfast Catalog API using the user's token."""
@@ -189,7 +323,7 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
 
         # Only fetch for our BQ products (numeric IDs)
         numeric_ids = [
-            int(pid) for pid in self._df["product_id"]
+            int(pid) for pid in self._df["product_id"].unique()
             if isinstance(pid, str) and pid.isdigit()
         ]
 
@@ -215,6 +349,18 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
     # ─── Shared helpers ─────────────────────────────────────────
 
     @staticmethod
+    def _worst_action_per_product(df: pd.DataFrame) -> pd.Series:
+        """Returns Series: product_id → worst action across all competitor rows.
+        Priority: Needs Mapping > Review Match > Needs Price Update > Complete.
+        """
+        _PRIO = {"Needs Mapping": 3, "Review Match": 2, "Review AI Match": 2, "Needs Price Update": 1, "Complete": 0}
+        _REV  = {3: "Needs Mapping", 2: "Review Match", 1: "Needs Price Update", 0: "Complete"}
+        return (
+            df.groupby("product_id")["action_type"]
+            .apply(lambda x: _REV[max(_PRIO.get(a, 0) for a in x)])
+        )
+
+    @staticmethod
     def _multi_match(df, column, value):
         """Filter column by a single value or comma-separated list."""
         if "," in value:
@@ -237,6 +383,8 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             filtered = self._multi_match(filtered, "action_type", filters["action_type"])
         if filters.get("brand"):
             filtered = self._multi_match(filtered, "brand_name", filters["brand"])
+        if filters.get("competitor"):
+            filtered = self._multi_match(filtered, "competitor_name", filters["competitor"])
         if filters.get("exclude_private_label"):
             filtered = filtered[~filtered["brand_name"].str.lower().str.contains("breadfast", na=False)]
         return filtered
@@ -264,8 +412,12 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                     (g["sale_PI"] * g["avg_daily_quantity"]).sum()
                     / g["avg_daily_quantity"].sum(), 4
                 ) if g["avg_daily_quantity"].sum() > 0 else None,
-                "used_product_count": len(g),
-                "total_revenue": round(g["total_revenue"].sum(), 2),
+                # Count distinct products (multi-competitor rows inflate count)
+                "used_product_count": g["product_id"].nunique(),
+                # Revenue is product-level — deduplicate before summing
+                "total_revenue": round(
+                    g.drop_duplicates("product_id")["total_revenue"].sum(), 2
+                ),
                 "product_pis": g[["product_name", "sale_PI", "avg_daily_quantity"]].dropna(subset=["sale_PI"]).rename(
                     columns={"avg_daily_quantity": "weight"}
                 ).to_dict("records"),
@@ -273,8 +425,11 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             include_groups=False,
         ).reset_index()
 
-        # Compute per-subcategory counts from ALL products
-        all_counts = df.groupby("sub_category_name").apply(
+        # Compute per-subcategory counts — use worst action per product across competitors
+        worst_action = self._worst_action_per_product(df)
+        unique_all = df.drop_duplicates("product_id").copy()
+        unique_all["action_type"] = unique_all["product_id"].map(worst_action)
+        all_counts = unique_all.groupby("sub_category_name").apply(
             lambda g: pd.Series({
                 "total_product_count": len(g),
                 "eligible_product_count": int(g["eligible_product"].sum()),
@@ -292,19 +447,75 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         )
         grouped["direction"] = grouped["pi_deviation"].apply(pi_direction)
 
+        # Per-competitor blended PI, product PIs, and used counts
+        comp_grouped = used.groupby(["sub_category_name", "competitor_name"]).apply(
+            lambda g: pd.Series({
+                "comp_blended_pi": round(
+                    (g["sale_PI"] * g["avg_daily_quantity"]).sum()
+                    / g["avg_daily_quantity"].sum(), 4
+                ) if g["avg_daily_quantity"].sum() > 0 else None,
+                "comp_product_pis": g[["product_name", "sale_PI", "avg_daily_quantity"]].dropna(
+                    subset=["sale_PI"]
+                ).rename(columns={"avg_daily_quantity": "weight"}).to_dict("records"),
+                "comp_used_count": int(g["product_id"].nunique()),
+            }),
+            include_groups=False,
+        ).reset_index()
+
+        # Build dicts per subcategory
+        def _build_comp_dict(sub_df, col):
+            return dict(zip(sub_df["competitor_name"], sub_df[col]))
+
+        comp_bpi = comp_grouped.groupby("sub_category_name").apply(
+            lambda g: _build_comp_dict(g, "comp_blended_pi")
+        )
+        comp_pis = comp_grouped.groupby("sub_category_name").apply(
+            lambda g: _build_comp_dict(g, "comp_product_pis")
+        )
+        comp_used = comp_grouped.groupby("sub_category_name").apply(
+            lambda g: _build_comp_dict(g, "comp_used_count")
+        )
+        grouped["competitor_blended_pis"] = grouped["sub_category_name"].map(comp_bpi).apply(
+            lambda x: x if isinstance(x, dict) else {}
+        )
+        grouped["competitor_product_pis"] = grouped["sub_category_name"].map(comp_pis).apply(
+            lambda x: x if isinstance(x, dict) else {}
+        )
+        grouped["competitor_used_counts"] = grouped["sub_category_name"].map(comp_used).apply(
+            lambda x: x if isinstance(x, dict) else {}
+        )
+
+        # Per-competitor needs_action counts per subcategory
+        eligible_df = df[df["eligible_product"] == True]
+        if not eligible_df.empty and "competitor_name" in eligible_df.columns:
+            action_by_comp = eligible_df.groupby(["sub_category_name", "competitor_name"]).apply(
+                lambda g: int((g["action_type"] != "Complete").sum()),
+                include_groups=False,
+            ).reset_index(name="comp_needs_action")
+            comp_action_cnts = action_by_comp.groupby("sub_category_name").apply(
+                lambda g: dict(zip(g["competitor_name"], g["comp_needs_action"]))
+            )
+            grouped["competitor_needs_action_counts"] = grouped["sub_category_name"].map(comp_action_cnts).apply(
+                lambda x: x if isinstance(x, dict) else {}
+            )
+        else:
+            grouped["competitor_needs_action_counts"] = [{}] * len(grouped)
+
         return grouped.sort_values("blended_pi", ascending=False).reset_index(drop=True)
 
     def get_coverage_funnel(self, filters: dict = None) -> dict:
         df = self._apply_filters(self._df, filters)
-        total = len(df)
+        # Use distinct product counts (multi-competitor rows inflate totals)
+        unique = df.drop_duplicates("product_id")
+        total = len(unique)
         if total == 0:
             return {"mapping_funnel": [], "coverage_funnel": []}
 
-        all_mapped = int(df["has_PI"].sum())
-        all_updated = int((df["has_PI"] & df["updated"]).sum())
-        eligible = int(df["eligible_product"].sum())
-        eligible_mapped = int((df["eligible_product"] & df["has_PI"]).sum())
-        used = int(df["used_product"].sum())
+        all_mapped = int(df[df["has_PI"]]["product_id"].nunique())
+        all_updated = int(df[df["has_PI"] & df["updated"]]["product_id"].nunique())
+        eligible = int(unique["eligible_product"].sum())
+        eligible_mapped = int(df[df["eligible_product"] & df["has_PI"]]["product_id"].nunique())
+        used = int(df[df["used_product"]]["product_id"].nunique())
 
         def pct(n):
             return round(n / total * 100, 1) if total else 0
@@ -325,7 +536,10 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
 
     def get_action_summary(self, filters: dict = None) -> dict:
         df = self._apply_filters(self._df, filters)
-        eligible = df[df["eligible_product"] == True]
+        worst_action = self._worst_action_per_product(df)
+        unique = df.drop_duplicates("product_id").copy()
+        unique["action_type"] = unique["product_id"].map(worst_action)
+        eligible = unique[unique["eligible_product"] == True]
         needs_action = eligible[eligible["action_type"] != "Complete"]
 
         return {
@@ -338,8 +552,11 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
     def get_kpi_summary(self, filters: dict = None) -> dict:
         df = self._apply_filters(self._df, filters)
         used = df[df["used_product"] == True]
-        eligible = df[df["eligible_product"] == True]
-        needs_action = eligible[eligible["action_type"] != "Complete"]
+        worst_action = self._worst_action_per_product(df)
+        unique = df.drop_duplicates("product_id").copy()
+        unique["action_type"] = unique["product_id"].map(worst_action)
+        eligible_unique = unique[unique["eligible_product"] == True]
+        needs_action = eligible_unique[eligible_unique["action_type"] != "Complete"]
 
         blended = None
         if not used.empty and used["avg_daily_quantity"].sum() > 0:
@@ -349,16 +566,19 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             )
 
         return {
-            "total_products": len(df),
-            "eligible_products": len(eligible),
-            "used_products": len(used),
+            "total_products": int(df["product_id"].nunique()),
+            "eligible_products": int(eligible_unique["product_id"].nunique()),
+            "used_products": int(used["product_id"].nunique()),
             "avg_blended_pi": blended,
             "needs_action": len(needs_action),
         }
 
     def get_action_breakdown(self, filters: dict = None) -> list[dict]:
         df = self._apply_filters(self._df, filters)
-        eligible = df[df["eligible_product"] == True]
+        worst_action = self._worst_action_per_product(df)
+        unique = df.drop_duplicates("product_id").copy()
+        unique["action_type"] = unique["product_id"].map(worst_action)
+        eligible = unique[unique["eligible_product"] == True]
         needs_action = eligible[eligible["action_type"] != "Complete"]
 
         if needs_action.empty:
@@ -411,9 +631,10 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 "tier_order": int(row["tier_order"]),
                 "action_type": row["action_type"],
                 "action_symbol": ACTION_SYMBOLS.get(row["action_type"], ""),
+                "competitor_name": row["competitor_name"] if pd.notna(row.get("competitor_name")) else None,
                 "similarity_score": row["similarity_score"] if pd.notna(row["similarity_score"]) else None,
                 "bf_sale_price": float(row["bf_sale_price"]),
-                "talabat_sale_price": float(row["talabat_sale_price"]) if pd.notna(row["talabat_sale_price"]) else None,
+                "competitor_sale_price": float(row["competitor_sale_price"]) if pd.notna(row.get("competitor_sale_price")) else None,
                 "days_since_update": int(row["days_since_update"]) if pd.notna(row["days_since_update"]) else None,
                 "total_revenue": float(row["total_revenue"]),
                 "competitor_product_name": row["competitor_product_name"] if pd.notna(row.get("competitor_product_name")) else None,
@@ -444,9 +665,10 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 "bf_product_name": row["product_name"],
                 "bf_brand": row["brand_name"],
                 "bf_price": float(row["bf_sale_price"]),
-                "suggested_talabat_name": row["match_potential_product_name"] if pd.notna(row.get("match_potential_product_name")) else row["product_name"],
+                "competitor_name": row["competitor_name"] if pd.notna(row.get("competitor_name")) else None,
+                "suggested_competitor_name": row["match_potential_product_name"] if pd.notna(row.get("match_potential_product_name")) else row["product_name"],
                 "similarity_score": float(row["similarity_score"]) if pd.notna(row["similarity_score"]) else 0,
-                "estimated_talabat_price": float(row["talabat_sale_price"]) if pd.notna(row.get("talabat_sale_price")) else float(row["bf_sale_price"] * 1.05),
+                "estimated_competitor_price": float(row["competitor_sale_price"]) if pd.notna(row.get("competitor_sale_price")) else float(row["bf_sale_price"] * 1.05),
             })
 
         return {"items": items, "total_count": total_count}
@@ -528,6 +750,130 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             "subcategory_count": len(blended),
         }
 
+    def get_executive_dashboard(self, filters: dict = None) -> dict:
+        df = self._apply_filters(self._df, filters)
+
+        # ─── KPIs ────────────────────────────────────────────────────
+        unique = df.drop_duplicates("product_id").copy()
+        worst_action = self._worst_action_per_product(df)
+        unique["_wa"] = unique["product_id"].map(worst_action).fillna("Complete")
+        eligible_unique = unique[unique["eligible_product"] == True]
+
+        total_products = int(len(unique))
+        eligible_count = int(len(eligible_unique))
+        eligible_df = df[df["eligible_product"] == True]
+        mapped_ids = set(eligible_df[eligible_df["sale_PI"].notna()]["product_id"])
+        mapped_count = int(len(mapped_ids))
+        mapped_pct = round(mapped_count / eligible_count * 100, 1) if eligible_count > 0 else 0.0
+
+        needs_action_df = eligible_unique[eligible_unique["_wa"] != "Complete"]
+        nm = int((needs_action_df["_wa"] == "Needs Mapping").sum())
+        rm = int((needs_action_df["_wa"] == "Review Match").sum())
+        npu = int((needs_action_df["_wa"] == "Needs Price Update").sum())
+
+        used = df[df["used_product"] == True]
+        blended_pi = None
+        if not used.empty and used["avg_daily_quantity"].sum() > 0:
+            blended_pi = round(
+                (used["sale_PI"] * used["avg_daily_quantity"]).sum()
+                / used["avg_daily_quantity"].sum(), 4
+            )
+
+        kpis = {
+            "blended_pi": blended_pi,
+            "total_products": total_products,
+            "eligible_products": eligible_count,
+            "eligible_pct": round(eligible_count / total_products * 100, 1) if total_products > 0 else 0.0,
+            "mapped_products": mapped_count,
+            "mapped_pct": mapped_pct,
+            "needs_action": int(len(needs_action_df)),
+            "needs_mapping": nm,
+            "review_match": rm,
+            "needs_price_update": npu,
+        }
+
+        # ─── Per-Competitor PI ────────────────────────────────────────
+        competitor_pi = []
+        if "competitor_name" in df.columns:
+            for comp, grp in df.groupby("competitor_name"):
+                if pd.isna(comp):
+                    continue
+                used_grp = grp[grp["used_product"] == True]
+                mapped_cnt = int(grp[grp["sale_PI"].notna()]["product_id"].nunique())
+                bpi = None
+                if not used_grp.empty:
+                    qty_sum = used_grp["avg_daily_quantity"].sum()
+                    if qty_sum > 0:
+                        bpi = round(
+                            (used_grp["sale_PI"] * used_grp["avg_daily_quantity"]).sum() / qty_sum, 4
+                        )
+                eligible_cnt = int(grp[grp["eligible_product"] == True]["product_id"].nunique())
+                used_cnt = int(grp[grp["used_product"] == True]["product_id"].nunique())
+                competitor_pi.append({
+                    "competitor_name": str(comp),
+                    "blended_pi": bpi,
+                    "pi_deviation": round(bpi - 1, 4) if bpi is not None else None,
+                    "mapped_products": mapped_cnt,
+                    "eligible_products": eligible_cnt,
+                    "used_products": used_cnt,
+                })
+            competitor_pi.sort(key=lambda x: (x["blended_pi"] or 0), reverse=True)
+
+        # ─── Mapping Progress by Competitor ───────────────────────────
+        mapping_progress = []
+        if "competitor_name" in df.columns and "classification" in df.columns:
+            for comp, grp in df.groupby("competitor_name"):
+                if pd.isna(comp):
+                    continue
+                grp_u = grp.drop_duplicates("product_id")
+                counts = grp_u["classification"].value_counts().to_dict()
+                mapped_not_pl = int(counts.get("Mapped - Not PL", 0))
+                mapped_pl = int(counts.get("Mapped - PL", 0))
+                pot_not_pl = int(counts.get("Not Mapped - Not PL - Potential Match", 0))
+                pot_pl = int(counts.get("Not Mapped - PL - Potential Match", 0))
+                no_pot_not_pl = int(counts.get("Not Mapped - Not PL - No Potential Match", 0))
+                no_pot_pl = int(counts.get("Not Mapped - PL - No Potential Match", 0))
+                total = mapped_not_pl + mapped_pl + pot_not_pl + pot_pl + no_pot_not_pl + no_pot_pl
+                mapped_total = mapped_not_pl + mapped_pl
+                potential_total = pot_not_pl + pot_pl
+                mapping_progress.append({
+                    "competitor_name": str(comp),
+                    "mapped_not_pl": mapped_not_pl,
+                    "mapped_pl": mapped_pl,
+                    "potential_not_pl": pot_not_pl,
+                    "potential_pl": pot_pl,
+                    "no_potential_not_pl": no_pot_not_pl,
+                    "no_potential_pl": no_pot_pl,
+                    "total": total,
+                    "mapped_pct": round(mapped_total / total * 100, 1) if total > 0 else 0.0,
+                    "potential_reach_pct": round((mapped_total + potential_total) / total * 100, 1) if total > 0 else 0.0,
+                })
+            mapping_progress.sort(key=lambda x: x["mapped_pct"], reverse=True)
+
+        # ─── Overall Classification Breakdown ─────────────────────────
+        classification_breakdown = {
+            "mapped_not_pl": 0, "mapped_pl": 0,
+            "not_mapped_not_pl_potential": 0, "not_mapped_not_pl_no_potential": 0,
+            "not_mapped_pl_potential": 0, "not_mapped_pl_no_potential": 0,
+        }
+        if "classification" in df.columns:
+            counts = df["classification"].value_counts().to_dict()
+            classification_breakdown = {
+                "mapped_not_pl": int(counts.get("Mapped - Not PL", 0)),
+                "mapped_pl": int(counts.get("Mapped - PL", 0)),
+                "not_mapped_not_pl_potential": int(counts.get("Not Mapped - Not PL - Potential Match", 0)),
+                "not_mapped_not_pl_no_potential": int(counts.get("Not Mapped - Not PL - No Potential Match", 0)),
+                "not_mapped_pl_potential": int(counts.get("Not Mapped - PL - Potential Match", 0)),
+                "not_mapped_pl_no_potential": int(counts.get("Not Mapped - PL - No Potential Match", 0)),
+            }
+
+        return {
+            "kpis": kpis,
+            "competitor_pi": competitor_pi,
+            "mapping_progress": mapping_progress,
+            "classification_breakdown": classification_breakdown,
+        }
+
     def get_pi_trend(self) -> list[dict]:
         return []  # No historical data available
 
@@ -547,7 +893,7 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                     (g["sale_PI"] * g["avg_daily_quantity"]).sum()
                     / g["avg_daily_quantity"].sum(), 4
                 ) if g["avg_daily_quantity"].sum() > 0 else None,
-                "product_count": len(g),
+                "product_count": g["product_id"].nunique(),
             }),
             include_groups=False,
         ).reset_index()
@@ -587,4 +933,5 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             "subcat_tiers": ["Top+", "Top", "Medium", "Low", "Very Low"],
             "action_types": ["Needs Mapping", "Review Match", "Needs Price Update", "Complete"],
             "brands": sorted([v for v in df["brand_name"].unique().tolist() if v is not None]),
+            "competitors": sorted([v for v in df["competitor_name"].unique().tolist() if v is not None]) if "competitor_name" in df.columns else [],
         }

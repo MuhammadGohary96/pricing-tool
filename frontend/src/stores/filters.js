@@ -9,6 +9,7 @@ export const useFiltersStore = defineStore('filters', {
     subcatTier: [],
     actionType: [],
     brand: [],
+    competitor: [],
     includePrivateLabel: true,
     categories: [],
     subcategories: [],
@@ -16,6 +17,7 @@ export const useFiltersStore = defineStore('filters', {
     subcatTiers: [],
     actionTypes: [],
     brands: [],
+    competitors: [],
   }),
 
   getters: {
@@ -27,6 +29,7 @@ export const useFiltersStore = defineStore('filters', {
       if (state.subcatTier.length) params.subcat_tier = state.subcatTier.join(',')
       if (state.actionType.length) params.action_type = state.actionType.join(',')
       if (state.brand.length) params.brand = state.brand.join(',')
+      if (state.competitor.length) params.competitor = state.competitor.join(',')
       if (!state.includePrivateLabel) params.exclude_private_label = true
       return params
     },
@@ -38,6 +41,7 @@ export const useFiltersStore = defineStore('filters', {
         state.subcatTier.length ||
         state.actionType.length ||
         state.brand.length ||
+        state.competitor.length ||
         !state.includePrivateLabel
       )
     },
@@ -46,15 +50,17 @@ export const useFiltersStore = defineStore('filters', {
   actions: {
     async fetchFilterOptions() {
       try {
-        const [catRes, tierRes] = await Promise.all([
+        const [catRes, tierRes, compRes] = await Promise.all([
           filtersApi.getCategories(),
           filtersApi.getTiers(),
+          filtersApi.getCompetitors(),
         ])
         this.categories = catRes.data.categories
         this.globalTiers = tierRes.data.global_tiers
         this.subcatTiers = tierRes.data.subcat_tiers
         this.actionTypes = tierRes.data.action_types
         this.brands = tierRes.data.brands || []
+        this.competitors = compRes.data.competitors || []
 
         await this.fetchSubcategories()
       } catch (err) {
@@ -87,6 +93,7 @@ export const useFiltersStore = defineStore('filters', {
       this.subcatTier = []
       this.actionType = []
       this.brand = []
+      this.competitor = []
       this.includePrivateLabel = true
       this.fetchSubcategories()
     },

@@ -9,13 +9,18 @@ export const useCommercialStore = defineStore('commercial', {
     blendedPI: [],
     products: [],
     productsTotal: 0,
+    pivotedProducts: [],
+    pivotedTotal: 0,
+    pivotedCompetitors: [],
+    blendedCompetitors: [],
+    needsActionOnly: false,
     funnelMapping: [],
     funnelCoverage: [],
     loading: false,
     error: null,
     currentPage: 1,
     pageSize: 50,
-    sortBy: 'total_revenue',
+    sortBy: 'weighted_score',
     sortDir: 'desc',
     search: '',
     editedProducts: {},  // { productId: { catalog_synced, catalog_error } }
@@ -29,11 +34,8 @@ export const useCommercialStore = defineStore('commercial', {
       this.error = null
       try {
         await Promise.all([
-          this.fetchKPIs(),
-          this.fetchTreemap(),
           this.fetchBlendedPI(),
-          this.fetchProducts(),
-          this.fetchFunnel(),
+          this.fetchPivotedProducts(),
         ])
       } catch (err) {
         this.error = err.message || 'Failed to load commercial data'
@@ -61,6 +63,7 @@ export const useCommercialStore = defineStore('commercial', {
     async fetchBlendedPI() {
       const res = await commercialApi.getBlendedPI(this._params())
       this.blendedPI = res.data.items || []
+      this.blendedCompetitors = res.data.competitors || []
     },
 
     async fetchProducts() {
@@ -77,17 +80,33 @@ export const useCommercialStore = defineStore('commercial', {
       this.productsTotal = res.data.total_count || 0
     },
 
+    async fetchPivotedProducts() {
+      const params = {
+        ...this._params(),
+        page: this.currentPage,
+        page_size: this.pageSize,
+        sort_by: this.sortBy,
+        sort_dir: this.sortDir,
+      }
+      if (this.search) params.search = this.search
+      if (this.needsActionOnly) params.action_type = 'Needs Mapping,Review Match,Needs Price Update'
+      const res = await commercialApi.getPivotedProducts(params)
+      this.pivotedProducts = res.data.items || []
+      this.pivotedTotal = res.data.total_count || 0
+      this.pivotedCompetitors = res.data.competitors || []
+    },
+
     async setSort(key, dir) {
       this.sortBy = key
       this.sortDir = dir
       this.currentPage = 1
-      await this.fetchProducts()
+      await this.fetchPivotedProducts()
     },
 
     async setSearch(query) {
       this.search = query
       this.currentPage = 1
-      await this.fetchProducts()
+      await this.fetchPivotedProducts()
     },
 
     async fetchFunnel() {
@@ -98,7 +117,13 @@ export const useCommercialStore = defineStore('commercial', {
 
     async setPage(page) {
       this.currentPage = page
-      await this.fetchProducts()
+      await this.fetchPivotedProducts()
+    },
+
+    async setNeedsActionOnly(val) {
+      this.needsActionOnly = val
+      this.currentPage = 1
+      await this.fetchPivotedProducts()
     },
 
     async updateProductPrice(productId, nowPrice, nowSalePrice) {

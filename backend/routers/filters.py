@@ -30,3 +30,10 @@ def get_tiers(request: Request):
         "action_types": options["action_types"],
         "brands": options.get("brands", []),
     }
+
+
+@router.get("/competitors")
+def get_competitors(request: Request):
+    svc = request.app.state.data_service
+    options = svc.get_filter_options()
+    return {"competitors": options.get("competitors", [])}

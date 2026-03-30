@@ -23,6 +23,7 @@ def _filters(
     subcat_tier: Optional[str] = Query(None),
     action_type: Optional[str] = Query(None),
     brand: Optional[str] = Query(None),
+    competitor: Optional[str] = Query(None),
     exclude_private_label: Optional[bool] = Query(None),
 ) -> dict:
     params = {}
@@ -38,6 +39,8 @@ def _filters(
         params["action_type"] = action_type
     if brand:
         params["brand"] = brand
+    if competitor:
+        params["competitor"] = competitor
     if exclude_private_label:
         params["exclude_private_label"] = True
     return params
@@ -74,22 +77,51 @@ def get_treemap(request: Request, filters: dict = Depends(_filters)):
     return TreemapData(children=children)
 
 
+def _serialize_pi_points(raw_pis):
+    """Convert raw product PI dicts to ProductPIPoint objects."""
+    return [
+        ProductPIPoint(
+            product_name=p["product_name"],
+            sale_PI=round(float(p["sale_PI"]), 4),
+            weight=round(float(p["weight"]), 2),
+        )
+        for p in (raw_pis if isinstance(raw_pis, list) else [])
+        if p.get("sale_PI") is not None
+    ]
+
+
 @router.get("/blended-pi")
 def get_blended_pi(request: Request, filters: dict = Depends(_filters)):
     svc = request.app.state.data_service
     df = svc.get_blended_pi_by_subcategory(filters)
+    all_competitors = set()
     items = []
     for _, row in df.iterrows():
-        raw_pis = row.get("product_pis", [])
-        product_pis = [
-            ProductPIPoint(
-                product_name=p["product_name"],
-                sale_PI=round(float(p["sale_PI"]), 4),
-                weight=round(float(p["weight"]), 2),
-            )
-            for p in (raw_pis if isinstance(raw_pis, list) else [])
-            if p.get("sale_PI") is not None
-        ]
+        product_pis = _serialize_pi_points(row.get("product_pis", []))
+
+        # Per-competitor blended PIs
+        comp_bpi = row.get("competitor_blended_pis", {})
+        if not isinstance(comp_bpi, dict):
+            comp_bpi = {}
+        comp_bpi = {k: _safe(v) for k, v in comp_bpi.items()}
+        all_competitors.update(comp_bpi.keys())
+
+        # Per-competitor product PIs
+        raw_comp_pis = row.get("competitor_product_pis", {})
+        if not isinstance(raw_comp_pis, dict):
+            raw_comp_pis = {}
+        comp_product_pis = {
+            comp_name: _serialize_pi_points(pis_list)
+            for comp_name, pis_list in raw_comp_pis.items()
+        }
+
+        comp_used = row.get("competitor_used_counts", {})
+        if not isinstance(comp_used, dict):
+            comp_used = {}
+        comp_actions = row.get("competitor_needs_action_counts", {})
+        if not isinstance(comp_actions, dict):
+            comp_actions = {}
+
         items.append(BlendedPIRow(
             sub_category_name=row["sub_category_name"],
             blended_pi=_safe(row.get("blended_pi")),
@@ -101,8 +133,12 @@ def get_blended_pi(request: Request, filters: dict = Depends(_filters)):
             eligible_product_count=int(row.get("eligible_product_count", 0)),
             needs_action_count=int(row.get("needs_action_count", 0)),
             product_pis=product_pis,
+            competitor_blended_pis=comp_bpi,
+            competitor_product_pis=comp_product_pis,
+            competitor_used_counts={k: int(v) for k, v in comp_used.items()},
+            competitor_needs_action_counts={k: int(v) for k, v in comp_actions.items()},
         ))
-    return BlendedPITable(items=items)
+    return BlendedPITable(items=items, competitors=sorted(all_competitors))
 
 
 @router.get("/products")
@@ -130,7 +166,7 @@ def get_products(
     # Server-side sort
     SORTABLE = {
         "product_name", "brand_name", "bf_sale_price", "now_price",
-        "now_sale_price", "talabat_sale_price", "sale_PI", "global_tier",
+        "now_sale_price", "competitor_sale_price", "sale_PI", "global_tier",
         "subcat_tier", "action_type", "total_revenue", "avg_daily_quantity",
         "similarity_score", "days_since_update",
     }
@@ -164,17 +200,22 @@ def get_products(
             eligible_product=bool(row["eligible_product"]),
             bf_sale_price=float(row["bf_sale_price"]),
             bf_regular_price=float(row["bf_regular_price"]),
-            talabat_sale_price=_safe(row.get("talabat_sale_price")),
-            talabat_regular_price=_safe(row.get("talabat_regular_price")),
+            competitor_id=int(row["competitor_id"]) if _safe(row.get("competitor_id")) is not None else None,
+            competitor_name=_safe(row.get("competitor_name")),
+            competitor_sale_price=_safe(row.get("competitor_sale_price")),
+            competitor_regular_price=_safe(row.get("competitor_regular_price")),
+            min_competitor_sale_price=_safe(row.get("min_competitor_sale_price")),
+            max_competitor_sale_price=_safe(row.get("max_competitor_sale_price")),
             sale_PI=_safe(row.get("sale_PI")),
             has_PI=bool(row["has_PI"]),
             bf_price_updated_at=row.get("bf_price_updated_at"),
-            talabat_price_updated_at=_safe(row.get("talabat_price_updated_at")),
+            competitor_price_updated_at=_safe(row.get("competitor_price_updated_at")),
             updated=bool(row["updated"]),
             similarity_score=_safe(row.get("similarity_score")),
             match_potential=bool(row["match_potential"]),
             used_product=bool(row["used_product"]),
             action_type=row["action_type"],
+            classification=_safe(row.get("classification")),
             pi_deviation=_safe(row.get("pi_deviation")),
             days_since_update=int(row["days_since_update"]) if _safe(row.get("days_since_update")) is not None else None,
             now_price=_safe(row.get("now_price")),
@@ -183,6 +224,23 @@ def get_products(
             match_potential_product_name=_safe(row.get("match_potential_product_name")),
         ))
     return ProductDetailTable(items=items, total_count=total)
+
+
+@router.get("/products-pivoted")
+def get_products_pivoted(
+    request: Request,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    sort_by: Optional[str] = Query(None),
+    sort_dir: Optional[str] = Query("desc"),
+    search: Optional[str] = Query(None),
+    filters: dict = Depends(_filters),
+):
+    svc = request.app.state.data_service
+    return svc.get_products_pivoted(
+        filters=filters, page=page, page_size=page_size,
+        sort_by=sort_by, sort_dir=sort_dir, search=search,
+    )
 
 
 @router.patch("/products/{product_id}")
@@ -285,7 +343,8 @@ def export_products(request: Request, filters: dict = Depends(_filters)):
     export_cols = [
         "product_id", "product_name", "brand_name", "commercial_category_name",
         "sub_category_name", "global_tier", "action_type",
-        "bf_sale_price", "now_price", "now_sale_price", "talabat_sale_price", "sale_PI",
+        "bf_sale_price", "now_price", "now_sale_price",
+        "competitor_name", "competitor_sale_price", "sale_PI",
         "total_revenue", "avg_daily_quantity", "days_since_update",
         "competitor_product_name", "match_potential_product_name", "similarity_score",
     ]

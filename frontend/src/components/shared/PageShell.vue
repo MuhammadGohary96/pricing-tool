@@ -1,33 +1,37 @@
 <template>
   <div>
     <!-- Loading skeleton -->
-    <div v-if="loading" class="flex flex-col gap-4 animate-fade-in-up">
-      <!-- Skeleton filter bar -->
-      <div class="bg-white rounded-lg shadow-card px-5 py-3">
-        <div class="flex gap-3">
-          <div class="skeleton-shimmer h-8 w-32 rounded-lg"></div>
-          <div class="skeleton-shimmer h-8 w-32 rounded-lg"></div>
-          <div class="skeleton-shimmer h-8 w-32 rounded-lg"></div>
-          <div class="skeleton-shimmer h-8 w-24 rounded-lg"></div>
+    <div v-if="loading">
+      <slot name="skeleton">
+        <div class="flex flex-col gap-4 animate-fade-in-up">
+          <!-- Skeleton filter bar -->
+          <div class="bg-white rounded-lg shadow-card px-5 py-3">
+            <div class="flex gap-3">
+              <div class="skeleton-shimmer h-8 w-32 rounded-lg"></div>
+              <div class="skeleton-shimmer h-8 w-32 rounded-lg"></div>
+              <div class="skeleton-shimmer h-8 w-32 rounded-lg"></div>
+              <div class="skeleton-shimmer h-8 w-24 rounded-lg"></div>
+            </div>
+          </div>
+          <!-- Skeleton KPI strip -->
+          <div class="flex gap-3">
+            <div v-for="i in 5" :key="i" class="flex-1 bg-white rounded-lg shadow-card px-4 py-3">
+              <div class="skeleton-shimmer h-3 w-16 rounded mb-2"></div>
+              <div class="skeleton-shimmer h-7 w-20 rounded"></div>
+            </div>
+          </div>
+          <!-- Skeleton main content -->
+          <div class="flex gap-4">
+            <div class="w-5/12 min-w-0 shrink-0 bg-white rounded-lg shadow-card p-4">
+              <div class="skeleton-shimmer h-[360px] rounded"></div>
+            </div>
+            <div class="flex-1 bg-white rounded-lg shadow-card p-4">
+              <div class="skeleton-shimmer h-[260px] rounded mb-4"></div>
+              <div class="skeleton-shimmer h-[260px] rounded"></div>
+            </div>
+          </div>
         </div>
-      </div>
-      <!-- Skeleton KPI strip -->
-      <div class="flex gap-3">
-        <div v-for="i in 5" :key="i" class="flex-1 bg-white rounded-lg shadow-card px-4 py-3">
-          <div class="skeleton-shimmer h-3 w-16 rounded mb-2"></div>
-          <div class="skeleton-shimmer h-7 w-20 rounded"></div>
-        </div>
-      </div>
-      <!-- Skeleton main content -->
-      <div class="flex gap-4">
-        <div class="w-5/12 min-w-0 shrink-0 bg-white rounded-lg shadow-card p-4">
-          <div class="skeleton-shimmer h-[360px] rounded"></div>
-        </div>
-        <div class="flex-1 bg-white rounded-lg shadow-card p-4">
-          <div class="skeleton-shimmer h-[260px] rounded mb-4"></div>
-          <div class="skeleton-shimmer h-[260px] rounded"></div>
-        </div>
-      </div>
+      </slot>
     </div>
 
     <!-- Error banner -->

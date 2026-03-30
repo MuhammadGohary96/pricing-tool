@@ -39,10 +39,15 @@ class BlendedPIRow(BaseModel):
     eligible_product_count: int = 0
     needs_action_count: int = 0
     product_pis: list[ProductPIPoint] = []
+    competitor_blended_pis: dict[str, Optional[float]] = {}
+    competitor_product_pis: dict[str, list[ProductPIPoint]] = {}
+    competitor_used_counts: dict[str, int] = {}
+    competitor_needs_action_counts: dict[str, int] = {}
 
 
 class BlendedPITable(BaseModel):
     items: list[BlendedPIRow]
+    competitors: list[str] = []
 
 
 class FunnelStage(BaseModel):
@@ -80,9 +85,10 @@ class WorklistRow(BaseModel):
     tier_order: int
     action_type: str
     action_symbol: str
+    competitor_name: Optional[str] = None
     similarity_score: Optional[float] = None
     bf_sale_price: float
-    talabat_sale_price: Optional[float] = None
+    competitor_sale_price: Optional[float] = None
     days_since_update: Optional[int] = None
     total_revenue: float
 
@@ -97,9 +103,10 @@ class MatchReviewRow(BaseModel):
     bf_product_name: str
     bf_brand: str
     bf_price: float
-    suggested_talabat_name: str
+    competitor_name: Optional[str] = None
+    suggested_competitor_name: str
     similarity_score: float
-    estimated_talabat_price: float
+    estimated_competitor_price: float
 
 
 class MatchReviewTable(BaseModel):
@@ -156,3 +163,4 @@ class FilterOptions(BaseModel):
     global_tiers: list[str]
     subcat_tiers: list[str]
     action_types: list[str]
+    competitors: list[str] = []

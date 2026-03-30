@@ -3,7 +3,7 @@
     <div class="px-4 py-3 border-b border-grey-100 flex items-center justify-between">
       <div class="flex items-center gap-1.5">
         <span class="text-subheading font-bold text-grey-900">Blended PI by Subcategory</span>
-        <HelpTooltip text="Weighted price index = Competitor price \u00F7 BF price for eligible products. PI > 1 = BF cheaper, PI < 1 = BF more expensive." />
+        <HelpTooltip text="Weighted price index = Competitor price ÷ BF price for eligible products. PI > 1 = BF cheaper, PI < 1 = BF more expensive." />
       </div>
       <div class="flex items-center gap-2">
         <span class="text-micro px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary font-medium">Click row to filter</span>
@@ -14,8 +14,44 @@
       <table class="w-full">
         <thead class="sticky top-0 bg-grey-50 z-10">
           <tr>
+            <!-- Fixed columns -->
             <th
-              v-for="col in columns"
+              v-for="col in fixedColumns"
+              :key="col.key"
+              class="px-3 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide border-b border-grey-200 select-none transition-colors whitespace-nowrap"
+              :class="col.sortable !== false ? 'cursor-pointer hover:text-grey-900' : ''"
+              @click="col.sortable !== false && toggleSort(col.key)"
+            >
+              <span class="inline-flex items-center gap-1">
+                {{ col.label }}
+                <span
+                  v-if="col.dynamicLabel && selectedCompetitor"
+                  class="px-1.5 py-px rounded-full font-bold"
+                  style="font-size: 9px; background:#EDE9FE;color:#5B21B6"
+                >{{ selectedCompetitor }}</span>
+                <span
+                  v-if="col.sortable !== false"
+                  class="text-[10px] transition-colors"
+                  :class="sortKey === col.key ? 'text-brand-primary' : 'text-grey-300'"
+                >{{ sortKey === col.key ? (sortDir === 'asc' ? '↑' : '↓') : '↕' }}</span>
+              </span>
+            </th>
+            <!-- Per-competitor PI columns -->
+            <th
+              v-for="comp in visibleCompetitors"
+              :key="'comp-' + comp"
+              class="px-2 py-2 text-center text-caption font-semibold uppercase tracking-wide border-b border-grey-200 whitespace-nowrap cursor-pointer select-none transition-colors"
+              :class="selectedCompetitor === comp ? 'text-brand-primary bg-brand-50' : 'text-grey-500 hover:text-grey-900'"
+              @click="toggleCompetitor(comp)"
+            >
+              <span class="inline-flex items-center gap-1">
+                {{ comp }}
+                <span v-if="selectedCompetitor === comp" class="text-[10px]">●</span>
+              </span>
+            </th>
+            <!-- Remaining fixed columns -->
+            <th
+              v-for="col in trailingColumns"
               :key="col.key"
               class="px-3 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide border-b border-grey-200 select-none transition-colors whitespace-nowrap"
               :class="col.sortable !== false ? 'cursor-pointer hover:text-grey-900' : ''"
@@ -42,29 +78,38 @@
             <td class="px-3 py-1.5 text-body text-grey-900 text-center truncate" style="max-width: 180px" :title="row.sub_category_name">
               {{ row.sub_category_name }}
             </td>
-            <td class="px-3 py-1.5 text-center" style="min-width: 140px">
-              <PIInlineBar :value="row.blended_pi" />
+            <td class="px-3 py-1.5 text-center font-mono text-body font-bold" :class="piTextClass(rowMinPI(row))">
+              {{ rowMinPI(row)?.toFixed(2) ?? '—' }}
+            </td>
+            <td class="px-3 py-1.5 text-center font-mono text-body font-bold" :class="piTextClass(rowMaxPI(row))">
+              {{ rowMaxPI(row)?.toFixed(2) ?? '—' }}
             </td>
             <td class="px-3 py-1.5 text-center" style="min-width: 180px">
               <PIStripPlot
-                :points="row.product_pis || []"
-                :blended-pi="row.blended_pi"
+                :points="stripPlotPoints(row)"
+                :blended-pi="stripPlotBlendedPi(row)"
                 :subcategory="row.sub_category_name"
                 @select-product="(payload) => $emit('select-product', payload)"
               />
             </td>
-            <td class="px-3 py-1.5 text-center">
-              <DirectionArrow :deviation="row.pi_deviation" />
-            </td>
+            <!-- Per-competitor blended PI cells -->
+            <td
+              v-for="comp in visibleCompetitors"
+              :key="'val-' + comp"
+              class="px-2 py-1.5 text-center font-mono text-body font-bold whitespace-nowrap"
+              :class="compPiClass(row.competitor_blended_pis?.[comp])"
+              :style="selectedCompetitor === comp ? 'background: rgba(79,70,229,0.04)' : ''"
+            >{{ row.competitor_blended_pis?.[comp]?.toFixed(2) ?? '—' }}</td>
+            <!-- Trailing columns -->
             <td class="px-3 py-1.5 text-body text-grey-700 text-center font-mono">{{ row.total_product_count }}</td>
             <td class="px-3 py-1.5 text-body text-center font-mono">
               <span class="text-green-700">{{ row.eligible_product_count }}</span>
             </td>
             <td class="px-3 py-1.5 text-body text-center font-mono">
-              <span class="text-brand-darkest">{{ row.used_product_count }}</span>
+              <span class="text-brand-darkest">{{ rowUsed(row) }}</span>
             </td>
             <td class="px-3 py-1.5 text-body text-center font-mono">
-              <span v-if="row.needs_action_count > 0" class="text-amber-600">{{ row.needs_action_count }}</span>
+              <span v-if="rowActions(row) > 0" class="text-amber-600">{{ rowActions(row) }}</span>
               <span v-else class="text-grey-300">0</span>
             </td>
             <td class="px-3 py-1.5 text-body text-grey-700 text-center font-mono">{{ formatRevenue(row.total_revenue) }}</td>
@@ -103,25 +148,67 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
-import PIInlineBar from '../shared/PIInlineBar.vue'
+import { ref, computed, watch, watchEffect } from 'vue'
 import PIStripPlot from '../shared/PIStripPlot.vue'
-import DirectionArrow from '../shared/DirectionArrow.vue'
 import HelpTooltip from '../shared/HelpTooltip.vue'
+import { piTextClass } from '../../utils/piColor'
 
 const props = defineProps({
   data: { type: Array, default: () => [] },
+  competitors: { type: Array, default: () => [] },
+  selectedCompetitors: { type: Array, default: () => [] },
 })
 
 defineEmits(['select', 'select-product'])
 
 watch(() => props.data, () => { page.value = 1 })
 
-const columns = [
+const visibleCompetitors = computed(() => {
+  if (props.selectedCompetitors.length > 0) {
+    return props.competitors.filter(c => props.selectedCompetitors.includes(c))
+  }
+  return props.competitors
+})
+
+// Default selectedCompetitor to Talabat (or first available competitor)
+const selectedCompetitor = ref(null)
+watchEffect(() => {
+  const comps = visibleCompetitors.value
+  if (!comps.length) { selectedCompetitor.value = null; return }
+  // If current selection is no longer visible, reset to preferred default
+  if (!selectedCompetitor.value || !comps.includes(selectedCompetitor.value)) {
+    selectedCompetitor.value = comps.find(c => c.toLowerCase().includes('talabat')) ?? comps[0]
+  }
+})
+
+function toggleCompetitor(comp) {
+  selectedCompetitor.value = selectedCompetitor.value === comp ? null : comp
+}
+
+// Strip plot: show competitor-specific PIs when a competitor header is clicked
+function stripPlotPoints(row) {
+  if (selectedCompetitor.value && row.competitor_product_pis?.[selectedCompetitor.value]) {
+    return row.competitor_product_pis[selectedCompetitor.value]
+  }
+  return row.product_pis || []
+}
+
+function stripPlotBlendedPi(row) {
+  if (selectedCompetitor.value && row.competitor_blended_pis?.[selectedCompetitor.value] != null) {
+    return row.competitor_blended_pis[selectedCompetitor.value]
+  }
+  return row.blended_pi
+}
+
+// Columns split around competitor PI columns
+const fixedColumns = [
   { key: 'sub_category_name', label: 'Subcategory' },
-  { key: 'blended_pi', label: 'Blended PI' },
-  { key: 'product_pis', label: 'PI Distribution', sortable: false },
-  { key: 'pi_deviation', label: 'Direction' },
+  { key: 'min_pi', label: 'Min PI' },
+  { key: 'max_pi', label: 'Max PI' },
+  { key: 'product_pis', label: 'PI Distribution', sortable: false, dynamicLabel: true },
+]
+
+const trailingColumns = [
   { key: 'total_product_count', label: 'Total' },
   { key: 'eligible_product_count', label: 'Eligible' },
   { key: 'used_product_count', label: 'Used' },
@@ -129,7 +216,7 @@ const columns = [
   { key: 'total_revenue', label: 'Revenue' },
 ]
 
-const sortKey = ref('blended_pi')
+const sortKey = ref('max_pi')
 const sortDir = ref('desc')
 const page = ref(1)
 const pageSize = 20
@@ -144,12 +231,43 @@ function toggleSort(key) {
   page.value = 1
 }
 
+function rowMinPI(row) {
+  const vals = Object.values(row.competitor_blended_pis || {}).filter(v => v != null)
+  return vals.length ? Math.min(...vals) : null
+}
+
+function rowMaxPI(row) {
+  const vals = Object.values(row.competitor_blended_pis || {}).filter(v => v != null)
+  return vals.length ? Math.max(...vals) : null
+}
+
+function rowUsed(row) {
+  if (selectedCompetitor.value)
+    return row.competitor_used_counts?.[selectedCompetitor.value] ?? row.used_product_count
+  return row.used_product_count
+}
+
+function rowActions(row) {
+  if (selectedCompetitor.value)
+    return row.competitor_needs_action_counts?.[selectedCompetitor.value] ?? row.needs_action_count
+  return row.needs_action_count
+}
+
 const allSortedData = computed(() => {
   const data = [...props.data]
   const dir = sortDir.value === 'asc' ? 1 : -1
   return data.sort((a, b) => {
-    const va = a[sortKey.value] ?? -Infinity
-    const vb = b[sortKey.value] ?? -Infinity
+    let va, vb
+    if (sortKey.value === 'min_pi') {
+      va = rowMinPI(a) ?? -Infinity
+      vb = rowMinPI(b) ?? -Infinity
+    } else if (sortKey.value === 'max_pi') {
+      va = rowMaxPI(a) ?? -Infinity
+      vb = rowMaxPI(b) ?? -Infinity
+    } else {
+      va = a[sortKey.value] ?? -Infinity
+      vb = b[sortKey.value] ?? -Infinity
+    }
     if (va < vb) return -1 * dir
     if (va > vb) return 1 * dir
     return 0
@@ -170,6 +288,11 @@ const sortedData = computed(() => {
   const start = (page.value - 1) * pageSize
   return allSortedData.value.slice(start, start + pageSize)
 })
+
+function compPiClass(val) {
+  if (val == null) return 'text-grey-300'
+  return piTextClass(val)
+}
 
 function formatRevenue(val) {
   if (val == null) return '--'
