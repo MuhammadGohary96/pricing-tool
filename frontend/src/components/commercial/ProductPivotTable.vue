@@ -34,24 +34,36 @@
     <div class="overflow-auto flex-1 min-h-0">
       <table class="w-full border-separate border-spacing-0">
         <!-- Grouped header: fixed cols + one group per competitor -->
-        <thead class="sticky top-0 z-10">
+        <thead>
           <!-- Row 1: group labels -->
           <tr class="bg-grey-100">
-            <th class="px-3 py-1.5 border-b border-r border-grey-200 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide whitespace-nowrap" :colspan="fixedCols.length">Product Info</th>
+            <th
+              :colspan="frozenColsCount"
+              class="px-3 py-1.5 border-b border-r border-grey-200 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide whitespace-nowrap bg-grey-100"
+              style="position: sticky; top: 0; z-index: 40;"
+            >Product Info</th>
+            <th
+              :colspan="nonFrozenFixedCount"
+              class="px-3 py-1.5 border-b border-r border-grey-200 bg-grey-100 sticky top-0 z-40"
+            ></th>
             <th
               v-for="comp in competitors"
               :key="comp"
-              class="px-3 py-1.5 border-b border-r border-grey-200 text-center text-caption font-semibold text-grey-700 uppercase tracking-wide whitespace-nowrap"
+              class="px-3 py-1.5 border-b border-r border-grey-200 text-center text-caption font-semibold text-grey-700 uppercase tracking-wide whitespace-nowrap sticky top-0 z-40 bg-grey-100"
               colspan="2"
             >{{ comp }}</th>
-            <th class="px-2 py-1.5 border-b border-grey-200 w-9"></th>
+            <th class="px-2 py-1.5 border-b border-grey-200 w-9 sticky top-0 z-40 bg-grey-100"></th>
           </tr>
           <!-- Row 2: column headers -->
           <tr class="bg-grey-50">
             <th
               v-for="col in fixedCols"
               :key="col.key"
-              class="px-3 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide cursor-pointer hover:text-grey-900 border-b border-r border-grey-200 whitespace-nowrap select-none transition-colors"
+              :style="frozenThStyle(col)"
+              :class="[
+                'px-3 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide cursor-pointer hover:text-grey-900 border-b border-r border-grey-200 whitespace-nowrap select-none transition-colors',
+                col.frozen ? 'bg-grey-50' : '',
+              ]"
               :aria-sort="sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'"
               @click="toggleSort(col.key)"
             >
@@ -63,9 +75,10 @@
               </span>
             </th>
             <template v-for="comp in competitors" :key="comp">
-              <th class="px-3 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide border-b border-grey-200 whitespace-nowrap">Price</th>
+              <th class="px-3 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide border-b border-grey-200 whitespace-nowrap" :style="row2StickyStyle">Price</th>
               <th
                 class="px-3 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide cursor-pointer hover:text-grey-900 border-b border-r border-grey-200 whitespace-nowrap select-none transition-colors"
+                :style="row2StickyStyle"
                 @click="toggleSort(`${comp}_pi`)"
               >
                 <span class="inline-flex items-center gap-1 justify-end">
@@ -76,7 +89,7 @@
                 </span>
               </th>
             </template>
-            <th class="px-2 py-2 border-b border-grey-200 w-9"></th>
+            <th class="px-2 py-2 border-b border-grey-200 w-9" :style="row2StickyStyle"></th>
           </tr>
         </thead>
 
@@ -86,18 +99,18 @@
             :key="row.product_id"
             class="border-b border-grey-100 hover:bg-brand-50 transition-colors"
           >
-            <!-- Product -->
-            <td class="px-3 py-2 border-r border-grey-100" style="max-width: 200px; min-width: 160px">
+            <!-- Product (frozen) -->
+            <td class="px-3 py-2 border-r border-grey-100" :style="frozenTdStyle(fixedCols[0])" style="width: 200px; min-width: 200px">
               <div class="text-body text-grey-900 truncate font-medium" :title="row.product_name">{{ row.product_name }}</div>
               <div class="flex items-center gap-1 mt-0.5 flex-wrap">
                 <span v-if="row.eligible_product" class="inline-block px-1.5 py-px rounded-full text-micro font-medium bg-green-50 text-green-700 leading-tight">Eligible</span>
                 <span v-if="row.used_product" class="inline-block px-1.5 py-px rounded-full text-micro font-medium bg-brand-50 text-brand-darkest leading-tight">Used</span>
               </div>
             </td>
-            <!-- Tier -->
-            <td class="px-3 py-2 border-r border-grey-100"><TierBadge :tier="row.global_tier" /></td>
-            <!-- Action (multi-badge with counts, dynamic per visible competitors) -->
-            <td class="px-3 py-2 border-r border-grey-100">
+            <!-- Tier (frozen) -->
+            <td class="px-3 py-2 border-r border-grey-100" :style="frozenTdStyle(fixedCols[1])" style="width: 80px; min-width: 80px"><TierBadge :tier="row.global_tier" /></td>
+            <!-- Action (frozen) -->
+            <td class="px-3 py-2 border-r border-grey-100" :style="frozenTdStyle(fixedCols[2])" style="width: 120px; min-width: 120px">
               <div class="flex items-center gap-1 flex-wrap">
                 <span
                   v-for="(count, action) in effectiveActionCounts(row)"
@@ -108,8 +121,8 @@
                 >{{ ACTION_SHORT[action] || action }} ×{{ count }}</span>
               </div>
             </td>
-            <!-- BF Price — editable -->
-            <td class="px-3 py-2 border-r border-grey-100 text-right">
+            <!-- BF Price — editable (frozen, last) -->
+            <td class="px-3 py-2 text-right" :style="frozenTdStyle(fixedCols[3])" style="width: 100px; min-width: 100px; border-right: 2px solid #d1d5db; box-shadow: 2px 0 6px -2px rgba(0,0,0,0.12)">
               <div v-if="editingId === row.product_id" class="flex items-center justify-end gap-1">
                 <input
                   ref="editInput"
@@ -229,14 +242,38 @@ const store = useCommercialStore()
 const toast = useToast()
 
 const fixedCols = [
-  { key: 'product_name', label: 'Product' },
-  { key: 'global_tier', label: 'Tier' },
-  { key: 'action_type', label: 'Action' },
-  { key: 'bf_sale_price', label: 'BF Price' },
-  { key: 'worst_pi', label: 'Worst PI' },
-  { key: 'weighted_score', label: 'Score' },
-  { key: 'total_revenue', label: 'Revenue' },
+  { key: 'product_name',   label: 'Product',  width: 200, frozen: true  },
+  { key: 'global_tier',    label: 'Tier',     width: 80,  frozen: true  },
+  { key: 'action_type',    label: 'Action',   width: 120, frozen: true  },
+  { key: 'bf_sale_price',  label: 'BF Price', width: 100, frozen: true  },
+  { key: 'worst_pi',       label: 'Worst PI', width: 80,  frozen: false },
+  { key: 'weighted_score', label: 'Score',    width: 70,  frozen: false },
+  { key: 'total_revenue',  label: 'Revenue',  width: 80,  frozen: false },
 ]
+
+const frozenOffset = (() => {
+  const map = {}
+  let left = 0
+  for (const col of fixedCols) {
+    if (col.frozen) { map[col.key] = left; left += col.width }
+  }
+  return map
+})()
+
+const frozenColsCount = fixedCols.filter(c => c.frozen).length
+const nonFrozenFixedCount = fixedCols.filter(c => !c.frozen).length
+const row2StickyStyle = { position: 'sticky', top: '29px', zIndex: 40, background: '#F9FAFB' }
+
+function frozenThStyle(col) {
+  const style = { position: 'sticky', top: '29px', zIndex: col.frozen ? 41 : 40, background: '#F9FAFB' }
+  if (col.frozen) style.left = frozenOffset[col.key] + 'px'
+  return style
+}
+
+function frozenTdStyle(col) {
+  if (!col.frozen) return {}
+  return { position: 'sticky', left: frozenOffset[col.key] + 'px', zIndex: 10, background: 'white' }
+}
 
 const sortKey = computed(() => store.sortBy)
 const sortDir = computed(() => store.sortDir)
