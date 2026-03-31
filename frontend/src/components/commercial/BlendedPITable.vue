@@ -243,13 +243,13 @@ function rowMaxPI(row) {
 
 function rowUsed(row) {
   if (selectedCompetitor.value)
-    return row.competitor_used_counts?.[selectedCompetitor.value] ?? row.used_product_count
+    return row.competitor_used_counts?.[selectedCompetitor.value] ?? 0
   return row.used_product_count
 }
 
 function rowActions(row) {
   if (selectedCompetitor.value)
-    return row.competitor_needs_action_counts?.[selectedCompetitor.value] ?? row.needs_action_count
+    return row.competitor_needs_action_counts?.[selectedCompetitor.value] ?? 0
   return row.needs_action_count
 }
 
