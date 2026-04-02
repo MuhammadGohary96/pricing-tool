@@ -32,6 +32,14 @@ export function piBgClass(pi) {
   }
 }
 
+/** Colorblind-safe directional arrow for PI values */
+export function piArrow(pi) {
+  if (pi == null) return ''
+  if (pi > PI_EXPENSIVE) return '▲'
+  if (pi < PI_CHEAP) return '▼'
+  return '●'
+}
+
 export function piBarGradient(pi) {
   switch (piZone(pi)) {
     case 'green': return 'linear-gradient(90deg, #34D399, #059669)'

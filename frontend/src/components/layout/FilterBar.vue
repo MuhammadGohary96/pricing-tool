@@ -74,6 +74,17 @@
       <Transition name="filter">
         <button
           v-if="filters.hasActiveFilters"
+          @click="copyLink"
+          class="text-body text-grey-500 font-medium px-3 py-1.5 rounded-lg border border-grey-200 bg-white hover:bg-grey-50 transition-colors inline-flex items-center gap-1.5"
+        >
+          <LinkIcon class="w-3.5 h-3.5" />
+          {{ linkCopied ? 'Copied!' : 'Copy link' }}
+        </button>
+      </Transition>
+
+      <Transition name="filter">
+        <button
+          v-if="filters.hasActiveFilters"
           @click="filters.clearAll()"
           class="text-body text-brand-primary font-bold px-3 py-1.5 rounded-lg border border-brand-light bg-brand-50 hover:bg-brand-lightest transition-colors"
         >
@@ -120,7 +131,8 @@
 </template>
 
 <script setup>
-import { Filter as FilterIcon, Loader2 } from 'lucide-vue-next'
+import { ref } from 'vue'
+import { Filter as FilterIcon, Loader2, Link as LinkIcon } from 'lucide-vue-next'
 import MultiSelect from '../shared/MultiSelect.vue'
 import { useFiltersStore } from '../../stores/filters'
 
@@ -130,6 +142,15 @@ defineProps({
 })
 
 const filters = useFiltersStore()
+const linkCopied = ref(false)
+
+async function copyLink() {
+  try {
+    await navigator.clipboard.writeText(window.location.href)
+    linkCopied.value = true
+    setTimeout(() => { linkCopied.value = false }, 2000)
+  } catch {}
+}
 
 function removeChip(key, value) {
   const current = [...filters[key]]

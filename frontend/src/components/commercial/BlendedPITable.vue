@@ -18,8 +18,11 @@
             <th
               v-for="col in fixedColumns"
               :key="col.key"
-              class="px-3 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide border-b border-grey-200 select-none transition-colors whitespace-nowrap"
-              :class="col.sortable !== false ? 'cursor-pointer hover:text-grey-900' : ''"
+              class="px-3 py-2 text-center text-caption font-semibold uppercase tracking-wide border-b border-grey-200 select-none transition-colors whitespace-nowrap"
+              :class="[
+                col.sortable !== false ? 'cursor-pointer hover:text-grey-900' : '',
+                sortKey === col.key ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-grey-500',
+              ]"
               @click="col.sortable !== false && toggleSort(col.key)"
             >
               <span class="inline-flex items-center gap-1">
@@ -53,8 +56,11 @@
             <th
               v-for="col in trailingColumns"
               :key="col.key"
-              class="px-3 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide border-b border-grey-200 select-none transition-colors whitespace-nowrap"
-              :class="col.sortable !== false ? 'cursor-pointer hover:text-grey-900' : ''"
+              class="px-3 py-2 text-center text-caption font-semibold uppercase tracking-wide border-b border-grey-200 select-none transition-colors whitespace-nowrap"
+              :class="[
+                col.sortable !== false ? 'cursor-pointer hover:text-grey-900' : '',
+                sortKey === col.key ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-grey-500',
+              ]"
               @click="col.sortable !== false && toggleSort(col.key)"
             >
               <span class="inline-flex items-center gap-1">
@@ -79,10 +85,10 @@
               {{ row.sub_category_name }}
             </td>
             <td class="px-3 py-1.5 text-center font-mono text-body font-bold" :class="piTextClass(rowMinPI(row))">
-              {{ rowMinPI(row)?.toFixed(2) ?? '—' }}
+              <span class="text-[10px] mr-0.5 opacity-70">{{ piArrow(rowMinPI(row)) }}</span>{{ rowMinPI(row)?.toFixed(2) ?? '—' }}
             </td>
             <td class="px-3 py-1.5 text-center font-mono text-body font-bold" :class="piTextClass(rowMaxPI(row))">
-              {{ rowMaxPI(row)?.toFixed(2) ?? '—' }}
+              <span class="text-[10px] mr-0.5 opacity-70">{{ piArrow(rowMaxPI(row)) }}</span>{{ rowMaxPI(row)?.toFixed(2) ?? '—' }}
             </td>
             <td class="px-3 py-1.5 text-center" style="min-width: 180px">
               <PIStripPlot
@@ -99,7 +105,7 @@
               class="px-2 py-1.5 text-center font-mono text-body font-bold whitespace-nowrap"
               :class="compPiClass(row.competitor_blended_pis?.[comp])"
               :style="selectedCompetitor === comp ? 'background: rgba(79,70,229,0.04)' : ''"
-            >{{ row.competitor_blended_pis?.[comp]?.toFixed(2) ?? '—' }}</td>
+            ><span v-if="row.competitor_blended_pis?.[comp] != null" class="text-[10px] mr-0.5 opacity-70">{{ piArrow(row.competitor_blended_pis[comp]) }}</span>{{ row.competitor_blended_pis?.[comp]?.toFixed(2) ?? '—' }}</td>
             <!-- Trailing columns -->
             <td class="px-3 py-1.5 text-body text-grey-700 text-center font-mono">{{ row.total_product_count }}</td>
             <td class="px-3 py-1.5 text-body text-center font-mono">
@@ -112,7 +118,7 @@
               <span v-if="rowActions(row) > 0" class="text-amber-600">{{ rowActions(row) }}</span>
               <span v-else class="text-grey-300">0</span>
             </td>
-            <td class="px-3 py-1.5 text-body text-grey-700 text-center font-mono">{{ formatRevenue(row.total_revenue) }}</td>
+            <td class="px-3 py-1.5 text-body text-grey-700 text-center font-mono" :title="row.total_revenue != null ? row.total_revenue.toLocaleString() + ' EGP' : ''">{{ formatRevenue(row.total_revenue) }}</td>
           </tr>
         </tbody>
       </table>
@@ -151,7 +157,7 @@
 import { ref, computed, watch, watchEffect } from 'vue'
 import PIStripPlot from '../shared/PIStripPlot.vue'
 import HelpTooltip from '../shared/HelpTooltip.vue'
-import { piTextClass } from '../../utils/piColor'
+import { piTextClass, piArrow } from '../../utils/piColor'
 
 const props = defineProps({
   data: { type: Array, default: () => [] },
@@ -170,19 +176,26 @@ const visibleCompetitors = computed(() => {
   return props.competitors
 })
 
-// Default selectedCompetitor to Talabat (or first available competitor)
+// Default selectedCompetitor to Talabat (or first available competitor), persisted in localStorage
+const LS_KEY = 'bf_selected_competitor_blended'
 const selectedCompetitor = ref(null)
 watchEffect(() => {
   const comps = visibleCompetitors.value
   if (!comps.length) { selectedCompetitor.value = null; return }
   // If current selection is no longer visible, reset to preferred default
   if (!selectedCompetitor.value || !comps.includes(selectedCompetitor.value)) {
-    selectedCompetitor.value = comps.find(c => c.toLowerCase().includes('talabat')) ?? comps[0]
+    const stored = localStorage.getItem(LS_KEY)
+    selectedCompetitor.value = (stored && comps.includes(stored))
+      ? stored
+      : (comps.find(c => c.toLowerCase().includes('talabat')) ?? comps[0])
   }
 })
 
 function toggleCompetitor(comp) {
-  selectedCompetitor.value = selectedCompetitor.value === comp ? null : comp
+  const next = selectedCompetitor.value === comp ? null : comp
+  selectedCompetitor.value = next
+  if (next) localStorage.setItem(LS_KEY, next)
+  else localStorage.removeItem(LS_KEY)
 }
 
 // Strip plot: show competitor-specific PIs when a competitor header is clicked

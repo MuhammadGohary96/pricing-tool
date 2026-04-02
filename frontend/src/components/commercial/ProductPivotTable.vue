@@ -61,8 +61,9 @@
               :key="col.key"
               :style="frozenThStyle(col)"
               :class="[
-                'px-3 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide cursor-pointer hover:text-grey-900 border-b border-r border-grey-200 whitespace-nowrap select-none transition-colors',
+                'px-3 py-2 text-left text-caption font-semibold uppercase tracking-wide cursor-pointer hover:text-grey-900 border-b border-r border-grey-200 whitespace-nowrap select-none transition-colors',
                 col.frozen ? 'bg-grey-50' : '',
+                sortKey === col.key ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-grey-500',
               ]"
               :aria-sort="sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'"
               @click="toggleSort(col.key)"
@@ -77,7 +78,8 @@
             <template v-for="comp in competitors" :key="comp">
               <th class="px-3 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide border-b border-grey-200 whitespace-nowrap" :style="row2StickyStyle">Price</th>
               <th
-                class="px-3 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide cursor-pointer hover:text-grey-900 border-b border-r border-grey-200 whitespace-nowrap select-none transition-colors"
+                class="px-3 py-2 text-right text-caption font-semibold uppercase tracking-wide cursor-pointer hover:text-grey-900 border-b border-r border-grey-200 whitespace-nowrap select-none transition-colors"
+                :class="sortKey === `${comp}_pi` ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-grey-500'"
                 :style="row2StickyStyle"
                 @click="toggleSort(`${comp}_pi`)"
               >
@@ -122,7 +124,10 @@
               </div>
             </td>
             <!-- BF Price — editable (frozen, last) -->
-            <td class="px-3 py-2 text-right" :style="frozenTdStyle(fixedCols[3])" style="width: 100px; min-width: 100px; border-right: 2px solid #d1d5db; box-shadow: 2px 0 6px -2px rgba(0,0,0,0.12)">
+            <td
+              class="px-3 py-2 text-right"
+              :style="[frozenTdStyle(fixedCols[3]), { width: '100px', minWidth: '100px', borderRight: '2px solid #d1d5db', boxShadow: '2px 0 6px -2px rgba(0,0,0,0.12)', background: flashId === row.product_id ? '#dcfce7' : 'white', transition: 'background-color 0.7s' }]"
+            >
               <div v-if="editingId === row.product_id" class="flex items-center justify-end gap-1">
                 <input
                   ref="editInput"
@@ -159,11 +164,12 @@
             <td
               class="px-3 py-2 border-r border-grey-100 text-right font-mono font-bold"
               :class="[piBgClass(effectiveWorstPI(row)), piTextClass(effectiveWorstPI(row))]"
-            >{{ effectiveWorstPI(row)?.toFixed(2) ?? '—' }}</td>
+
+              ><span v-if="effectiveWorstPI(row) != null" class="text-[10px] mr-0.5 opacity-70">{{ piArrow(effectiveWorstPI(row)) }}</span>{{ effectiveWorstPI(row)?.toFixed(2) ?? '—' }}</td>
             <!-- Score (combined_score_global) -->
             <td class="px-3 py-2 border-r border-grey-100 text-right text-body text-grey-600 font-mono">{{ row.weighted_score?.toFixed(3) ?? '—' }}</td>
             <!-- Revenue -->
-            <td class="px-3 py-2 border-r border-grey-100 text-right text-body text-grey-600 font-mono">{{ formatRevenue(row.total_revenue) }}</td>
+            <td class="px-3 py-2 border-r border-grey-100 text-right text-body text-grey-600 font-mono" :title="row.total_revenue != null ? row.total_revenue.toLocaleString() + ' EGP' : ''">{{ formatRevenue(row.total_revenue) }}</td>
 
             <!-- Competitor columns -->
             <template v-for="comp in competitors" :key="comp">
@@ -183,7 +189,8 @@
                 :class="row[`${comp}_pi`] != null
                   ? [piBgClass(row[`${comp}_pi`]), piTextClass(row[`${comp}_pi`])]
                   : 'text-grey-300'"
-              >{{ row[`${comp}_pi`]?.toFixed(2) ?? '—' }}</td>
+
+              ><span v-if="row[`${comp}_pi`] != null" class="text-[10px] mr-0.5 opacity-70">{{ piArrow(row[`${comp}_pi`]) }}</span>{{ row[`${comp}_pi`]?.toFixed(2) ?? '—' }}</td>
             </template>
 
             <!-- Saving indicator -->
@@ -193,7 +200,7 @@
           </tr>
         </tbody>
       </table>
-      <EmptyState v-if="!data.length" :icon="SearchIcon" title="No products found" message="No products match your search or filters." />
+      <EmptyState v-if="!data.length" :icon="SearchIcon" title="No products found" message="No products match your search or filters." :hint="emptyHint" />
     </div>
 
     <!-- Pagination -->
@@ -223,8 +230,9 @@ import TierBadge from '../shared/TierBadge.vue'
 import EmptyState from '../shared/EmptyState.vue'
 import ExportButton from '../shared/ExportButton.vue'
 import { Search as SearchIcon, Loader2 } from 'lucide-vue-next'
-import { piTextClass, piBgClass } from '../../utils/piColor'
+import { piTextClass, piBgClass, piArrow } from '../../utils/piColor'
 import { useCommercialStore } from '../../stores/commercial'
+import { useFiltersStore } from '../../stores/filters'
 import { useToast } from '../../composables/useToast'
 
 const props = defineProps({
@@ -239,7 +247,21 @@ const props = defineProps({
 const emit = defineEmits(['page', 'toggleNeedsAction'])
 
 const store = useCommercialStore()
+const filters = useFiltersStore()
 const toast = useToast()
+
+const emptyHint = computed(() => {
+  if (!filters.hasActiveFilters) return ''
+  const names = []
+  if (filters.mainCategory.length) names.push('Category')
+  if (filters.subCategory.length) names.push('Subcategory')
+  if (filters.globalTier.length) names.push('Tier')
+  if (filters.brand.length) names.push('Brand')
+  if (filters.actionType.length) names.push('Action')
+  if (filters.competitor.length) names.push('Competitor')
+  if (names.length === 0) return 'Try adjusting your filters'
+  return `Try clearing ${names.slice(0, 2).join(' or ')} filters`
+})
 
 const fixedCols = [
   { key: 'product_name',   label: 'Product',  width: 200, frozen: true  },
@@ -307,6 +329,7 @@ const editingId = ref(null)
 const editValue = ref(null)
 const saving = ref(null)
 const editInput = ref(null)
+const flashId = ref(null)
 
 function startEdit(row) {
   if (saving.value) return
@@ -337,8 +360,10 @@ async function saveEdit(row) {
     } else {
       toast.warning('Saved locally', result.catalog_error ? 'Catalog API: no write access' : 'Price saved in-memory only')
     }
-    // Optimistically update the row
+    // Optimistically update the row + flash cell green
     row.bf_sale_price = nowPrice
+    flashId.value = row.product_id
+    setTimeout(() => { if (flashId.value === row.product_id) flashId.value = null }, 2000)
   } catch (err) {
     toast.error('Update failed', err.response?.data?.error || err.message)
   } finally {

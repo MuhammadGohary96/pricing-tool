@@ -3,6 +3,7 @@
     <component :is="icon" v-if="icon" class="w-8 h-8 mb-2.5 text-grey-300" />
     <p v-if="title" class="text-subheading font-semibold text-grey-700 mb-1">{{ title }}</p>
     <p class="text-body text-grey-500">{{ message }}</p>
+    <p v-if="hint" class="text-caption text-grey-400 mt-1">{{ hint }}</p>
     <button
       v-if="actionLabel"
       class="mt-4 px-4 py-1.5 rounded-lg text-caption font-semibold bg-brand-50 text-brand-primary border border-brand-light hover:bg-brand-lightest transition-colors"
@@ -18,6 +19,7 @@ defineProps({
   icon: { type: [String, Object], default: () => CircleOff },
   title: { type: String, default: '' },
   message: { type: String, default: 'No data matches your filters' },
+  hint: { type: String, default: '' },
   actionLabel: { type: String, default: '' },
 })
 

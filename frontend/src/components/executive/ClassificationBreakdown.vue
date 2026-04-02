@@ -13,7 +13,7 @@
           :class="selectedCompetitor === comp
             ? 'bg-brand-primary text-white'
             : 'bg-grey-100 text-grey-600 hover:bg-grey-200'"
-          @click="selectedCompetitor = comp"
+          @click="selectCompetitor(comp)"
         >{{ comp }}</button>
       </div>
     </div>
@@ -73,18 +73,27 @@ const props = defineProps({
 
 const emit = defineEmits(['navigate'])
 
+const LS_KEY = 'bf_selected_competitor_classification'
 const selectedCompetitor = ref(null)
 
 const competitorNames = computed(() =>
   props.mappingProgress.map(r => r.competitor_name).sort()
 )
 
-// Auto-select Talabat by default; fall back to first competitor
+// Auto-select Talabat by default; fall back to first competitor. Persisted in localStorage.
 watch(competitorNames, (names) => {
   if (!names.length) return
   if (selectedCompetitor.value && names.includes(selectedCompetitor.value)) return
-  selectedCompetitor.value = names.includes('Talabat') ? 'Talabat' : names[0]
+  const stored = localStorage.getItem(LS_KEY)
+  selectedCompetitor.value = (stored && names.includes(stored))
+    ? stored
+    : (names.includes('Talabat') ? 'Talabat' : names[0])
 }, { immediate: true })
+
+function selectCompetitor(comp) {
+  selectedCompetitor.value = comp
+  localStorage.setItem(LS_KEY, comp)
+}
 
 // Resolve classification counts
 const d = computed(() => {

@@ -49,6 +49,26 @@ export const useFiltersStore = defineStore('filters', {
 
   actions: {
     async fetchFilterOptions() {
+      const CACHE_KEY = 'bf_filter_options'
+      const CACHE_TTL = 15 * 60 * 1000 // 15 minutes
+
+      try {
+        const cached = sessionStorage.getItem(CACHE_KEY)
+        if (cached) {
+          const { data, ts } = JSON.parse(cached)
+          if (Date.now() - ts < CACHE_TTL) {
+            this.categories = data.categories
+            this.globalTiers = data.globalTiers
+            this.subcatTiers = data.subcatTiers
+            this.actionTypes = data.actionTypes
+            this.brands = data.brands
+            this.competitors = data.competitors
+            await this.fetchSubcategories()
+            return
+          }
+        }
+      } catch {}
+
       try {
         const [catRes, tierRes, compRes] = await Promise.all([
           filtersApi.getCategories(),
@@ -61,6 +81,20 @@ export const useFiltersStore = defineStore('filters', {
         this.actionTypes = tierRes.data.action_types
         this.brands = tierRes.data.brands || []
         this.competitors = compRes.data.competitors || []
+
+        try {
+          sessionStorage.setItem(CACHE_KEY, JSON.stringify({
+            ts: Date.now(),
+            data: {
+              categories: this.categories,
+              globalTiers: this.globalTiers,
+              subcatTiers: this.subcatTiers,
+              actionTypes: this.actionTypes,
+              brands: this.brands,
+              competitors: this.competitors,
+            },
+          }))
+        } catch {}
 
         await this.fetchSubcategories()
       } catch (err) {

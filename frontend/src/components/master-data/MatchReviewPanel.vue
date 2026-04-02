@@ -104,6 +104,7 @@ defineEmits(['reviewPage'])
 
 const toast = useToast()
 const dismissed = ref(new Set())
+const pendingTimers = ref({})
 
 const totalPages = computed(() => Math.ceil(props.total / props.pageSize))
 
@@ -113,13 +114,31 @@ function similarityClass(score) {
   return 'bg-red-50 text-red-600'
 }
 
+function undoAction(productId) {
+  clearTimeout(pendingTimers.value[productId])
+  delete pendingTimers.value[productId]
+  const next = new Set(dismissed.value)
+  next.delete(productId)
+  dismissed.value = next
+}
+
 function acceptMatch(match) {
-  dismissed.value.add(match.product_id)
-  toast.success('Match accepted', `${match.bf_product_name} → Complete`)
+  dismissed.value = new Set([...dismissed.value, match.product_id])
+  const timer = setTimeout(() => { delete pendingTimers.value[match.product_id] }, 5000)
+  pendingTimers.value[match.product_id] = timer
+  toast.success('Match accepted', `${match.bf_product_name} → Complete`, {
+    duration: 5000,
+    action: { label: 'Undo', fn: () => undoAction(match.product_id) },
+  })
 }
 
 function rejectMatch(match) {
-  dismissed.value.add(match.product_id)
-  toast.info('Match rejected', `${match.bf_product_name} → Needs Mapping`)
+  dismissed.value = new Set([...dismissed.value, match.product_id])
+  const timer = setTimeout(() => { delete pendingTimers.value[match.product_id] }, 5000)
+  pendingTimers.value[match.product_id] = timer
+  toast.info('Match rejected', `${match.bf_product_name} → Needs Mapping`, {
+    duration: 5000,
+    action: { label: 'Undo', fn: () => undoAction(match.product_id) },
+  })
 }
 </script>
