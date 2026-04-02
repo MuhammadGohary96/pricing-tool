@@ -26,6 +26,11 @@
               type="text"
               :placeholder="`Search ${label.toLowerCase()}...`"
               class="w-full pl-7 pr-3 py-1.5 text-body border border-grey-200 rounded-md bg-white focus:border-brand-primary focus:ring-1 focus:ring-brand-lightest outline-none transition-colors"
+              role="combobox"
+              :aria-expanded="open"
+              aria-autocomplete="list"
+              aria-haspopup="listbox"
+              @keydown="handleKeydown"
             />
           </div>
         </div>
@@ -55,11 +60,14 @@
         </div>
 
         <!-- Options list -->
-        <div class="max-h-[240px] overflow-auto py-1">
+        <div role="listbox" class="max-h-[240px] overflow-auto py-1">
           <label
-            v-for="opt in filteredOptions"
+            v-for="(opt, i) in filteredOptions"
             :key="opt"
+            role="option"
+            :aria-selected="modelValue.includes(opt)"
             class="flex items-center gap-2 px-3 py-1.5 hover:bg-brand-50 cursor-pointer transition-colors"
+            :class="i === focusedIdx ? 'bg-brand-50 outline outline-1 outline-brand-light' : ''"
           >
             <input
               type="checkbox"
@@ -79,7 +87,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { Search, ChevronDown } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -93,8 +101,11 @@ const emit = defineEmits(['update:modelValue'])
 
 const open = ref(false)
 const query = ref('')
+const focusedIdx = ref(-1)
 const wrapperRef = ref(null)
 const searchRef = ref(null)
+
+watch(query, () => { focusedIdx.value = -1 })
 
 const displayLabel = computed(() => {
   if (props.modelValue.length === 0) return props.placeholder || `All ${props.label}`
@@ -124,7 +135,25 @@ function toggle() {
   open.value = !open.value
   if (open.value) {
     query.value = ''
+    focusedIdx.value = -1
     nextTick(() => searchRef.value?.focus())
+  }
+}
+
+function handleKeydown(e) {
+  if (!open.value) return
+  const len = filteredOptions.value.length
+  if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    focusedIdx.value = Math.min(focusedIdx.value + 1, len - 1)
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    focusedIdx.value = Math.max(focusedIdx.value - 1, 0)
+  } else if (e.key === 'Enter') {
+    e.preventDefault()
+    if (focusedIdx.value >= 0) toggleOption(filteredOptions.value[focusedIdx.value])
+  } else if (e.key === 'Escape') {
+    open.value = false
   }
 }
 

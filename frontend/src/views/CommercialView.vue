@@ -4,11 +4,19 @@
       <DefinitionsPanel :sections="definitions" storage-key="defs-commercial" />
       <FilterBar :loading="store.loading" hide-competitor />
 
+      <!-- Drill-down breadcrumb (shows when subcategory is selected via table row click) -->
+      <DrilldownBreadcrumb
+        v-if="filters.subCategory.length === 1"
+        :subcategory="filters.subCategory[0]"
+        @clear="filters.setFilter('subCategory', [])"
+      />
+
       <!-- Competitor visibility toggle -->
       <CompetitorToggle
         v-if="allCompetitors.length > 0"
         :competitors="allCompetitors"
         v-model="selectedCompetitors"
+        :default-limit="5"
       />
 
       <!-- Blended PI Table -->
@@ -30,9 +38,11 @@
           :page-size="store.pageSize"
           :competitors="filteredPivotCompetitors"
           :needs-action-only="store.needsActionOnly"
+          :compact-mode="compactMode"
           class="h-full"
           @page="onPageChange"
           @toggle-needs-action="onToggleNeedsAction"
+          @toggle-compact="compactMode = !compactMode"
         />
       </div>
     </div>
@@ -60,6 +70,7 @@ useUrlSync()
 const store = useCommercialStore()
 
 const selectedCompetitors = ref([])
+const compactMode = ref(false)
 const allCompetitors = computed(() => {
   const set = new Set([...store.pivotedCompetitors, ...store.blendedCompetitors])
   return [...set].sort()

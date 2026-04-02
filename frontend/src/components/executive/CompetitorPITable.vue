@@ -4,6 +4,7 @@
       <TrendingUp class="w-4 h-4 text-brand-primary" />
       <span class="text-subheading font-bold text-grey-900">Blended PI by Competitor</span>
       <span class="text-caption text-grey-400 ml-1">sorted by PI ↓</span>
+      <ExportButton :fetcher="exportData" filename="competitor_pi.csv" class="ml-auto" />
     </div>
 
     <table v-if="data.length" class="w-full">
@@ -141,6 +142,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { TrendingUp } from 'lucide-vue-next'
 import EmptyState from '../shared/EmptyState.vue'
+import ExportButton from '../shared/ExportButton.vue'
 import { piTextClass, piBgClass, piToHex } from '../../utils/piColor'
 
 defineProps({
@@ -202,6 +204,17 @@ function deviationBgClass(dev) {
   if (dev > 0.005) return 'bg-green-50'
   if (dev < -0.005) return 'bg-red-50'
   return 'bg-grey-50'
+}
+
+function exportData() {
+  return props.data.map(r => ({
+    competitor: r.competitor_name,
+    blended_pi: r.blended_pi,
+    pi_deviation: r.pi_deviation,
+    mapped_products: r.mapped_products,
+    eligible_products: r.eligible_products,
+    used_products: r.used_products,
+  }))
 }
 </script>
 

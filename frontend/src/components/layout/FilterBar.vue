@@ -1,6 +1,14 @@
 <template>
   <div class="bg-white rounded-lg shadow-card px-5 py-3">
-    <div class="flex items-center gap-3 flex-wrap">
+    <!-- Mobile toggle button -->
+    <button class="lg:hidden flex items-center gap-1.5 text-body text-grey-600 font-medium mb-2" @click="expanded = !expanded">
+      <FilterIcon class="w-4 h-4" />
+      Filters
+      <span v-if="activeCount > 0" class="text-micro px-1.5 py-px rounded-full bg-brand-primary text-white font-bold">{{ activeCount }}</span>
+      <ChevronDown class="w-3.5 h-3.5 transition-transform" :class="expanded ? 'rotate-180' : ''" />
+    </button>
+
+    <div :class="['flex items-center gap-3 flex-wrap', expanded ? '' : 'hidden lg:flex']">
       <div class="flex items-center gap-1.5 text-subheading text-grey-500 font-semibold">
         <FilterIcon class="w-4 h-4" />
         Filters
@@ -71,6 +79,8 @@
         </div>
       </Transition>
 
+      <SavedViews />
+
       <Transition name="filter">
         <button
           v-if="filters.hasActiveFilters"
@@ -131,9 +141,10 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { Filter as FilterIcon, Loader2, Link as LinkIcon } from 'lucide-vue-next'
+import { ref, computed } from 'vue'
+import { Filter as FilterIcon, Loader2, Link as LinkIcon, ChevronDown } from 'lucide-vue-next'
 import MultiSelect from '../shared/MultiSelect.vue'
+import SavedViews from './SavedViews.vue'
 import { useFiltersStore } from '../../stores/filters'
 
 defineProps({
@@ -143,6 +154,12 @@ defineProps({
 
 const filters = useFiltersStore()
 const linkCopied = ref(false)
+const expanded = ref(false)
+
+const activeCount = computed(() =>
+  [filters.mainCategory, filters.subCategory, filters.globalTier, filters.actionType, filters.brand, filters.competitor]
+    .reduce((n, a) => n + a.length, 0) + (!filters.includePrivateLabel ? 1 : 0)
+)
 
 async function copyLink() {
   try {

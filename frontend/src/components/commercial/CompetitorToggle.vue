@@ -27,7 +27,7 @@
         >{{ hasSelection ? 'Show All' : 'Deselect All' }}</button>
         <div class="border-t border-grey-100 my-1"></div>
         <label
-          v-for="comp in competitors"
+          v-for="comp in visibleComps"
           :key="comp"
           class="flex items-center gap-2 px-3 py-1 cursor-pointer hover:bg-grey-50 transition-colors"
         >
@@ -39,6 +39,11 @@
           />
           <span class="text-body text-grey-700">{{ comp }}</span>
         </label>
+        <button
+          v-if="competitors.length > defaultLimit"
+          class="w-full text-left px-3 py-1.5 text-caption text-grey-500 hover:bg-grey-50 transition-colors border-t border-grey-100 mt-1"
+          @click="showAll = !showAll"
+        >{{ showAll ? 'Show fewer' : `Show all ${competitors.length}` }}</button>
       </div>
     </Transition>
   </div>
@@ -52,13 +57,19 @@ import { Eye as EyeIcon, ChevronDown } from 'lucide-vue-next'
 const props = defineProps({
   competitors: { type: Array, default: () => [] },
   modelValue: { type: Array, default: () => [] },
+  defaultLimit: { type: Number, default: 5 },
 })
 
 const emit = defineEmits(['update:modelValue'])
 
 const open = ref(false)
+const showAll = ref(false)
 const wrapper = ref(null)
 onClickOutside(wrapper, () => { open.value = false })
+
+const visibleComps = computed(() =>
+  showAll.value ? props.competitors : props.competitors.slice(0, props.defaultLimit)
+)
 
 const hasSelection = computed(() => props.modelValue.length > 0 && props.modelValue.length < props.competitors.length)
 

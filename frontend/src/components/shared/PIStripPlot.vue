@@ -14,21 +14,31 @@
       <!-- Parity line at 1.0 -->
       <line :x1="parityPct + '%'" y1="2" :x2="parityPct + '%'" y2="26" stroke="#9ca3af" stroke-width="1" stroke-dasharray="2,2" />
 
-      <!-- Product dots -->
-      <circle
-        v-for="(dot, i) in dots"
-        :key="i"
-        :cx="dot.x + '%'"
-        cy="14"
-        :r="dot.r"
-        :fill="dot.color"
-        :opacity="hoveredIdx === i ? 1 : 0.7"
-        :stroke="hoveredIdx === i ? '#1f2937' : 'white'"
-        :stroke-width="hoveredIdx === i ? 1.5 : 0.5"
-        class="cursor-pointer transition-opacity"
-        @mouseenter="hoveredIdx = i"
-        @click.stop="$emit('select-product', { productName: dot.name, subcategory })"
-      />
+      <!-- Product count badge -->
+      <text v-if="dots.length > 0" x="99%" y="9" text-anchor="end" font-size="8" fill="#9ca3af" class="pointer-events-none">{{ dots.length }}</text>
+
+      <!-- Product dots (invisible hit target + visible dot) -->
+      <g v-for="(dot, i) in dots" :key="i">
+        <circle
+          :cx="dot.x + '%'"
+          :cy="dot.cy"
+          r="7"
+          fill="transparent"
+          class="cursor-pointer"
+          @mouseenter="hoveredIdx = i"
+          @click.stop="$emit('select-product', { productName: dot.name, subcategory })"
+        />
+        <circle
+          :cx="dot.x + '%'"
+          :cy="dot.cy"
+          :r="dot.r"
+          :fill="dot.color"
+          :opacity="hoveredIdx === i ? 1 : 0.7"
+          :stroke="hoveredIdx === i ? '#1f2937' : 'white'"
+          :stroke-width="hoveredIdx === i ? 1.5 : 0.5"
+          class="pointer-events-none"
+        />
+      </g>
 
       <!-- Blended PI diamond marker -->
       <polygon
@@ -76,12 +86,19 @@ const parityPct = computed(() => toPct(1.0))
 const zoneLowPct = computed(() => toPct(PI_CHEAP))
 const zoneHighPct = computed(() => toPct(PI_EXPENSIVE))
 
+function jitterY(name) {
+  let h = 0
+  for (const c of (name || '')) h = (h * 31 + c.charCodeAt(0)) & 0xffffffff
+  return ((h & 0xffff) / 0xffff - 0.5) * 10
+}
+
 const dots = computed(() => {
   if (!props.points?.length) return []
   const weights = props.points.map(p => p.weight)
   const maxW = Math.max(...weights, 1)
   return props.points.map(p => ({
     x: toPct(p.sale_PI),
+    cy: 14 + jitterY(p.product_name),
     r: 2 + (p.weight / maxW) * 3,
     color: piDotColor(p.sale_PI),
     name: p.product_name,
@@ -102,8 +119,8 @@ const diamondPoints = computed(() => {
 const tooltipStyle = computed(() => {
   if (hoveredIdx.value === null || !dots.value[hoveredIdx.value]) return {}
   const dot = dots.value[hoveredIdx.value]
-  const left = dot.x > 70 ? 'auto' : `${dot.x}%`
-  const right = dot.x > 70 ? `${100 - dot.x}%` : 'auto'
+  const left = dot.x > 70 ? 'auto' : `calc(${dot.x}% - 4px)`
+  const right = dot.x > 70 ? `calc(${100 - dot.x}% - 4px)` : 'auto'
   return { left, right, bottom: '100%', marginBottom: '4px' }
 })
 </script>

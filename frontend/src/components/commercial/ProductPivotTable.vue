@@ -1,5 +1,5 @@
 <template>
-  <div class="bg-white rounded-lg shadow-card overflow-hidden flex flex-col">
+  <div class="bg-white rounded-lg shadow-card overflow-hidden flex flex-col relative">
     <!-- Header -->
     <div class="px-4 py-3 border-b border-grey-100 flex items-center gap-3 flex-wrap shrink-0">
       <div class="flex items-center gap-2 shrink-0">
@@ -28,10 +28,14 @@
         <span class="text-body text-grey-700">Needs Action Only</span>
       </label>
       <ExportButton :fetcher="exportData" filename="pivot_products.csv" class="shrink-0" />
+      <button
+        class="text-caption px-2.5 py-1 rounded-lg border border-grey-200 bg-white hover:bg-grey-100 shrink-0 transition-colors"
+        @click="$emit('toggle-compact')"
+      >{{ compactMode ? 'Full View' : 'PI Only' }}</button>
     </div>
 
     <!-- Table -->
-    <div class="overflow-auto flex-1 min-h-0">
+    <div ref="tableContainerRef" class="overflow-auto flex-1 min-h-0">
       <table class="w-full border-separate border-spacing-0">
         <!-- Grouped header: fixed cols + one group per competitor -->
         <thead>
@@ -49,8 +53,8 @@
             <th
               v-for="comp in competitors"
               :key="comp"
-              class="px-3 py-1.5 border-b border-r border-grey-200 text-center text-caption font-semibold text-grey-700 uppercase tracking-wide whitespace-nowrap sticky top-0 z-40 bg-grey-100"
-              colspan="2"
+              :class="['px-3 py-1.5 border-b border-r border-grey-200 text-center text-caption font-semibold text-grey-700 uppercase tracking-wide whitespace-nowrap sticky top-0 z-40', compIdx(comp) % 2 ? 'bg-[#EFEFEF]' : 'bg-grey-100']"
+              :colspan="compactMode ? 1 : 2"
             >{{ comp }}</th>
             <th class="px-2 py-1.5 border-b border-grey-200 w-9 sticky top-0 z-40 bg-grey-100"></th>
           </tr>
@@ -76,11 +80,11 @@
               </span>
             </th>
             <template v-for="comp in competitors" :key="comp">
-              <th class="px-3 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide border-b border-grey-200 whitespace-nowrap" :style="row2StickyStyle">Price</th>
+              <th v-if="!compactMode" class="px-3 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide border-b border-grey-200 whitespace-nowrap" :style="[row2StickyStyle, compIdx(comp) % 2 ? { background: '#F5F5F5' } : {}]">Price</th>
               <th
                 class="px-3 py-2 text-right text-caption font-semibold uppercase tracking-wide cursor-pointer hover:text-grey-900 border-b border-r border-grey-200 whitespace-nowrap select-none transition-colors"
                 :class="sortKey === `${comp}_pi` ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-grey-500'"
-                :style="row2StickyStyle"
+                :style="[row2StickyStyle, compIdx(comp) % 2 ? { background: '#F5F5F5' } : {}]"
                 @click="toggleSort(`${comp}_pi`)"
               >
                 <span class="inline-flex items-center gap-1 justify-end">
@@ -106,7 +110,6 @@
               <div class="text-body text-grey-900 truncate font-medium" :title="row.product_name">{{ row.product_name }}</div>
               <div class="flex items-center gap-1 mt-0.5 flex-wrap">
                 <span v-if="row.eligible_product" class="inline-block px-1.5 py-px rounded-full text-micro font-medium bg-green-50 text-green-700 leading-tight">Eligible</span>
-                <span v-if="row.used_product" class="inline-block px-1.5 py-px rounded-full text-micro font-medium bg-brand-50 text-brand-darkest leading-tight">Used</span>
               </div>
             </td>
             <!-- Tier (frozen) -->
@@ -164,8 +167,16 @@
             <td
               class="px-3 py-2 border-r border-grey-100 text-right font-mono font-bold"
               :class="[piBgClass(effectiveWorstPI(row)), piTextClass(effectiveWorstPI(row))]"
-
-              ><span v-if="effectiveWorstPI(row) != null" class="text-[10px] mr-0.5 opacity-70">{{ piArrow(effectiveWorstPI(row)) }}</span>{{ effectiveWorstPI(row)?.toFixed(2) ?? '—' }}</td>
+            >
+              <div class="flex flex-col items-end gap-0.5">
+                <span><span v-if="effectiveWorstPI(row) != null" class="text-[10px] mr-0.5 opacity-70">{{ piArrow(effectiveWorstPI(row)) }}</span>{{ effectiveWorstPI(row)?.toFixed(2) ?? '—' }}</span>
+                <button
+                  v-if="worstCompetitorName(row)"
+                  class="text-micro text-grey-400 hover:text-brand-primary transition-colors font-sans font-normal"
+                  @click.stop="scrollToCompetitor(worstCompetitorName(row))"
+                >vs {{ worstCompetitorName(row) }}</button>
+              </div>
+            </td>
             <!-- Score (combined_score_global) -->
             <td class="px-3 py-2 border-r border-grey-100 text-right text-body text-grey-600 font-mono">{{ row.weighted_score?.toFixed(3) ?? '—' }}</td>
             <!-- Revenue -->
@@ -173,11 +184,11 @@
 
             <!-- Competitor columns -->
             <template v-for="comp in competitors" :key="comp">
-              <td class="px-3 py-2 text-right text-body text-grey-600 font-mono whitespace-nowrap">
+              <td v-if="!compactMode" class="px-3 py-2 text-right text-body text-grey-600 font-mono whitespace-nowrap" :title="`${comp} price`" :style="compIdx(comp) % 2 ? { background: '#FAFAFA' } : {}">
                 <div class="flex flex-col items-end gap-0.5">
                   <span>{{ row[`${comp}_price`]?.toFixed(2) ?? '—' }}</span>
                   <span
-                    v-if="row[`${comp}_action`] && row[`${comp}_action`] !== 'Complete'"
+                    v-if="row[`${comp}_action`]"
                     class="inline-block px-1.5 py-px rounded-full font-bold leading-tight"
                     style="font-size: 9px;"
                     :style="compActionStyle(row[`${comp}_action`])"
@@ -186,11 +197,22 @@
               </td>
               <td
                 class="px-3 py-2 text-right font-mono font-bold border-r border-grey-100 whitespace-nowrap"
+                :title="`${comp} PI`"
+                :style="compIdx(comp) % 2 ? { background: '#FAFAFA' } : {}"
                 :class="row[`${comp}_pi`] != null
                   ? [piBgClass(row[`${comp}_pi`]), piTextClass(row[`${comp}_pi`])]
                   : 'text-grey-300'"
-
-              ><span v-if="row[`${comp}_pi`] != null" class="text-[10px] mr-0.5 opacity-70">{{ piArrow(row[`${comp}_pi`]) }}</span>{{ row[`${comp}_pi`]?.toFixed(2) ?? '—' }}</td>
+              >
+                <div class="flex flex-col items-end gap-0.5">
+                  <span><span v-if="row[`${comp}_pi`] != null" class="text-[10px] mr-0.5 opacity-70">{{ piArrow(row[`${comp}_pi`]) }}</span>{{ row[`${comp}_pi`]?.toFixed(2) ?? '—' }}</span>
+                  <span
+                    v-if="compactMode && row[`${comp}_action`]"
+                    class="inline-block px-1.5 py-px rounded-full font-bold leading-tight"
+                    style="font-size: 9px;"
+                    :style="compActionStyle(row[`${comp}_action`])"
+                  >{{ compActionLabel(row[`${comp}_action`], row[`${comp}_days_stale`]) }}</span>
+                </div>
+              </td>
             </template>
 
             <!-- Saving indicator -->
@@ -202,6 +224,20 @@
       </table>
       <EmptyState v-if="!data.length" :icon="SearchIcon" title="No products found" message="No products match your search or filters." :hint="emptyHint" />
     </div>
+
+    <!-- Price change confirmation banner -->
+    <Transition name="slide-up">
+      <div v-if="confirmPending" class="absolute inset-x-4 bottom-14 z-50 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3 flex items-center justify-between gap-3 shadow-lg">
+        <span class="text-body text-amber-800">
+          <b>{{ (confirmPending.pct * 100).toFixed(0) }}% change:</b>
+          {{ confirmPending.oldPrice?.toFixed(2) }} → {{ confirmPending.newPrice?.toFixed(2) }}
+        </span>
+        <div class="flex gap-2 shrink-0">
+          <button class="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-caption font-bold hover:bg-amber-700" @click="confirmSave">Confirm</button>
+          <button class="px-3 py-1.5 bg-white border rounded-lg text-caption hover:bg-grey-50" @click="confirmPending = null">Cancel</button>
+        </div>
+      </div>
+    </Transition>
 
     <!-- Pagination -->
     <div class="px-4 py-2.5 border-t border-grey-100 flex items-center justify-between bg-grey-50 gap-3 shrink-0">
@@ -242,9 +278,10 @@ const props = defineProps({
   pageSize: { type: Number, default: 50 },
   competitors: { type: Array, default: () => [] },
   needsActionOnly: { type: Boolean, default: false },
+  compactMode: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['page', 'toggleNeedsAction'])
+const emit = defineEmits(['page', 'toggleNeedsAction', 'toggle-compact'])
 
 const store = useCommercialStore()
 const filters = useFiltersStore()
@@ -296,6 +333,28 @@ function frozenTdStyle(col) {
   if (!col.frozen) return {}
   return { position: 'sticky', left: frozenOffset[col.key] + 'px', zIndex: 10, background: 'white' }
 }
+
+function compIdx(comp) { return props.competitors.indexOf(comp) }
+
+const tableContainerRef = ref(null)
+
+function worstCompetitorName(row) {
+  let best = null, bestVal = -Infinity
+  for (const c of props.competitors) {
+    if (row[`${c}_action`] !== 'Complete') continue
+    const pi = row[`${c}_pi`]
+    if (pi != null && pi > bestVal) { bestVal = pi; best = c }
+  }
+  return best
+}
+
+function scrollToCompetitor(comp) {
+  const idx = props.competitors.indexOf(comp)
+  if (idx < 0 || !tableContainerRef.value) return
+  tableContainerRef.value.scrollTo({ left: 500 + idx * 180, behavior: 'smooth' })
+}
+
+const confirmPending = ref(null)
 
 const sortKey = computed(() => store.sortBy)
 const sortDir = computed(() => store.sortDir)
@@ -351,16 +410,28 @@ async function saveEdit(row) {
   if (saving.value) return
   const nowPrice = editValue.value !== row.bf_sale_price ? editValue.value : undefined
   if (nowPrice === undefined) { cancelEdit(); return }
+  const oldPrice = displaySalePrice(row)
+  if (oldPrice && Math.abs((nowPrice - oldPrice) / oldPrice) > 0.10) {
+    editingId.value = null
+    confirmPending.value = { row, newPrice: nowPrice, oldPrice, pct: Math.abs((nowPrice - oldPrice) / oldPrice) }
+    return
+  }
+  await doSave(row, nowPrice, oldPrice)
+}
+
+async function doSave(row, nowPrice, oldPrice) {
   saving.value = row.product_id
   editingId.value = null
   try {
     const result = await store.updateProductPrice(row.product_id, nowPrice, undefined)
     if (result.catalog_synced) {
-      toast.success('Price updated', `${row.product_name} synced`)
+      toast.success('Updated in BF Catalog', `${row.product_name}: ${oldPrice?.toFixed(2)} → ${nowPrice.toFixed(2)}`, {
+        duration: 5000,
+        action: { label: 'Undo', fn: () => { row.bf_sale_price = oldPrice; row.now_sale_price = null } },
+      })
     } else {
-      toast.warning('Saved locally', result.catalog_error ? 'Catalog API: no write access' : 'Price saved in-memory only')
+      toast.warning('Saved locally (no catalog access)', result.catalog_error ? 'No write access to Catalog API' : 'Price saved in-memory only')
     }
-    // Optimistically update the row + flash cell green
     row.bf_sale_price = nowPrice
     flashId.value = row.product_id
     setTimeout(() => { if (flashId.value === row.product_id) flashId.value = null }, 2000)
@@ -369,6 +440,12 @@ async function saveEdit(row) {
   } finally {
     saving.value = null
   }
+}
+
+async function confirmSave() {
+  const { row, newPrice, oldPrice } = confirmPending.value
+  confirmPending.value = null
+  await doSave(row, newPrice, oldPrice)
 }
 
 // Normalize "Review AI Match" → "Review Match" on the fly
@@ -400,9 +477,12 @@ function effectiveActionCounts(row) {
   return counts
 }
 
-// Dynamic worst PI from visible competitors only
+// Dynamic worst PI from visible competitors only (used/complete only)
 function effectiveWorstPI(row) {
-  const pis = props.competitors.map(c => row[`${c}_pi`]).filter(v => v != null)
+  const pis = props.competitors
+    .filter(c => row[`${c}_action`] === 'Complete')
+    .map(c => row[`${c}_pi`])
+    .filter(v => v != null)
   return pis.length > 0 ? Math.max(...pis) : null
 }
 
@@ -419,6 +499,7 @@ const COMP_ACTION_MAP = {
   'Needs Mapping':      { label: 'No Match', style: 'background:#FEE2E2;color:#DC2626' },
   'Review Match':       { label: 'Review Match', style: 'background:#FEF3C7;color:#D97706' },
   'Needs Price Update': { label: 'Outdated', style: 'background:#DBEAFE;color:#2563EB' },
+  'Complete':           { label: 'Used', style: 'background:#D1FAE5;color:#059669' },
 }
 function compActionLabel(action, daysStale) {
   const norm = normAction(action)
@@ -455,3 +536,8 @@ function exportData() {
   })
 }
 </script>
+
+<style scoped>
+.slide-up-enter-active, .slide-up-leave-active { transition: opacity 0.2s, transform 0.2s; }
+.slide-up-enter-from, .slide-up-leave-to { opacity: 0; transform: translateY(8px); }
+</style>

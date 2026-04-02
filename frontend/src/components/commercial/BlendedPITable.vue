@@ -8,6 +8,7 @@
       <div class="flex items-center gap-2">
         <span class="text-micro px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary font-medium">Click row to filter</span>
         <span class="text-micro px-2 py-0.5 rounded-full bg-grey-100 text-grey-600 font-medium">Click dot for product</span>
+        <ExportButton :fetcher="exportData" filename="blended_pi.csv" class="shrink-0" />
       </div>
     </div>
     <div class="overflow-auto flex-1 min-h-0">
@@ -157,6 +158,7 @@
 import { ref, computed, watch, watchEffect } from 'vue'
 import PIStripPlot from '../shared/PIStripPlot.vue'
 import HelpTooltip from '../shared/HelpTooltip.vue'
+import ExportButton from '../shared/ExportButton.vue'
 import { piTextClass, piArrow } from '../../utils/piColor'
 
 const props = defineProps({
@@ -312,5 +314,20 @@ function formatRevenue(val) {
   if (val >= 1000000) return `${(val / 1000000).toFixed(1)}M`
   if (val >= 1000) return `${(val / 1000).toFixed(0)}K`
   return val.toFixed(0)
+}
+
+function exportData() {
+  return allSortedData.value.map(row => {
+    const out = {
+      subcategory: row.sub_category_name,
+      min_pi: rowMinPI(row),
+      max_pi: rowMaxPI(row),
+      total_products: row.total_product_count,
+      eligible: row.eligible_product_count,
+      revenue: row.total_revenue,
+    }
+    for (const c of props.competitors) out[`${c}_pi`] = row.competitor_blended_pis?.[c] ?? null
+    return out
+  })
 }
 </script>

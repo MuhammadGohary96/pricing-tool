@@ -91,13 +91,14 @@
               <span v-else class="text-grey-300">—</span>
             </td>
             <td class="px-3 py-2 text-body text-grey-700 text-right font-mono">{{ formatRevenue(row.total_revenue) }}</td>
-            <td class="px-3 py-1.5 text-center">
+            <td class="px-2 py-1.5 text-center">
               <button
                 @click.stop="router.push({ path: '/commercial', query: { search: row.product_name } })"
-                class="p-1 text-grey-400 hover:text-brand-primary transition-colors rounded"
+                class="flex items-center gap-1 px-2 py-1 text-brand-primary hover:bg-brand-50 rounded-lg border border-brand-light text-caption font-medium transition-colors whitespace-nowrap"
                 title="View in Commercial"
               >
-                <ExternalLink class="w-3.5 h-3.5" />
+                <ExternalLink class="w-3 h-3 shrink-0" />
+                View
               </button>
             </td>
           </tr>

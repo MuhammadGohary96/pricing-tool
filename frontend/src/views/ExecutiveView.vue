@@ -45,7 +45,7 @@
       <FilterBar :loading="store.loading" />
 
       <!-- ─── KPI Cards ─────────────────────────────────────────────── -->
-      <div v-if="kpis" class="grid grid-cols-3 gap-3">
+      <div v-if="kpis" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
 
         <!-- 1. Overall Blended PI (bespoke card) -->
         <div
@@ -103,14 +103,14 @@
       </div>
 
       <!-- ─── Row 1: Competitor PI Table + Classification + Category PI ── -->
-      <div class="flex gap-4">
-        <div class="w-[60%] min-w-0">
+      <div class="flex flex-col xl:flex-row gap-4">
+        <div class="xl:w-[60%] min-w-0">
           <CompetitorPITable
             :data="enrichedCompetitorPI"
             @select-competitor="navigateToCompetitor"
           />
         </div>
-        <div class="w-[40%] min-w-0 flex flex-col gap-4">
+        <div class="xl:w-[40%] min-w-0 flex flex-col gap-4">
           <ClassificationBreakdown
             :data="store.dashboard?.classification_breakdown"
             :mapping-progress="store.dashboard?.mapping_progress || []"
