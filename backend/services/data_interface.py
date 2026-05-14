@@ -79,3 +79,32 @@ class PricingDataServiceInterface(ABC):
     @abstractmethod
     def get_executive_dashboard(self, filters: dict = None) -> dict:
         ...
+
+    # ── Competitor Products tab ──────────────────────────────────────
+
+    @abstractmethod
+    def get_competitor_products_kpis(self, filters: dict = None) -> dict:
+        ...
+
+    @abstractmethod
+    def get_competitor_crawl_timeline(self, filters: dict = None) -> list[dict]:
+        ...
+
+    @abstractmethod
+    def get_competitor_category_breakdown(self, filters: dict = None) -> list[dict]:
+        ...
+
+    @abstractmethod
+    def get_competitor_mapping_summary(self, filters: dict = None) -> list[dict]:
+        ...
+
+    @abstractmethod
+    def get_competitor_products_list(
+        self, filters: dict = None, page: int = 1, page_size: int = 50,
+        search: str = None, sort_by: str = None, sort_dir: str = "desc",
+    ) -> dict:
+        ...
+
+    @abstractmethod
+    def get_competitor_products_export(self, filters: dict = None) -> list[dict]:
+        ...

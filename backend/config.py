@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     BQ_PROJECT_ID: str = "bf-data-dev-qz06"
     BQ_DATASET: str = "dbt_gohary"
     BQ_TABLE: str = "pricing_index_analysis"
+    BQ_COMPETITOR_TABLE: str = "competitor_products_analysis"
     BQ_LOCATION: str = "EU"
     BF_CATALOG_URL: str = "https://catalog.breadfast.com/products"
     GOOGLE_CLIENT_ID: str = ""

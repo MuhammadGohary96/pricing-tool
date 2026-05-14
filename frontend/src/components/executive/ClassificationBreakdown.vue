@@ -14,7 +14,7 @@
             ? 'bg-brand-primary text-white'
             : 'bg-grey-100 text-grey-600 hover:bg-grey-200'"
           @click="selectCompetitor(comp)"
-        >{{ comp }}</button>
+        ><CompetitorLogo :name="comp" /> {{ comp }}</button>
       </div>
     </div>
 
@@ -53,6 +53,7 @@ import { computed, ref, watch } from 'vue'
 import { PieChart as PieChartIcon } from 'lucide-vue-next'
 import VChart from 'vue-echarts'
 import EmptyState from '../shared/EmptyState.vue'
+import CompetitorLogo from '../shared/CompetitorLogo.vue'
 import { use } from 'echarts/core'
 import { PieChart } from 'echarts/charts'
 import { TooltipComponent, GraphicComponent } from 'echarts/components'

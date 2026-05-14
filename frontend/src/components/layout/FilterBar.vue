@@ -128,6 +128,7 @@
           <button class="hover:text-brand-dark" @click="removeChip('brand', b)">&times;</button>
         </span>
         <span v-for="c in filters.competitor" :key="'comp-' + c" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
+          <CompetitorLogo :name="c" size="sm" />
           {{ c }}
           <button class="hover:text-brand-dark" @click="removeChip('competitor', c)">&times;</button>
         </span>
@@ -145,6 +146,7 @@ import { ref, computed } from 'vue'
 import { Filter as FilterIcon, Loader2, Link as LinkIcon, ChevronDown } from 'lucide-vue-next'
 import MultiSelect from '../shared/MultiSelect.vue'
 import SavedViews from './SavedViews.vue'
+import CompetitorLogo from '../shared/CompetitorLogo.vue'
 import { useFiltersStore } from '../../stores/filters'
 
 defineProps({

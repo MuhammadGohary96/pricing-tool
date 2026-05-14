@@ -27,6 +27,7 @@ from typing import Optional
 
 import pandas as pd
 
+from backend.config import settings as app_settings
 from backend.services.data_interface import PricingDataServiceInterface
 from backend.utils.calculations import (
     compute_blended_pi,
@@ -85,6 +86,38 @@ SELECT
 FROM `{project}.{dataset}.{table}`
 """
 
+COMPETITOR_BQ_QUERY = """
+SELECT
+    product_id,
+    product_name_en       AS bf_product_name,
+    brand_name,
+    main_category_name,
+    sub_category_name,
+    competitor_id,
+    competitor_name,
+    competitor_product_id,
+    competitor_product_name,
+    category_level_1,
+    category_level_2,
+    category_level_3,
+    CAST(competitor_sale_price      AS FLOAT64) AS competitor_sale_price,
+    CAST(min_competitor_sale_price  AS FLOAT64) AS min_competitor_sale_price,
+    CAST(max_competitor_sale_price  AS FLOAT64) AS max_competitor_sale_price,
+    CAST(breadfast_sale_price       AS FLOAT64) AS bf_sale_price,
+    competitor_last_updated_day,
+    breadfast_last_updated_day      AS bf_last_updated_day,
+    is_recent_competitor,
+    is_recent_breadfast,
+    has_PI,
+    CAST(sale_PI                    AS FLOAT64) AS sale_PI,
+    classification,
+    match_potential,
+    CAST(similarity_score           AS FLOAT64) AS similarity_score,
+    match_potential_product_name
+FROM `{project}.{dataset}.{table}`
+WHERE competitor_last_updated_day != '1970-01-01'
+"""
+
 
 class BigQueryPricingDataService(PricingDataServiceInterface):
 
@@ -118,6 +151,11 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             self._df["now_price"] = None
         if "now_sale_price" not in self._df.columns:
             self._df["now_sale_price"] = None
+
+        # Load competitor products analysis table
+        if self._startup_status:
+            self._startup_status["stage"] = "Loading competitor products..."
+        self._competitor_df = self._load_competitor_products()
 
     def _load_from_bigquery(self) -> pd.DataFrame:
         import time
@@ -935,3 +973,300 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             "brands": sorted([v for v in df["brand_name"].unique().tolist() if v is not None]),
             "competitors": sorted([v for v in df["competitor_name"].unique().tolist() if v is not None]) if "competitor_name" in df.columns else [],
         }
+
+    # ─── Competitor Products tab ─────────────────────────────────
+
+    def _load_competitor_products(self) -> pd.DataFrame:
+        import time
+        query = COMPETITOR_BQ_QUERY.format(
+            project=self._project,
+            dataset=self._dataset,
+            table=app_settings.BQ_COMPETITOR_TABLE,
+        )
+        print("[BigQuery] Loading competitor products...")
+        t0 = time.time()
+        job = self._client.query(query)
+        rows = job.result()
+        df = pd.DataFrame([dict(row) for row in rows])
+        print(f"[BigQuery] Competitor products: {len(df)} rows in {time.time() - t0:.1f}s")
+
+        if df.empty:
+            return df
+
+        for col in ["competitor_sale_price",
+                     "min_competitor_sale_price", "max_competitor_sale_price",
+                     "bf_sale_price", "sale_PI", "similarity_score"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        for col in ["has_PI", "is_recent_competitor", "is_recent_breadfast", "match_potential"]:
+            if col in df.columns:
+                df[col] = df[col].fillna(False).astype(bool)
+
+        now = datetime.now().date()
+        for col in ["competitor_last_updated_day", "bf_last_updated_day"]:
+            if col in df.columns:
+                df[f"{col}_date"] = df[col]  # keep raw date for timeline grouping
+                df[col] = df[col].apply(lambda x: x.isoformat() if pd.notna(x) else None)
+
+        if "competitor_last_updated_day_date" in df.columns:
+            df["days_since_crawl"] = df["competitor_last_updated_day_date"].apply(
+                lambda x: (now - x).days if pd.notna(x) else None
+            )
+        else:
+            df["days_since_crawl"] = None
+
+        return df.reset_index(drop=True)
+
+    def _apply_competitor_filters(self, df: pd.DataFrame, filters: dict = None) -> pd.DataFrame:
+        if not filters:
+            return df
+        f = df.copy()
+        if filters.get("competitor"):
+            f = self._multi_match(f, "competitor_name", filters["competitor"])
+        if filters.get("category_level_1"):
+            f = self._multi_match(f, "category_level_1", filters["category_level_1"])
+        if filters.get("category_level_2"):
+            f = self._multi_match(f, "category_level_2", filters["category_level_2"])
+        if filters.get("category_level_3"):
+            f = self._multi_match(f, "category_level_3", filters["category_level_3"])
+        if filters.get("mapping_status"):
+            status = filters["mapping_status"]
+            if status == "Mapped":
+                f = f[f["has_PI"] == True]
+            elif status == "Unmapped":
+                f = f[f["has_PI"] == False]
+            elif status == "AI Match":
+                f = f[(f["has_PI"] == False) & (f["match_potential"] == True)]
+        if filters.get("freshness"):
+            if filters["freshness"] == "Fresh":
+                f = f[f["is_recent_competitor"] == True]
+            elif filters["freshness"] == "Stale":
+                f = f[f["is_recent_competitor"] == False]
+        # Date range filters — BF date keeps nulls (unmatched competitor products)
+        if filters.get("bf_date_from") and "bf_last_updated_day_date" in f.columns:
+            d = pd.to_datetime(filters["bf_date_from"]).date()
+            f = f[f["bf_last_updated_day_date"].isna() | (f["bf_last_updated_day_date"] >= d)]
+        if filters.get("bf_date_to") and "bf_last_updated_day_date" in f.columns:
+            d = pd.to_datetime(filters["bf_date_to"]).date()
+            f = f[f["bf_last_updated_day_date"].isna() | (f["bf_last_updated_day_date"] <= d)]
+        if filters.get("competitor_date_from") and "competitor_last_updated_day_date" in f.columns:
+            d = pd.to_datetime(filters["competitor_date_from"]).date()
+            f = f[f["competitor_last_updated_day_date"] >= d]
+        if filters.get("competitor_date_to") and "competitor_last_updated_day_date" in f.columns:
+            d = pd.to_datetime(filters["competitor_date_to"]).date()
+            f = f[f["competitor_last_updated_day_date"] <= d]
+        return f
+
+    def get_competitor_products_kpis(self, filters: dict = None) -> dict:
+        df = self._apply_competitor_filters(self._competitor_df, filters)
+        if df.empty:
+            return {"total_crawled": 0, "mapped": 0, "mapping_rate": 0, "fresh": 0}
+        total = int(df["competitor_product_id"].nunique())
+        mapped_bf = int(df[df["product_id"].notna()]["product_id"].nunique())
+        matched_df = df[df["product_id"].notna()]
+        mapped_competitor = int(matched_df["competitor_product_id"].nunique())
+        fresh = int(df[df["is_recent_competitor"] == True]["competitor_product_id"].nunique())
+        return {
+            "total_crawled": total,
+            "mapped_bf": mapped_bf,
+            "mapped_competitor": mapped_competitor,
+            "mapping_rate": round(mapped_competitor / total * 100, 1) if total > 0 else 0,
+            "fresh": fresh,
+        }
+
+    def get_competitor_crawl_timeline(self, filters: dict = None) -> list[dict]:
+        df = self._apply_competitor_filters(self._competitor_df, filters)
+        if df.empty or "competitor_last_updated_day_date" not in df.columns:
+            return []
+
+        now = datetime.now().date()
+        cutoff = now - pd.Timedelta(days=30)
+        df = df[df["competitor_last_updated_day_date"] >= cutoff]
+
+        if df.empty:
+            return []
+
+        grouped = df.groupby(
+            [df["competitor_last_updated_day_date"], "competitor_name"]
+        )["competitor_product_id"].nunique().reset_index(name="count")
+
+        result = []
+        for _, row in grouped.iterrows():
+            result.append({
+                "date": row["competitor_last_updated_day_date"].isoformat() if pd.notna(row["competitor_last_updated_day_date"]) else None,
+                "competitor_name": row["competitor_name"],
+                "count": int(row["count"]),
+            })
+        return sorted(result, key=lambda x: x["date"] or "")
+
+    def _category_group_metrics(self, grp: pd.DataFrame) -> dict:
+        total = int(grp["competitor_product_id"].nunique())
+        matched = grp[grp["product_id"].notna()]
+        mapped_bf = int(matched["product_id"].nunique())
+        mapped_comp = int(matched["competitor_product_id"].nunique())
+        unmapped = total - mapped_comp
+        ai = int(grp[(grp["has_PI"] == False) & (grp["match_potential"] == True)]["competitor_product_id"].nunique())
+        avg_price = grp["competitor_sale_price"].dropna().mean()
+        return {
+            "total": total,
+            "mapped_bf": mapped_bf,
+            "mapped_competitor": mapped_comp,
+            "unmapped": unmapped,
+            "mapping_pct": round(mapped_comp / total * 100, 1) if total > 0 else 0,
+            "ai_match": ai,
+            "avg_competitor_price": round(float(avg_price), 2) if pd.notna(avg_price) else None,
+        }
+
+    def get_competitor_category_breakdown(self, filters: dict = None) -> list[dict]:
+        df = self._apply_competitor_filters(self._competitor_df, filters)
+        if df.empty:
+            return []
+
+        levels = [
+            ("competitor", ["competitor_name"]),
+            ("l1", ["competitor_name", "category_level_1"]),
+            ("l2", ["competitor_name", "category_level_1", "category_level_2"]),
+            ("l3", ["competitor_name", "category_level_1", "category_level_2", "category_level_3"]),
+        ]
+        result = []
+        for level, cols in levels:
+            for keys, grp in df.groupby(cols):
+                if not isinstance(keys, tuple):
+                    keys = (keys,)
+                if any(pd.isna(k) for k in keys):
+                    keys = tuple("Other" if pd.isna(k) else k for k in keys)
+                metrics = self._category_group_metrics(grp)
+                row = {
+                    "level": level,
+                    "competitor_name": str(keys[0]),
+                    "category_level_1": str(keys[1]) if len(keys) > 1 else None,
+                    "category_level_2": str(keys[2]) if len(keys) > 2 else None,
+                    "category_level_3": str(keys[3]) if len(keys) > 3 else None,
+                    **metrics,
+                }
+                result.append(row)
+        return result
+
+    def get_competitor_mapping_summary(self, filters: dict = None) -> list[dict]:
+        df = self._apply_competitor_filters(self._competitor_df, filters)
+        if df.empty:
+            return []
+
+        result = []
+        for comp, grp in df.groupby("competitor_name"):
+            if pd.isna(comp):
+                continue
+            total = int(grp["competitor_product_id"].nunique())
+            mapped_bf = int(grp[grp["product_id"].notna()]["product_id"].nunique())
+            matched_grp = grp[grp["product_id"].notna()]
+            mapped_competitor = int(matched_grp["competitor_product_id"].nunique())
+            unmapped = total - mapped_competitor
+            ai_match = int(grp[(grp["has_PI"] == False) & (grp["match_potential"] == True)]["competitor_product_id"].nunique())
+            fresh = int(grp[grp["is_recent_competitor"] == True]["competitor_product_id"].nunique())
+            stale = total - fresh
+            avg_age = grp["days_since_crawl"].dropna().mean()
+            result.append({
+                "competitor_name": str(comp),
+                "total": total,
+                "mapped_bf": mapped_bf,
+                "mapped_competitor": mapped_competitor,
+                "unmapped": unmapped,
+                "mapping_pct": round(mapped_competitor / total * 100, 1) if total > 0 else 0,
+                "with_ai_match": ai_match,
+                "fresh": fresh,
+                "stale": stale,
+                "avg_crawl_age": round(float(avg_age), 1) if pd.notna(avg_age) else None,
+            })
+        return sorted(result, key=lambda x: x["total"], reverse=True)
+
+    def get_competitor_products_list(
+        self, filters: dict = None, page: int = 1, page_size: int = 50,
+        search: str = None, sort_by: str = None, sort_dir: str = "desc",
+    ) -> dict:
+        df = self._apply_competitor_filters(self._competitor_df, filters)
+
+        if search:
+            q = search.lower()
+            mask = (
+                df["competitor_product_name"].str.lower().str.contains(q, na=False) |
+                df["bf_product_name"].str.lower().str.contains(q, na=False)
+            )
+            df = df[mask]
+
+        sortable = {"competitor_sale_price", "days_since_crawl", "sale_PI",
+                     "competitor_name", "competitor_product_name", "category_level_1"}
+        if sort_by and sort_by in sortable and sort_by in df.columns:
+            df = df.sort_values(sort_by, ascending=(sort_dir == "asc"), na_position="last")
+        else:
+            df = df.sort_values("days_since_crawl", ascending=True, na_position="last")
+
+        total = len(df)
+        page_df = df.iloc[(page - 1) * page_size: page * page_size]
+
+        items = []
+        for _, row in page_df.iterrows():
+            items.append({
+                "competitor_name": row["competitor_name"] if pd.notna(row.get("competitor_name")) else None,
+                "competitor_product_name": row["competitor_product_name"] if pd.notna(row.get("competitor_product_name")) else None,
+                "competitor_product_id": str(row["competitor_product_id"]) if pd.notna(row.get("competitor_product_id")) else None,
+                "category_level_1": row["category_level_1"] if pd.notna(row.get("category_level_1")) else None,
+                "category_level_2": row["category_level_2"] if pd.notna(row.get("category_level_2")) else None,
+                "category_level_3": row["category_level_3"] if pd.notna(row.get("category_level_3")) else None,
+                "competitor_sale_price": float(row["competitor_sale_price"]) if pd.notna(row.get("competitor_sale_price")) else None,
+                "last_crawled": row["competitor_last_updated_day"] if pd.notna(row.get("competitor_last_updated_day")) else None,
+                "days_since_crawl": int(row["days_since_crawl"]) if pd.notna(row.get("days_since_crawl")) else None,
+                "is_recent": bool(row["is_recent_competitor"]) if pd.notna(row.get("is_recent_competitor")) else False,
+                "bf_product_name": row["bf_product_name"] if pd.notna(row.get("bf_product_name")) else None,
+                "bf_sale_price": float(row["bf_sale_price"]) if pd.notna(row.get("bf_sale_price")) else None,
+                "sale_PI": float(row["sale_PI"]) if pd.notna(row.get("sale_PI")) else None,
+                "has_PI": bool(row["has_PI"]),
+                "classification": row["classification"] if pd.notna(row.get("classification")) else None,
+                "match_potential": bool(row["match_potential"]),
+                "similarity_score": float(row["similarity_score"]) if pd.notna(row.get("similarity_score")) else None,
+                "match_potential_product_name": row["match_potential_product_name"] if pd.notna(row.get("match_potential_product_name")) else None,
+            })
+
+        # Collect filter options for this tab
+        # Competitors always from full dataset; categories cascade: L1 scoped by competitor, L2 by competitor+L1, L3 by competitor+L1+L2
+        full_df = self._competitor_df
+        cat_df = full_df
+        if filters and filters.get("competitor"):
+            comp_list = [c.strip() for c in filters["competitor"].split(",")]
+            cat_df = full_df[full_df["competitor_name"].isin(comp_list)]
+        l2_df = cat_df
+        if filters and filters.get("category_level_1"):
+            l1_list = [c.strip() for c in filters["category_level_1"].split(",")]
+            l2_df = cat_df[cat_df["category_level_1"].isin(l1_list)]
+        l3_df = l2_df
+        if filters and filters.get("category_level_2"):
+            l2_list = [c.strip() for c in filters["category_level_2"].split(",")]
+            l3_df = l2_df[l2_df["category_level_2"].isin(l2_list)]
+        filter_options = {
+            "competitors": sorted([v for v in full_df["competitor_name"].dropna().unique().tolist()]),
+            "categories_l1": sorted([v for v in cat_df["category_level_1"].dropna().unique().tolist()]),
+            "categories_l2": sorted([v for v in l2_df["category_level_2"].dropna().unique().tolist()]),
+            "categories_l3": sorted([v for v in l3_df["category_level_3"].dropna().unique().tolist()]),
+        }
+
+        return {"items": items, "total_count": total, "filter_options": filter_options}
+
+    def get_competitor_products_export(self, filters: dict = None) -> list[dict]:
+        df = self._apply_competitor_filters(self._competitor_df, filters)
+        items = []
+        for _, row in df.iterrows():
+            items.append({
+                "competitor_name": row.get("competitor_name"),
+                "competitor_product_name": row.get("competitor_product_name"),
+                "category_level_1": row.get("category_level_1"),
+                "category_level_2": row.get("category_level_2"),
+                "category_level_3": row.get("category_level_3"),
+                "competitor_sale_price": float(row["competitor_sale_price"]) if pd.notna(row.get("competitor_sale_price")) else None,
+                "last_crawled": row.get("competitor_last_updated_day"),
+                "days_since_crawl": int(row["days_since_crawl"]) if pd.notna(row.get("days_since_crawl")) else None,
+                "bf_product_name": row.get("bf_product_name"),
+                "bf_sale_price": float(row["bf_sale_price"]) if pd.notna(row.get("bf_sale_price")) else None,
+                "sale_PI": float(row["sale_PI"]) if pd.notna(row.get("sale_PI")) else None,
+                "classification": row.get("classification"),
+            })
+        return items

@@ -35,7 +35,7 @@
           <!-- Competitor name -->
           <td class="px-4 py-3">
             <div class="flex items-center gap-2">
-              <div class="w-2 h-2 rounded-full shrink-0" :style="{ background: piToHex(row.blended_pi) }"></div>
+              <CompetitorLogo :name="row.competitor_name" />
               <span class="text-body font-semibold text-grey-900 group-hover:text-brand-primary transition-colors">
                 {{ row.competitor_name }}
               </span>
@@ -143,6 +143,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { TrendingUp } from 'lucide-vue-next'
 import EmptyState from '../shared/EmptyState.vue'
 import ExportButton from '../shared/ExportButton.vue'
+import CompetitorLogo from '../shared/CompetitorLogo.vue'
 import { piTextClass, piBgClass, piToHex } from '../../utils/piColor'
 
 defineProps({

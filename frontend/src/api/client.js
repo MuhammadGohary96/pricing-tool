@@ -67,6 +67,15 @@ export const masterDataApi = {
   getStalenessHeatmap: (params) => api.get('/master-data/staleness-heatmap', { params }),
 }
 
+export const competitorProductsApi = {
+  getKPIs: (params) => api.get('/competitor-products/kpis', { params }),
+  getCrawlTimeline: (params) => api.get('/competitor-products/crawl-timeline', { params }),
+  getCategoryBreakdown: (params) => api.get('/competitor-products/category-breakdown', { params }),
+  getMappingSummary: (params) => api.get('/competitor-products/mapping-summary', { params }),
+  getProducts: (params) => api.get('/competitor-products/products', { params }),
+  exportCSV: (params) => api.get('/competitor-products/export', { params }),
+}
+
 export const executiveApi = {
   getSummary: () => api.get('/executive/summary'),
   getPITrend: () => api.get('/executive/pi-trend'),
