@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from backend.config import settings
 from backend.services import create_data_service
 from backend.auth import google_auth_middleware
-from backend.routers import health, filters, commercial, master_data, executive
+from backend.routers import health, filters, commercial, master_data, executive, competitor_products
 
 
 def _sanitize_nan(obj):
@@ -142,3 +142,4 @@ app.include_router(filters.router)
 app.include_router(commercial.router)
 app.include_router(master_data.router)
 app.include_router(executive.router)
+app.include_router(competitor_products.router)

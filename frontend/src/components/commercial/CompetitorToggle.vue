@@ -37,6 +37,7 @@
             class="w-3.5 h-3.5 rounded border-grey-300 accent-brand-primary cursor-pointer"
             @change="toggle(comp)"
           />
+          <CompetitorLogo :name="comp" />
           <span class="text-body text-grey-700">{{ comp }}</span>
         </label>
         <button
@@ -53,6 +54,7 @@
 import { ref, computed } from 'vue'
 import { onClickOutside } from '@vueuse/core'
 import { Eye as EyeIcon, ChevronDown } from 'lucide-vue-next'
+import CompetitorLogo from '../shared/CompetitorLogo.vue'
 
 const props = defineProps({
   competitors: { type: Array, default: () => [] },

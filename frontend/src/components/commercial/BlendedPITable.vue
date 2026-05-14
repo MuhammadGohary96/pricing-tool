@@ -48,9 +48,9 @@
               :class="selectedCompetitor === comp ? 'text-brand-primary bg-brand-50' : 'text-grey-500 hover:text-grey-900'"
               @click="toggleCompetitor(comp)"
             >
-              <span class="inline-flex items-center gap-1">
-                {{ comp }}
-                <span v-if="selectedCompetitor === comp" class="text-[10px]">●</span>
+              <span class="inline-flex flex-col items-center gap-0.5">
+                <CompetitorLogo :name="comp" />
+                <span>{{ comp }}<span v-if="selectedCompetitor === comp" class="text-[10px] ml-0.5">●</span></span>
               </span>
             </th>
             <!-- Remaining fixed columns -->
@@ -159,6 +159,7 @@ import { ref, computed, watch, watchEffect } from 'vue'
 import PIStripPlot from '../shared/PIStripPlot.vue'
 import HelpTooltip from '../shared/HelpTooltip.vue'
 import ExportButton from '../shared/ExportButton.vue'
+import CompetitorLogo from '../shared/CompetitorLogo.vue'
 import { piTextClass, piArrow } from '../../utils/piColor'
 
 const props = defineProps({

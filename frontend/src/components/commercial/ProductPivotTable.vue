@@ -55,7 +55,7 @@
               :key="comp"
               :class="['px-3 py-1.5 border-b border-r border-grey-200 text-center text-caption font-semibold text-grey-700 uppercase tracking-wide whitespace-nowrap sticky top-0 z-40', compIdx(comp) % 2 ? 'bg-[#EFEFEF]' : 'bg-grey-100']"
               :colspan="compactMode ? 1 : 2"
-            >{{ comp }}</th>
+            ><span class="inline-flex items-center gap-1 justify-center"><CompetitorLogo :name="comp" /> {{ comp }}</span></th>
             <th class="px-2 py-1.5 border-b border-grey-200 w-9 sticky top-0 z-40 bg-grey-100"></th>
           </tr>
           <!-- Row 2: column headers -->
@@ -265,6 +265,7 @@ import { watchDebounced } from '@vueuse/core'
 import TierBadge from '../shared/TierBadge.vue'
 import EmptyState from '../shared/EmptyState.vue'
 import ExportButton from '../shared/ExportButton.vue'
+import CompetitorLogo from '../shared/CompetitorLogo.vue'
 import { Search as SearchIcon, Loader2 } from 'lucide-vue-next'
 import { piTextClass, piBgClass, piArrow } from '../../utils/piColor'
 import { useCommercialStore } from '../../stores/commercial'

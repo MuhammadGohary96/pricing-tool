@@ -18,6 +18,11 @@ const routes = [
     component: () => import('../views/ExecutiveView.vue'),
   },
   {
+    path: '/competitor-products',
+    name: 'CompetitorProducts',
+    component: () => import('../views/CompetitorProductsView.vue'),
+  },
+  {
     path: '/:pathMatch(.*)*',
     redirect: '/commercial',
   },

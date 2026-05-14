@@ -74,6 +74,7 @@ import { useAuthStore } from '../../stores/auth'
 import { useCommercialStore } from '../../stores/commercial'
 import { useMasterDataStore } from '../../stores/masterData'
 import { useExecutiveStore } from '../../stores/executive'
+import { useCompetitorProductsStore } from '../../stores/competitorProducts'
 
 defineEmits(['resync'])
 
@@ -81,6 +82,7 @@ const auth = useAuthStore()
 const commercial = useCommercialStore()
 const masterData = useMasterDataStore()
 const executive = useExecutiveStore()
+const competitorProducts = useCompetitorProductsStore()
 
 const now = ref(new Date())
 let timer = null
@@ -97,6 +99,7 @@ const lastFetchedAt = computed(() => {
     commercial.lastFetchedAt,
     masterData.lastFetchedAt,
     executive.lastFetchedAt,
+    competitorProducts.lastFetchedAt,
   ].filter(Boolean)
   if (!timestamps.length) return null
   return new Date(Math.max(...timestamps.map(t => t.getTime())))
@@ -122,8 +125,8 @@ const initials = computed(() => {
 })
 
 const tabs = [
-  { label: 'Commercial', to: '/commercial' },
-  { label: 'Master Data', to: '/master-data' },
   { label: 'Executive', to: '/executive' },
+  { label: 'Commercial', to: '/commercial' },
+  { label: 'Competitors', to: '/competitor-products' },
 ]
 </script>
