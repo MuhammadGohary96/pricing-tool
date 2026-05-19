@@ -24,7 +24,7 @@
             />
           </div>
           <div class="flex items-center justify-between mt-2">
-            <span class="text-caption text-grey-500">{{ progress.toLocaleString() }} / {{ total.toLocaleString() }} products</span>
+            <span class="text-caption text-grey-500">{{ progress.toLocaleString() }} / {{ total.toLocaleString() }} rows</span>
             <span class="text-caption font-bold text-brand-primary">{{ percentage }}%</span>
           </div>
         </div>

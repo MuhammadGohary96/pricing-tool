@@ -43,6 +43,8 @@ class BlendedPIRow(BaseModel):
     competitor_product_pis: dict[str, list[ProductPIPoint]] = {}
     competitor_used_counts: dict[str, int] = {}
     competitor_needs_action_counts: dict[str, int] = {}
+    competitor_eligible_counts: dict[str, int] = {}
+    competitor_mapped_counts: dict[str, int] = {}
 
 
 class BlendedPITable(BaseModel):

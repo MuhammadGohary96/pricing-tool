@@ -42,6 +42,7 @@ export const filtersApi = {
   getSubcategories: (main) => api.get('/filters/subcategories', { params: { main } }),
   getTiers: () => api.get('/filters/tiers'),
   getCompetitors: () => api.get('/filters/competitors'),
+  getFPs: () => api.get('/filters/fps'),
 }
 
 export const catalogApi = {

@@ -187,6 +187,7 @@ watchDebounced(
     filters.subcatTier,
     filters.brand,
     filters.competitor,
+    filters.fpNames,
     filters.includePrivateLabel,
   ],
   async () => {

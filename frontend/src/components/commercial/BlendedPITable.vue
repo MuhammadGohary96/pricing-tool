@@ -3,7 +3,7 @@
     <div class="px-4 py-3 border-b border-grey-100 flex items-center justify-between">
       <div class="flex items-center gap-1.5">
         <span class="text-subheading font-bold text-grey-900">Blended PI by Subcategory</span>
-        <HelpTooltip text="Weighted price index = Competitor price ÷ BF price for eligible products. PI > 1 = BF cheaper, PI < 1 = BF more expensive." />
+        <HelpTooltip text="Quantity-weighted price index. Formula: Σ(sale_PI × avg_daily_quantity) ÷ Σ(avg_daily_quantity), filtered to used_product=TRUE (eligible + has price + recently updated). sale_PI = BF price ÷ Competitor price → PI > 1 = BF more expensive, PI < 1 = BF cheaper." />
       </div>
       <div class="flex items-center gap-2">
         <span class="text-micro px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary font-medium">Click row to filter</span>

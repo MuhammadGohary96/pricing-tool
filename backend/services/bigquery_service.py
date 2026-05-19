@@ -25,6 +25,7 @@ Use competitor filter or aggregate with nunique() for product counts.
 from datetime import datetime
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 from backend.config import settings as app_settings
@@ -49,14 +50,14 @@ COLUMN_MAP = {
     "competitor_last_updated_day": "competitor_price_updated_at",
 }
 
-BQ_QUERY = """
+FPS_QUERY = """
 SELECT
     product_id,
     product_name_en,
-    brand_name,
-    main_category_name,
     commercial_category_name,
+    main_category_name,
     sub_category_name,
+    brand_name,
     CAST(avg_daily_revenue          AS FLOAT64) AS avg_daily_revenue,
     CAST(avg_daily_quantity         AS FLOAT64) AS avg_daily_quantity,
     CAST(combined_score_global      AS FLOAT64) AS combined_score_global,
@@ -64,25 +65,34 @@ SELECT
     CAST(norm_quantity_global       AS FLOAT64) AS norm_quantity_global,
     global_tier,
     subcat_tier,
-    eligible_product,
-    CAST(breadfast_sale_price       AS FLOAT64) AS breadfast_sale_price,
+    CAST(cumulative_revenue_share   AS FLOAT64) AS cumulative_revenue_share,
+    fp_id,
+    fp_name,
+    CAST(bf_regular_price           AS FLOAT64) AS bf_regular_price,
     competitor_id,
     competitor_name,
+    competitor_product_id,
+    competitor_product_name,
+    CAST(sale_PI                    AS FLOAT64) AS sale_PI,
     CAST(competitor_sale_price      AS FLOAT64) AS competitor_sale_price,
     CAST(min_competitor_sale_price  AS FLOAT64) AS min_competitor_sale_price,
     CAST(max_competitor_sale_price  AS FLOAT64) AS max_competitor_sale_price,
-    CAST(sale_PI                    AS FLOAT64) AS sale_PI,
-    has_PI,
-    updated,
-    CAST(similarity_score           AS FLOAT64) AS similarity_score,
-    match_potential,
-    used_product,
-    action_type,
-    classification,
+    CAST(breadfast_sale_price       AS FLOAT64) AS breadfast_sale_price,
+    is_recent_breadfast,
+    is_recent_competitor,
     breadfast_last_updated_day,
     competitor_last_updated_day,
-    competitor_product_name,
-    match_potential_product_name
+    prices_recently_updated,
+    is_mapped,
+    eligible_product,
+    has_PI,
+    used_product,
+    updated,
+    match_potential,
+    CAST(similarity_score           AS FLOAT64) AS similarity_score,
+    match_potential_product_name,
+    action_type,
+    classification
 FROM `{project}.{dataset}.{table}`
 """
 
@@ -138,28 +148,59 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         self._table = table
         self._location = location
 
-        if self._startup_status:
-            self._startup_status["stage"] = "Loading products from BigQuery..."
+        # Extract progress callback if provided
+        progress_callback = None
+        if self._startup_status and "progress_callback" in self._startup_status:
+            progress_callback = self._startup_status["progress_callback"]
+
+        # Helper to report progress
+        def _report(stage: str, progress: int, total: int):
+            if progress_callback:
+                progress_callback(stage, progress, total)
+            if self._startup_status:
+                self._startup_status["stage"] = stage
+                self._startup_status["progress"] = progress
+                self._startup_status["total"] = total
+
+        # Stage 1: Load from BigQuery (80% of work)
+        _report("Loading products from BigQuery...", 0, 100)
         self._df = self._load_from_bigquery()
         print(
-            f"[BigQuery] Loaded {len(self._df)} products across "
-            f"{self._df['sub_category_name'].nunique()} subcategories"
+            f"[BigQuery] Loaded {len(self._df)} rows (FP grain) across "
+            f"{self._df['sub_category_name'].nunique()} subcategories, "
+            f"{self._df['fp_name'].nunique() if 'fp_name' in self._df.columns else 0} FPs"
         )
+
+        # Stage 2: Pre-aggregate to GLOBAL view (15% of work)
+        _report("Aggregating GLOBAL view...", 80, 100)
+        self._global_df = self._aggregate_to_global(self._df)
+        print(f"[BigQuery] Pre-aggregated GLOBAL view: {len(self._global_df)} rows")
 
         # Initialize price columns as null — enriched later via user token
         if "now_price" not in self._df.columns:
             self._df["now_price"] = None
         if "now_sale_price" not in self._df.columns:
             self._df["now_sale_price"] = None
+        if "now_price" not in self._global_df.columns:
+            self._global_df["now_price"] = None
+        if "now_sale_price" not in self._global_df.columns:
+            self._global_df["now_sale_price"] = None
 
-        # Load competitor products analysis table
-        if self._startup_status:
-            self._startup_status["stage"] = "Loading competitor products..."
+        # Stage 3: Load competitor products analysis table (5% of work)
+        _report("Loading competitor products...", 95, 100)
         self._competitor_df = self._load_competitor_products()
+
+        _report("Ready", 100, 100)
 
     def _load_from_bigquery(self) -> pd.DataFrame:
         import time
-        query = BQ_QUERY.format(
+
+        # Extract progress callback if provided
+        progress_callback = None
+        if self._startup_status and "progress_callback" in self._startup_status:
+            progress_callback = self._startup_status["progress_callback"]
+
+        query = FPS_QUERY.format(
             project=self._project,
             dataset=self._dataset,
             table=self._table,
@@ -168,11 +209,61 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         t0 = time.time()
         job = self._client.query(query)
         print(f"[BigQuery] Job submitted ({job.job_id}), waiting for BQ execution...")
-        rows = job.result()  # wait for query to finish — returns RowIterator
+
+        # Report progress via callback or startup_status
+        def _report_progress(stage: str, progress: int, total: int):
+            if progress_callback:
+                progress_callback(stage, progress, total)
+            if self._startup_status:
+                self._startup_status["total"] = total
+                self._startup_status["progress"] = progress
+                self._startup_status["stage"] = stage
+
+        # Build DataFrame in batches with progress tracking (memory-efficient for large datasets)
+        rows = job.result()  # Wait for query completion, returns RowIterator
+        total_rows = rows.total_rows or 0
         t1 = time.time()
-        print(f"[BigQuery] Query executed in {t1 - t0:.1f}s — building DataFrame from rows...")
-        df = pd.DataFrame([dict(row) for row in rows])
+
+        print(f"[BigQuery] Query executed in {t1 - t0:.1f}s")
+        print(f"[BigQuery] Building DataFrame from {total_rows:,} rows (batch mode with progress)...")
+
+        _report_progress(f"Loading 0 / {total_rows:,} rows...", 0, total_rows)
+
+        batch_size = 100_000
+        batches = []
+        batch = []
+        count = 0
+
+        for row in rows:
+            batch.append(dict(row))
+            count += 1
+
+            if len(batch) >= batch_size:
+                batches.append(pd.DataFrame(batch))
+                batch = []
+                _report_progress(f"Loading {count:,} / {total_rows:,} rows...", count, total_rows)
+                print(f"[BigQuery] Loaded {count:,} / {total_rows:,} rows ({count/total_rows*100:.1f}%)")
+
+        # Add remaining rows
+        if batch:
+            batches.append(pd.DataFrame(batch))
+
+        _report_progress(f"Combining {len(batches)} batches...", count, total_rows)
+        print(f"[BigQuery] Combining {len(batches)} batches into single DataFrame...")
+
+        df = pd.concat(batches, ignore_index=True) if batches else pd.DataFrame()
         print(f"[BigQuery] Built DataFrame ({len(df)} rows) in {time.time() - t1:.1f}s (total {time.time() - t0:.1f}s)")
+
+        _report_progress(f"Loaded {len(df):,} rows, processing...", len(df), max(len(df), 1))
+
+        # Drop unused columns to save memory
+        DROP_COLS = [
+            "norm_revenue_subcat", "norm_quantity_subcat",
+            "score_subcat_100rev", "score_subcat_70rev",
+            "score_subcat_50rev", "score_subcat_30rev",
+            "rank_by_revenue", "rank_by_quantity", "product_key",
+        ]
+        df = df.drop(columns=[c for c in DROP_COLS if c in df.columns])
 
         # Rename columns to match internal names
         df = df.rename(columns=COLUMN_MAP)
@@ -181,7 +272,7 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         numeric_cols = [
             "total_revenue", "avg_daily_quantity", "weighted_score",
             "norm_revenue", "norm_quantity", "sale_PI",
-            "bf_sale_price", "competitor_sale_price", "competitor_regular_price",
+            "bf_sale_price", "bf_regular_price", "competitor_sale_price",
             "min_competitor_sale_price", "max_competitor_sale_price",
             "similarity_score", "cumulative_revenue_share",
         ]
@@ -190,12 +281,17 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
         # Cast booleans (BQ may return NaN for nullable bools)
-        for col in ["eligible_product", "has_PI", "updated", "match_potential", "used_product"]:
+        for col in ["eligible_product", "has_PI", "updated", "match_potential", "used_product",
+                    "is_recent_breadfast", "is_recent_competitor", "prices_recently_updated", "is_mapped"]:
             if col in df.columns:
                 df[col] = df[col].fillna(False).astype(bool)
 
-        # Cast product_id to string
+        # Cast string columns (keep as plain strings to avoid categorical dtype bugs)
         df["product_id"] = df["product_id"].astype(str)
+        if "fp_id" in df.columns:
+            df["fp_id"] = df["fp_id"].astype(str)
+        if "fp_name" in df.columns:
+            df["fp_name"] = df["fp_name"].astype(str)
 
         # Derive pi_deviation
         df["pi_deviation"] = df["sale_PI"].apply(
@@ -218,10 +314,6 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         # Fill bf_regular_price if missing (not in BQ table)
         if "bf_regular_price" not in df.columns:
             df["bf_regular_price"] = df["bf_sale_price"]
-
-        # Fill competitor_regular_price if missing
-        if "competitor_regular_price" not in df.columns:
-            df["competitor_regular_price"] = df["competitor_sale_price"]
 
         return df.reset_index(drop=True)
 
@@ -405,10 +497,201 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             return df[df[column].isin([v.strip() for v in value.split(",")])]
         return df[df[column] == value]
 
+    def _aggregate_to_global(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Collapse (product, fp, competitor) → (product, competitor).
+
+        Price aggregation rules:
+        - BF: Modal price from is_recent_breadfast=TRUE rows.
+        - Competitor: Modal of FRESH observations; fall back to modal of ALL
+          observations if no fresh; NULL if no observations at all.
+
+        action_type is RECOMPUTED from aggregated state (not carried from a single FP):
+          not mapped + no AI match  → Needs Mapping
+          not mapped + AI match     → Review AI Match
+          mapped + no obs anywhere  → Needs Price for FP
+          mapped + ≥1 fresh obs     → Complete
+          mapped + only stale obs   → Needs Price Update
+        """
+        # 1. Modal BF sale price — from recent BF rows only
+        bf_recent = df[df["is_recent_breadfast"] == True]
+        bf_modal = (
+            bf_recent.groupby("product_id")["bf_sale_price"]
+            .agg(lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else None)
+            .rename("bf_sale_price_modal")
+        )
+
+        # 2. Competitor price: rows with any observation
+        comp_obs = df[df["competitor_sale_price"].notna()]
+        comp_fresh = comp_obs[comp_obs["is_recent_competitor"] == True]
+
+        # 2a. Modal price from fresh observations
+        comp_fresh_modal = (
+            comp_fresh.groupby(["product_id", "competitor_id"])["competitor_sale_price"]
+            .agg(lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else None)
+            .rename("comp_price_fresh_modal")
+        )
+
+        # 2b. Modal price from ALL observations (fallback for when no fresh)
+        comp_all_modal = (
+            comp_obs.groupby(["product_id", "competitor_id"])["competitor_sale_price"]
+            .agg(lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else None)
+            .rename("comp_price_all_modal")
+        )
+
+        # 2c. Flags: does (product, competitor) have any fresh / any observation
+        has_fresh_pairs = set(
+            map(tuple, comp_fresh[["product_id", "competitor_id"]].drop_duplicates().values)
+        )
+        has_obs_pairs = set(
+            map(tuple, comp_obs[["product_id", "competitor_id"]].drop_duplicates().values)
+        )
+
+        # 3. Product-level base fields (same across all FPs — dedup by product_id)
+        product_cols = [
+            "product_id", "product_name", "commercial_category_name",
+            "main_category_name", "sub_category_name", "brand_name",
+            "total_revenue", "avg_daily_quantity", "weighted_score",
+            "norm_revenue", "norm_quantity", "global_tier", "subcat_tier",
+            "cumulative_revenue_share", "eligible_product", "bf_regular_price",
+        ]
+        product_base = df.drop_duplicates("product_id")[[c for c in product_cols if c in df.columns]].copy()
+
+        # 4. Competitor-level base fields (product-level competitor link info)
+        # NOTE: action_type, has_PI, updated, is_recent_* are EXCLUDED — recomputed below
+        comp_cols_first = [
+            "product_id", "competitor_id", "competitor_name",
+            "competitor_product_id", "competitor_product_name",
+            "is_mapped", "match_potential", "similarity_score",
+            "match_potential_product_name", "classification",
+        ]
+        comp_base = df.drop_duplicates(["product_id", "competitor_id"])[
+            [c for c in comp_cols_first if c in df.columns]
+        ].copy()
+
+        # min/max competitor sale price across observed FPs (spread)
+        if "competitor_sale_price" in df.columns and not comp_obs.empty:
+            spread = comp_obs.groupby(["product_id", "competitor_id"])["competitor_sale_price"].agg(["min", "max"])
+            spread.columns = ["min_competitor_sale_price", "max_competitor_sale_price"]
+            comp_base = comp_base.merge(spread, on=["product_id", "competitor_id"], how="left")
+
+        # days_since_update: MIN (freshest) across observed FPs only
+        if "days_since_update" in df.columns and not comp_obs.empty:
+            days_agg = (
+                comp_obs.groupby(["product_id", "competitor_id"])["days_since_update"]
+                .min().rename("days_since_update")
+            )
+            comp_base = comp_base.merge(days_agg, on=["product_id", "competitor_id"], how="left")
+
+        # Date columns: MAX (most recent) across observed FPs only
+        for date_col in ["bf_price_updated_at", "competitor_price_updated_at"]:
+            if date_col in df.columns and not comp_obs.empty:
+                date_agg = (
+                    comp_obs.groupby(["product_id", "competitor_id"])[date_col]
+                    .max().rename(date_col)
+                )
+                # Drop any pre-existing column to avoid merge suffix conflicts
+                if date_col in comp_base.columns:
+                    comp_base = comp_base.drop(columns=[date_col])
+                comp_base = comp_base.merge(date_agg, on=["product_id", "competitor_id"], how="left")
+                # Convert NaN → None (Pydantic requires None, not NaN, for nullable strings)
+                comp_base[date_col] = comp_base[date_col].where(comp_base[date_col].notna(), None)
+
+        # 5. Merge everything
+        result = (
+            comp_base
+            .merge(product_base, on="product_id", how="left")
+            .merge(bf_modal, on="product_id", how="left")
+            .merge(comp_fresh_modal, on=["product_id", "competitor_id"], how="left")
+            .merge(comp_all_modal, on=["product_id", "competitor_id"], how="left")
+        )
+
+        # 6. Apply BF modal price
+        if "bf_sale_price_modal" in result.columns:
+            result["bf_sale_price"] = result["bf_sale_price_modal"]
+
+        # 7. Apply competitor price: prefer FRESH modal, fallback to ALL-OBS modal
+        result["competitor_sale_price"] = result["comp_price_fresh_modal"].fillna(
+            result["comp_price_all_modal"]
+        )
+
+        # 8. Compute aggregated freshness flags from the pair sets
+        pair_keys = list(zip(result["product_id"], result["competitor_id"]))
+        result["is_recent_competitor"] = [k in has_fresh_pairs for k in pair_keys]
+        result["has_PI"] = [k in has_obs_pairs for k in pair_keys]
+        result["is_recent_breadfast"] = result["bf_sale_price"].notna()
+        result["prices_recently_updated"] = (
+            result["is_recent_breadfast"] & result["is_recent_competitor"]
+        )
+        result["updated"] = result["prices_recently_updated"]
+
+        # 9. used_product = eligible AND has price AND fresh (matches SQL definition)
+        if "eligible_product" in result.columns:
+            result["used_product"] = (
+                result["eligible_product"].fillna(False).astype(bool)
+                & result["has_PI"]
+                & result["prices_recently_updated"]
+            )
+
+        # 10. Recalculate PI
+        result["sale_PI"] = result["bf_sale_price"] / result["competitor_sale_price"]
+
+        # 11. Recompute action_type from aggregated state
+        is_mapped = (
+            result["is_mapped"].fillna(False).astype(bool)
+            if "is_mapped" in result.columns
+            else pd.Series([False] * len(result), index=result.index)
+        )
+        has_price = result["competitor_sale_price"].notna()
+        is_fresh = result["is_recent_competitor"].fillna(False).astype(bool)
+        sim = (
+            pd.to_numeric(result["similarity_score"], errors="coerce")
+            if "similarity_score" in result.columns
+            else pd.Series([None] * len(result), index=result.index)
+        )
+        ai_match = sim.fillna(0) >= 0.85
+
+        conditions = [
+            ~is_mapped & ~ai_match,             # not mapped, no AI match
+            ~is_mapped & ai_match,              # not mapped, AI match available
+            is_mapped & ~has_price,             # mapped, no price observation anywhere
+            is_mapped & has_price & is_fresh,   # mapped, ≥1 fresh observation
+            is_mapped & has_price & ~is_fresh,  # mapped, only stale observations
+        ]
+        choices = [
+            "Needs Mapping",
+            "Review AI Match",
+            "Needs Price for FP",
+            "Complete",
+            "Needs Price Update",
+        ]
+        result["action_type"] = np.select(conditions, choices, default="Needs Mapping")
+
+        # 12. Drop intermediate columns
+        result = result.drop(
+            columns=["bf_sale_price_modal", "comp_price_fresh_modal", "comp_price_all_modal"],
+            errors="ignore",
+        )
+
+        return result.reset_index(drop=True)
+
     def _apply_filters(self, df: pd.DataFrame, filters: dict = None) -> pd.DataFrame:
+        # Ignore the passed df — choose source based on fp_names filter
+        fp_names = filters.get("fp_names") if filters else None
+
+        if fp_names:
+            # FP-scoped mode: filter raw df to selected FPs, then aggregate
+            names = [n.strip() for n in fp_names.split(",")]
+            scoped = self._df[self._df["fp_name"].isin(names)]
+            source = self._aggregate_to_global(scoped)
+        else:
+            # GLOBAL mode: use pre-computed aggregated df
+            source = self._global_df
+
         if not filters:
-            return df
-        filtered = df.copy()
+            return source
+
+        filtered = source.copy()
         if filters.get("main_category"):
             filtered = self._multi_match(filtered, "commercial_category_name", filters["main_category"])
         if filters.get("sub_category"):
@@ -520,6 +803,47 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             lambda x: x if isinstance(x, dict) else {}
         )
         grouped["competitor_used_counts"] = grouped["sub_category_name"].map(comp_used).apply(
+            lambda x: x if isinstance(x, dict) else {}
+        )
+
+        # Per-competitor mapping coverage
+        # Total Active = ALL products in subcategory (SAME for all competitors)
+        # Mapped = products mapped to THIS specific competitor (DIFFERENT per competitor)
+
+        # Calculate total active products per subcategory (same for all competitors)
+        total_active_per_subcat = df.groupby("sub_category_name")["product_id"].nunique().to_dict()
+
+        # Get all (subcategory, competitor) combinations
+        all_combinations = df[["sub_category_name", "competitor_name"]].drop_duplicates()
+
+        # Calculate mapped products per (subcategory, competitor) - only where is_mapped=True
+        mapped_counts = df[df["is_mapped"] == True].groupby(
+            ["sub_category_name", "competitor_name"]
+        )["product_id"].nunique().reset_index(name="comp_mapped_count")
+
+        # Merge to include all combinations (even those with 0 mapped products)
+        comp_mapping = all_combinations.merge(
+            mapped_counts,
+            on=["sub_category_name", "competitor_name"],
+            how="left"
+        )
+
+        # Fill NaN (competitors with 0 mapped products) with 0
+        comp_mapping["comp_mapped_count"] = comp_mapping["comp_mapped_count"].fillna(0).astype(int)
+
+        # Add total active count (same for all competitors in a subcategory)
+        comp_mapping["comp_eligible_count"] = comp_mapping["sub_category_name"].map(total_active_per_subcat)
+
+        comp_eligible_cnts = comp_mapping.groupby("sub_category_name").apply(
+            lambda g: _build_comp_dict(g, "comp_eligible_count")
+        )
+        comp_mapped_cnts = comp_mapping.groupby("sub_category_name").apply(
+            lambda g: _build_comp_dict(g, "comp_mapped_count")
+        )
+        grouped["competitor_eligible_counts"] = grouped["sub_category_name"].map(comp_eligible_cnts).apply(
+            lambda x: x if isinstance(x, dict) else {}
+        )
+        grouped["competitor_mapped_counts"] = grouped["sub_category_name"].map(comp_mapped_cnts).apply(
             lambda x: x if isinstance(x, dict) else {}
         )
 
@@ -831,13 +1155,19 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         }
 
         # ─── Per-Competitor PI ────────────────────────────────────────
+        # Mapping Coverage = mapped (per competitor) / total active (same for all competitors)
+        # - total_active: ALL unique products in dataset (SAME for all competitors)
+        # - mapped_products: products with is_mapped=True for THIS competitor (DIFFERENT per competitor)
+        total_active_products = int(df["product_id"].nunique())
+
         competitor_pi = []
         if "competitor_name" in df.columns:
             for comp, grp in df.groupby("competitor_name"):
                 if pd.isna(comp):
                     continue
                 used_grp = grp[grp["used_product"] == True]
-                mapped_cnt = int(grp[grp["sale_PI"].notna()]["product_id"].nunique())
+                # Mapped count: products with is_mapped=True for THIS competitor (different per competitor)
+                mapped_cnt = int(grp[grp["is_mapped"] == True]["product_id"].nunique())
                 bpi = None
                 if not used_grp.empty:
                     qty_sum = used_grp["avg_daily_quantity"].sum()
@@ -845,14 +1175,13 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                         bpi = round(
                             (used_grp["sale_PI"] * used_grp["avg_daily_quantity"]).sum() / qty_sum, 4
                         )
-                eligible_cnt = int(grp[grp["eligible_product"] == True]["product_id"].nunique())
                 used_cnt = int(grp[grp["used_product"] == True]["product_id"].nunique())
                 competitor_pi.append({
                     "competitor_name": str(comp),
                     "blended_pi": bpi,
                     "pi_deviation": round(bpi - 1, 4) if bpi is not None else None,
                     "mapped_products": mapped_cnt,
-                    "eligible_products": eligible_cnt,
+                    "eligible_products": total_active_products,  # Total active = same for all competitors
                     "used_products": used_cnt,
                 })
             competitor_pi.sort(key=lambda x: (x["blended_pi"] or 0), reverse=True)
@@ -973,6 +1302,10 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             "brands": sorted([v for v in df["brand_name"].unique().tolist() if v is not None]),
             "competitors": sorted([v for v in df["competitor_name"].unique().tolist() if v is not None]) if "competitor_name" in df.columns else [],
         }
+
+    def get_fp_options(self) -> list[str]:
+        """Return sorted list of distinct FP names from loaded data."""
+        return sorted(self._df["fp_name"].dropna().unique().tolist())
 
     # ─── Competitor Products tab ─────────────────────────────────
 

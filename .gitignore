@@ -11,3 +11,6 @@ dist/
 .idea/
 .vscode/
 release-email.html
+.claude/
+cache/
+*.pkl

@@ -59,6 +59,13 @@
         @update:model-value="filters.setFilter('competitor', $event)"
       />
 
+      <MultiSelect
+        :model-value="filters.fpNames"
+        :options="filters.fps"
+        label="FPs"
+        @update:model-value="filters.setFilter('fpNames', $event)"
+      />
+
       <div class="h-5 w-px bg-grey-200"></div>
 
       <!-- Include Private Label checkbox -->
@@ -132,6 +139,10 @@
           {{ c }}
           <button class="hover:text-brand-dark" @click="removeChip('competitor', c)">&times;</button>
         </span>
+        <span v-for="fp in filters.fpNames" :key="'fp-' + fp" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
+          {{ fp }}
+          <button class="hover:text-brand-dark" @click="removeChip('fpNames', fp)">&times;</button>
+        </span>
         <span v-if="!filters.includePrivateLabel" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-micro font-medium border border-amber-200">
           Excl. Private Label
           <button class="hover:text-amber-900" @click="filters.setFilter('includePrivateLabel', true)">&times;</button>
@@ -159,7 +170,7 @@ const linkCopied = ref(false)
 const expanded = ref(false)
 
 const activeCount = computed(() =>
-  [filters.mainCategory, filters.subCategory, filters.globalTier, filters.actionType, filters.brand, filters.competitor]
+  [filters.mainCategory, filters.subCategory, filters.globalTier, filters.actionType, filters.brand, filters.competitor, filters.fpNames]
     .reduce((n, a) => n + a.length, 0) + (!filters.includePrivateLabel ? 1 : 0)
 )
 

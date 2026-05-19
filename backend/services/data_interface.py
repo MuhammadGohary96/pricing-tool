@@ -77,7 +77,15 @@ class PricingDataServiceInterface(ABC):
         ...
 
     @abstractmethod
+    def get_fp_options(self) -> list[str]:
+        ...
+
+    @abstractmethod
     def get_executive_dashboard(self, filters: dict = None) -> dict:
+        ...
+
+    @abstractmethod
+    def _aggregate_to_global(self, df: pd.DataFrame) -> pd.DataFrame:
         ...
 
     # ── Competitor Products tab ──────────────────────────────────────

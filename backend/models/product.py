@@ -22,7 +22,6 @@ class ProductRow(BaseModel):
     competitor_id: Optional[int] = None
     competitor_name: Optional[str] = None
     competitor_sale_price: Optional[float] = None
-    competitor_regular_price: Optional[float] = None
     min_competitor_sale_price: Optional[float] = None
     max_competitor_sale_price: Optional[float] = None
     sale_PI: Optional[float] = None
@@ -30,6 +29,7 @@ class ProductRow(BaseModel):
     bf_price_updated_at: Optional[str] = None
     competitor_price_updated_at: Optional[str] = None
     updated: bool
+    has_updated_price: bool = False
     similarity_score: Optional[float] = None
     match_potential: bool
     used_product: bool

@@ -7,9 +7,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.config import settings
-from backend.services import create_data_service
+from backend.services import create_data_service, create_data_service_from_cache
+from backend.services.cache_service import DataCache
+from backend.services.background_loader import BackgroundDataLoader
 from backend.auth import google_auth_middleware
 from backend.routers import health, filters, commercial, master_data, executive, competitor_products
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _sanitize_nan(obj):
@@ -30,10 +35,18 @@ class SafeJSONResponse(JSONResponse):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    App lifecycle with zero-downtime cache-first loading.
+
+    Flow:
+    1. Try to load from cache (5 seconds) → app ready immediately
+    2. If cache stale, start background refresh (non-blocking)
+    3. If no cache, must load from BigQuery (first-time only)
+    """
     app.state.data_source = settings.DATA_SOURCE
     app.state.startup_status = {
         "ready": False,
-        "stage": "Initializing...",
+        "stage": "Checking cache...",
         "progress": 0,
         "total": 0,
     }
@@ -42,24 +55,100 @@ async def lifespan(app: FastAPI):
         "progress": 0,
         "total": 0,
         "error": None,
+        "in_progress": False,
     }
     app.state.data_service = None
+    app.state.background_loader = BackgroundDataLoader(app.state)
 
     def _load_data():
+        """Load data from cache or BigQuery."""
         try:
-            # Skip catalog enrichment — BQ data only (fast ~10s)
-            svc = create_data_service(startup_status=app.state.startup_status)
-            app.state.data_service = svc
-            app.state.startup_status["ready"] = True
-            app.state.startup_status["stage"] = "Ready"
-            print(f"[Pricing API] Data source: {settings.DATA_SOURCE}")
+            cache = DataCache()
+            cached_data = cache.load("pricing_data")
+
+            if cached_data:
+                # Cache hit! Load from cache (fast)
+                logger.info("[Startup] Loading from cache...")
+                app.state.startup_status["stage"] = "Loading from cache..."
+
+                svc = create_data_service_from_cache(cached_data)
+                app.state.data_service = svc
+                app.state.startup_status = {
+                    "ready": True,
+                    "stage": "Ready (from cache)",
+                    "progress": 1,
+                    "total": 1,
+                }
+                logger.info("[Startup] App ready from cache in <5 seconds ✓")
+
+                # Check if cache is stale → start background refresh
+                if cache.is_stale("pricing_data"):
+                    logger.info("[Startup] Cache is stale, starting background refresh...")
+
+                    def _background_load_func(progress_callback=None):
+                        """Background load function with progress callback."""
+                        return create_data_service(startup_status={
+                            "ready": False,
+                            "stage": "Background refresh...",
+                            "progress": 0,
+                            "total": 0,
+                            "progress_callback": progress_callback,
+                        })
+
+                    # Start background refresh (non-blocking)
+                    app.state.background_loader.start_background_load(
+                        _background_load_func,
+                        on_complete=lambda svc: logger.info("[Background] Refresh complete, data updated"),
+                        on_error=lambda err: logger.error(f"[Background] Refresh failed: {err}"),
+                    )
+                else:
+                    logger.info("[Startup] Cache is fresh, no background refresh needed")
+
+            else:
+                # No cache, must load from BigQuery (first-time only)
+                logger.info("[Startup] No cache found, loading from BigQuery (first time)...")
+                app.state.startup_status["stage"] = "Loading from BigQuery..."
+
+                svc = create_data_service(startup_status=app.state.startup_status)
+                app.state.data_service = svc
+                app.state.startup_status = {
+                    "ready": True,
+                    "stage": "Ready",
+                    "progress": 1,
+                    "total": 1,
+                }
+                logger.info("[Startup] App ready after initial load")
+
+                # Save to cache for next time
+                try:
+                    cache_data = {
+                        "_df": svc._df,
+                        "_global_df": svc._global_df,
+                    }
+                    if hasattr(svc, "_competitor_df"):
+                        cache_data["_competitor_df"] = svc._competitor_df
+
+                    cache.save("pricing_data", cache_data)
+                    logger.info("[Startup] Data cached successfully")
+                except Exception as e:
+                    logger.error(f"[Startup] Failed to cache data: {e}")
+
+            logger.info(f"[Pricing API] Data source: {settings.DATA_SOURCE}")
+
         except Exception as e:
             app.state.startup_status["stage"] = f"Error: {e}"
-            print(f"[Pricing API] Startup error: {e}")
+            logger.error(f"[Pricing API] Startup error: {e}")
+            import traceback
+            traceback.print_exc()
 
-    thread = threading.Thread(target=_load_data, daemon=True)
+    # Start data loading in background thread
+    thread = threading.Thread(target=_load_data, daemon=True, name="startup-loader")
     thread.start()
-    yield
+
+    yield  # App is running
+
+    # Cleanup (if needed)
+    logger.info("[Shutdown] Pricing API shutting down")
 
 
 app = FastAPI(
@@ -99,6 +188,14 @@ def get_startup_status(request: Request):
     status = dict(request.app.state.startup_status)
     status["enrichment"] = request.app.state.enrichment_status
     return status
+
+
+@app.get("/api/background-status")
+def get_background_status(request: Request):
+    """Get background data loading status."""
+    if hasattr(request.app.state, "background_loader"):
+        return request.app.state.background_loader.get_progress()
+    return {"loading": False, "stage": "No background loader"}
 
 
 @app.post("/api/reload")

@@ -25,6 +25,7 @@ def _filters(
     brand: Optional[str] = Query(None),
     competitor: Optional[str] = Query(None),
     exclude_private_label: Optional[bool] = Query(None),
+    fp_names: Optional[str] = Query(None),
 ) -> dict:
     params = {}
     if main_category:
@@ -43,6 +44,8 @@ def _filters(
         params["competitor"] = competitor
     if exclude_private_label:
         params["exclude_private_label"] = True
+    if fp_names:
+        params["fp_names"] = fp_names
     return params
 
 
@@ -121,6 +124,12 @@ def get_blended_pi(request: Request, filters: dict = Depends(_filters)):
         comp_actions = row.get("competitor_needs_action_counts", {})
         if not isinstance(comp_actions, dict):
             comp_actions = {}
+        comp_eligible = row.get("competitor_eligible_counts", {})
+        if not isinstance(comp_eligible, dict):
+            comp_eligible = {}
+        comp_mapped = row.get("competitor_mapped_counts", {})
+        if not isinstance(comp_mapped, dict):
+            comp_mapped = {}
 
         items.append(BlendedPIRow(
             sub_category_name=row["sub_category_name"],
@@ -137,6 +146,8 @@ def get_blended_pi(request: Request, filters: dict = Depends(_filters)):
             competitor_product_pis=comp_product_pis,
             competitor_used_counts={k: int(v) for k, v in comp_used.items()},
             competitor_needs_action_counts={k: int(v) for k, v in comp_actions.items()},
+            competitor_eligible_counts={k: int(v) for k, v in comp_eligible.items()},
+            competitor_mapped_counts={k: int(v) for k, v in comp_mapped.items()},
         ))
     return BlendedPITable(items=items, competitors=sorted(all_competitors))
 
@@ -203,7 +214,6 @@ def get_products(
             competitor_id=int(row["competitor_id"]) if _safe(row.get("competitor_id")) is not None else None,
             competitor_name=_safe(row.get("competitor_name")),
             competitor_sale_price=_safe(row.get("competitor_sale_price")),
-            competitor_regular_price=_safe(row.get("competitor_regular_price")),
             min_competitor_sale_price=_safe(row.get("min_competitor_sale_price")),
             max_competitor_sale_price=_safe(row.get("max_competitor_sale_price")),
             sale_PI=_safe(row.get("sale_PI")),
@@ -211,6 +221,7 @@ def get_products(
             bf_price_updated_at=row.get("bf_price_updated_at"),
             competitor_price_updated_at=_safe(row.get("competitor_price_updated_at")),
             updated=bool(row["updated"]),
+            has_updated_price=bool(row.get("prices_recently_updated", False)),
             similarity_score=_safe(row.get("similarity_score")),
             match_potential=bool(row["match_potential"]),
             used_product=bool(row["used_product"]),

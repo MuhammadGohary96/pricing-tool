@@ -10,6 +10,7 @@ export const useFiltersStore = defineStore('filters', {
     actionType: [],
     brand: [],
     competitor: [],
+    fpNames: [],
     includePrivateLabel: true,
     categories: [],
     subcategories: [],
@@ -18,6 +19,7 @@ export const useFiltersStore = defineStore('filters', {
     actionTypes: [],
     brands: [],
     competitors: [],
+    fps: [],
   }),
 
   getters: {
@@ -30,6 +32,7 @@ export const useFiltersStore = defineStore('filters', {
       if (state.actionType.length) params.action_type = state.actionType.join(',')
       if (state.brand.length) params.brand = state.brand.join(',')
       if (state.competitor.length) params.competitor = state.competitor.join(',')
+      if (state.fpNames.length) params.fp_names = state.fpNames.join(',')
       if (!state.includePrivateLabel) params.exclude_private_label = true
       return params
     },
@@ -42,6 +45,7 @@ export const useFiltersStore = defineStore('filters', {
         state.actionType.length ||
         state.brand.length ||
         state.competitor.length ||
+        state.fpNames.length ||
         !state.includePrivateLabel
       )
     },
@@ -63,6 +67,7 @@ export const useFiltersStore = defineStore('filters', {
             this.actionTypes = data.actionTypes
             this.brands = data.brands
             this.competitors = data.competitors
+            this.fps = data.fps || []
             await this.fetchSubcategories()
             return
           }
@@ -70,10 +75,11 @@ export const useFiltersStore = defineStore('filters', {
       } catch {}
 
       try {
-        const [catRes, tierRes, compRes] = await Promise.all([
+        const [catRes, tierRes, compRes, fpsRes] = await Promise.all([
           filtersApi.getCategories(),
           filtersApi.getTiers(),
           filtersApi.getCompetitors(),
+          filtersApi.getFPs(),
         ])
         this.categories = catRes.data.categories
         this.globalTiers = tierRes.data.global_tiers
@@ -81,6 +87,7 @@ export const useFiltersStore = defineStore('filters', {
         this.actionTypes = tierRes.data.action_types
         this.brands = tierRes.data.brands || []
         this.competitors = compRes.data.competitors || []
+        this.fps = fpsRes.data.fps || []
 
         try {
           sessionStorage.setItem(CACHE_KEY, JSON.stringify({
@@ -92,6 +99,7 @@ export const useFiltersStore = defineStore('filters', {
               actionTypes: this.actionTypes,
               brands: this.brands,
               competitors: this.competitors,
+              fps: this.fps,
             },
           }))
         } catch {}
@@ -128,6 +136,7 @@ export const useFiltersStore = defineStore('filters', {
       this.actionType = []
       this.brand = []
       this.competitor = []
+      this.fpNames = []
       this.includePrivateLabel = true
       this.fetchSubcategories()
     },

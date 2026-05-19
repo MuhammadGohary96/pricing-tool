@@ -2,7 +2,7 @@ import { watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useFiltersStore } from '../stores/filters'
 
-const FILTER_KEYS = ['mainCategory', 'subCategory', 'globalTier', 'subcatTier', 'actionType', 'brand']
+const FILTER_KEYS = ['mainCategory', 'subCategory', 'globalTier', 'subcatTier', 'actionType', 'brand', 'fpNames']
 const URL_PARAM_MAP = {
   mainCategory: 'category',
   subCategory: 'subcat',
@@ -10,6 +10,7 @@ const URL_PARAM_MAP = {
   subcatTier: 'subcat_tier',
   actionType: 'action',
   brand: 'brand',
+  fpNames: 'fp',
 }
 const REVERSE_MAP = Object.fromEntries(
   Object.entries(URL_PARAM_MAP).map(([k, v]) => [v, k])

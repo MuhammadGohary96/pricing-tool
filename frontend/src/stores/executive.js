@@ -23,6 +23,7 @@ export const useExecutiveStore = defineStore('executive', {
       if (f.globalTier.length) p.global_tier = f.globalTier.join(',')
       if (f.brand.length) p.brand = f.brand.join(',')
       if (f.competitor.length) p.competitor = f.competitor.join(',')
+      if (f.fpNames.length) p.fp_names = f.fpNames.join(',')
       if (!f.includePrivateLabel) p.exclude_private_label = true
       return p
     },
