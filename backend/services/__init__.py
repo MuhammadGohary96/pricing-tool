@@ -4,17 +4,38 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _upgrade_to_duckdb(service):
+    """Re-class an existing BigQueryPricingDataService instance into a
+    DuckDBPricingDataService and attach the DuckDB connection.
+
+    This avoids re-loading data from BigQuery — we just write the in-memory
+    `_df` to Parquet and open a DuckDB view over it.
+    """
+    from backend.services.duckdb_service import DuckDBPricingDataService
+
+    service.__class__ = DuckDBPricingDataService
+    service._parquet_path = __import__("pathlib").Path(settings.DUCKDB_PARQUET_PATH)
+    service._max_parquet_age_hours = 24
+    service._duckdb_conn = None
+    service._duckdb_lock = __import__("threading").Lock()
+    service._init_duckdb()
+    return service
+
+
 def create_data_service(startup_status: dict = None):
     """Create data service by loading from BigQuery or mock data."""
     if settings.DATA_SOURCE == "bigquery":
         from backend.services.bigquery_service import BigQueryPricingDataService
-        return BigQueryPricingDataService(
+        service = BigQueryPricingDataService(
             project_id=settings.BQ_PROJECT_ID,
             dataset=settings.BQ_DATASET,
             table=settings.BQ_TABLE,
             location=settings.BQ_LOCATION,
             startup_status=startup_status,
         )
+        if settings.USE_DUCKDB:
+            service = _upgrade_to_duckdb(service)
+        return service
     else:
         from backend.services.mock_data_service import MockPricingDataService
         return MockPricingDataService()
@@ -74,6 +95,11 @@ def create_data_service_from_cache(cached_data: dict):
             f"{len(service._df):,} rows (FP grain), "
             f"{len(service._global_df):,} rows (GLOBAL)"
         )
+
+        # If DuckDB flag is on, upgrade the service to DuckDBPricingDataService
+        # in-place: copy state, then attach DuckDB connection
+        if settings.USE_DUCKDB:
+            service = _upgrade_to_duckdb(service)
 
         return service
 

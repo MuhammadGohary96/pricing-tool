@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     BF_CATALOG_TOKEN: str = ""
     CACHE_TTL_SECONDS: int = 900
     CORS_ORIGINS: list[str] = ["http://localhost:5174"]
+    USE_DUCKDB: bool = False  # Feature flag: route filter queries through DuckDB
+    DUCKDB_PARQUET_PATH: str = "cache/pricing_data/fp_grain.parquet"
 
     TIER_ORDER: dict = {
         "Top+": 5, "Top": 4, "Medium": 3, "Low": 2, "Very Low": 1
