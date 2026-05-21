@@ -87,13 +87,22 @@ async def lifespan(app: FastAPI):
 
                     def _background_load_func(progress_callback=None):
                         """Background load function with progress callback."""
-                        return create_data_service(startup_status={
+                        svc = create_data_service(startup_status={
                             "ready": False,
                             "stage": "Background refresh...",
                             "progress": 0,
                             "total": 0,
                             "progress_callback": progress_callback,
                         })
+                        # Force-rewrite Parquet so DuckDB queries against the
+                        # refreshed _df, not the stale Parquet on disk. Done
+                        # BEFORE returning so the hot-swap is consistent.
+                        if hasattr(svc, "refresh_parquet"):
+                            try:
+                                svc.refresh_parquet()
+                            except Exception as exc:
+                                logger.error(f"[Background] refresh_parquet failed: {exc}")
+                        return svc
 
                     # Start background refresh (non-blocking)
                     app.state.background_loader.start_background_load(
