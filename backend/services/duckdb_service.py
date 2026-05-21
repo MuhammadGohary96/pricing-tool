@@ -107,6 +107,60 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             logger.info("[DuckDB] Refreshed Parquet + reopened view")
 
     # ------------------------------------------------------------------
+    # OVERRIDDEN — _apply_filters: speeds up EVERY method that goes through
+    # this code path (which is all the filter-heavy ones). Routes the FP-filter
+    # case through DuckDB; GLOBAL falls through to the pandas _global_df.
+    # ------------------------------------------------------------------
+    def _apply_filters(self, df: pd.DataFrame, filters: dict | None = None) -> pd.DataFrame:
+        fp_names = filters.get("fp_names") if filters else None
+        if not fp_names:
+            # GLOBAL: parent uses pre-aggregated _global_df (already fast)
+            return super()._apply_filters(df, filters)
+
+        # FP-scoped: run DuckDB aggregation, return as pandas DataFrame, then
+        # apply remaining filters in pandas (the small post-aggregation frame
+        # makes pandas filtering trivially fast).
+        where, params = self._build_where_clause({"fp_names": fp_names})
+        base_cte = self._BASE_CTE.format(where=where)
+        sql = base_cte + " SELECT * FROM base"
+        with self._duckdb_lock:
+            aggregated = self._duckdb_conn.execute(sql, params).df()
+
+        # Merge in catalog-enriched prices (now_price, now_sale_price) from
+        # the pandas `_df`. These are updated post-startup by the catalog
+        # enrichment process and may not be in the Parquet snapshot.
+        if "now_price" in self._df.columns or "now_sale_price" in self._df.columns:
+            price_cols = [c for c in ("product_id", "now_price", "now_sale_price")
+                          if c in self._df.columns]
+            now_prices = self._df[price_cols].drop_duplicates("product_id")
+            aggregated = aggregated.merge(now_prices, on="product_id", how="left")
+        else:
+            aggregated["now_price"] = None
+            aggregated["now_sale_price"] = None
+
+        # Apply remaining filters in pandas (now operating on the small
+        # aggregated frame — ~150K rows max, much faster than scanning 4.5M)
+        filtered = aggregated
+        if filters:
+            if filters.get("main_category"):
+                filtered = self._multi_match(filtered, "commercial_category_name", filters["main_category"])
+            if filters.get("sub_category"):
+                filtered = self._multi_match(filtered, "sub_category_name", filters["sub_category"])
+            if filters.get("global_tier"):
+                filtered = self._multi_match(filtered, "global_tier", filters["global_tier"])
+            if filters.get("subcat_tier"):
+                filtered = self._multi_match(filtered, "subcat_tier", filters["subcat_tier"])
+            if filters.get("action_type"):
+                filtered = self._multi_match(filtered, "action_type", filters["action_type"])
+            if filters.get("brand"):
+                filtered = self._multi_match(filtered, "brand_name", filters["brand"])
+            if filters.get("competitor"):
+                filtered = self._multi_match(filtered, "competitor_name", filters["competitor"])
+            if filters.get("exclude_private_label"):
+                filtered = filtered[~filtered["brand_name"].str.lower().str.contains("breadfast", na=False)]
+        return filtered
+
+    # ------------------------------------------------------------------
     # Filter parsing helpers — translate the dict-of-filters into SQL
     # ------------------------------------------------------------------
     def _build_where_clause(self, filters: dict | None) -> tuple[str, list]:
@@ -197,19 +251,40 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             GROUP BY product_id, competitor_id, competitor_sale_price
         ) WHERE rn = 1
     ),
-    -- Distinct (product, competitor) pairs with carry-through fields
+    -- Per-(product, competitor) carry-through. ANY_VALUE for fields that are
+    -- product- or pair-level (constant across the FP rows); reductions where
+    -- a real aggregation is needed.
     pair_meta AS (
         SELECT
             product_id, competitor_id,
-            ANY_VALUE(competitor_name)    AS competitor_name,
-            ANY_VALUE(product_name)       AS product_name,
-            ANY_VALUE(sub_category_name)  AS sub_category_name,
-            ANY_VALUE(brand_name)         AS brand_name,
-            ANY_VALUE(avg_daily_quantity) AS avg_daily_quantity,
-            ANY_VALUE(total_revenue)      AS total_revenue,
-            ANY_VALUE(eligible_product)   AS eligible_product,
-            BOOL_OR(is_mapped)            AS is_mapped,
-            MAX(similarity_score)         AS similarity_score
+            ANY_VALUE(competitor_name)             AS competitor_name,
+            ANY_VALUE(product_name)                AS product_name,
+            ANY_VALUE(main_category_name)          AS main_category_name,
+            ANY_VALUE(commercial_category_name)    AS commercial_category_name,
+            ANY_VALUE(sub_category_name)           AS sub_category_name,
+            ANY_VALUE(brand_name)                  AS brand_name,
+            ANY_VALUE(avg_daily_quantity)          AS avg_daily_quantity,
+            ANY_VALUE(total_revenue)               AS total_revenue,
+            ANY_VALUE(eligible_product)            AS eligible_product,
+            BOOL_OR(is_mapped)                     AS is_mapped,
+            MAX(similarity_score)                  AS similarity_score,
+            ANY_VALUE(classification)              AS classification,
+            ANY_VALUE(weighted_score)              AS weighted_score,
+            ANY_VALUE(norm_revenue)                AS norm_revenue,
+            ANY_VALUE(norm_quantity)               AS norm_quantity,
+            ANY_VALUE(cumulative_revenue_share)    AS cumulative_revenue_share,
+            ANY_VALUE(global_tier)                 AS global_tier,
+            ANY_VALUE(subcat_tier)                 AS subcat_tier,
+            ANY_VALUE(bf_regular_price)            AS bf_regular_price,
+            ANY_VALUE(competitor_product_id)       AS competitor_product_id,
+            ANY_VALUE(competitor_product_name)     AS competitor_product_name,
+            ANY_VALUE(match_potential)             AS match_potential,
+            ANY_VALUE(match_potential_product_name) AS match_potential_product_name,
+            MIN(days_since_update) FILTER (WHERE competitor_sale_price IS NOT NULL)        AS days_since_update,
+            MIN(competitor_sale_price) FILTER (WHERE competitor_sale_price IS NOT NULL)    AS min_competitor_sale_price,
+            MAX(competitor_sale_price) FILTER (WHERE competitor_sale_price IS NOT NULL)    AS max_competitor_sale_price,
+            MAX(bf_price_updated_at) FILTER (WHERE competitor_sale_price IS NOT NULL)      AS bf_price_updated_at,
+            MAX(competitor_price_updated_at) FILTER (WHERE competitor_sale_price IS NOT NULL) AS competitor_price_updated_at
         FROM scoped
         GROUP BY product_id, competitor_id
     ),
@@ -442,3 +517,214 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         )
 
         return df.reset_index(drop=True)
+
+    # ------------------------------------------------------------------
+    # OVERRIDDEN ENDPOINT 2/5 — get_executive_dashboard
+    # ------------------------------------------------------------------
+    def get_executive_dashboard(self, filters: dict | None = None) -> dict:
+        """Executive dashboard payload (KPIs + per-competitor PI + mapping
+        progress + classification breakdown).
+
+        Computed in a single materialization pass via the shared `base_tmp`
+        temp table; ~100× faster than the pandas implementation on single-FP
+        filters.
+        """
+        where, params = self._build_where_clause(filters)
+        base_cte = self._BASE_CTE.format(where=where)
+        materialize_sql = base_cte + " SELECT * FROM base"
+
+        # KPIs: total / eligible / mapped / needs_action breakdown + blended PI.
+        # Computes a "worst action" per product (across competitors) using a
+        # priority ladder, matching pandas _worst_action_per_product.
+        sql_kpis = """
+        WITH product_worst AS (
+            SELECT
+                product_id,
+                ANY_VALUE(eligible_product) AS eligible_product,
+                CASE MAX(
+                    CASE action_type
+                        WHEN 'Needs Mapping'      THEN 3
+                        WHEN 'Review AI Match'    THEN 2
+                        WHEN 'Review Match'       THEN 2
+                        WHEN 'Needs Price Update' THEN 1
+                        ELSE 0
+                    END
+                )
+                    WHEN 3 THEN 'Needs Mapping'
+                    WHEN 2 THEN 'Review Match'
+                    WHEN 1 THEN 'Needs Price Update'
+                    ELSE 'Complete'
+                END AS worst_action
+            FROM base_tmp
+            GROUP BY product_id
+        ),
+        pair_metrics AS (
+            -- Per-(product, competitor) figures used for blended PI / mapped flag
+            SELECT
+                product_id, sale_PI, avg_daily_quantity, used_product,
+                eligible_product
+            FROM base_tmp
+        )
+        SELECT
+            (SELECT COUNT(*) FROM product_worst)                                          AS total_products,
+            (SELECT COUNT(*) FROM product_worst WHERE eligible_product)                   AS eligible_count,
+            -- mapped count = eligible products that have a sale_PI for any competitor
+            (SELECT COUNT(DISTINCT product_id) FROM pair_metrics
+             WHERE eligible_product AND sale_PI IS NOT NULL)                              AS mapped_count,
+            (SELECT COUNT(*) FROM product_worst
+             WHERE eligible_product AND worst_action != 'Complete')                       AS needs_action,
+            (SELECT COUNT(*) FROM product_worst
+             WHERE eligible_product AND worst_action = 'Needs Mapping')                   AS nm,
+            (SELECT COUNT(*) FROM product_worst
+             WHERE eligible_product AND worst_action = 'Review Match')                    AS rm,
+            (SELECT COUNT(*) FROM product_worst
+             WHERE eligible_product AND worst_action = 'Needs Price Update')              AS npu,
+            (SELECT ROUND(
+                SUM(sale_PI * avg_daily_quantity) FILTER (WHERE used_product)
+                / NULLIF(SUM(avg_daily_quantity) FILTER (WHERE used_product), 0),
+                4
+             ) FROM pair_metrics)                                                         AS blended_pi
+        """
+
+        # Per-competitor blended PI + mapped/used/eligible counts
+        # `eligible_products` here means "total active products in the result set"
+        # (same value for all competitors) — matches commercial.py expectation.
+        sql_comp_pi = """
+        WITH total_active AS (
+            SELECT COUNT(DISTINCT product_id) AS total_active FROM base_tmp
+        ),
+        per_comp AS (
+            SELECT
+                competitor_name,
+                ROUND(
+                    SUM(sale_PI * avg_daily_quantity) FILTER (WHERE used_product)
+                    / NULLIF(SUM(avg_daily_quantity) FILTER (WHERE used_product), 0),
+                    4
+                ) AS blended_pi,
+                COUNT(DISTINCT product_id) FILTER (WHERE is_mapped)    AS mapped_products,
+                COUNT(DISTINCT product_id) FILTER (WHERE used_product) AS used_products
+            FROM base_tmp
+            WHERE competitor_name IS NOT NULL
+            GROUP BY competitor_name
+        )
+        SELECT
+            pc.competitor_name,
+            pc.blended_pi,
+            CASE WHEN pc.blended_pi IS NOT NULL THEN ROUND(pc.blended_pi - 1, 4) END AS pi_deviation,
+            CAST(pc.mapped_products AS INTEGER) AS mapped_products,
+            CAST(ta.total_active   AS INTEGER) AS eligible_products,
+            CAST(pc.used_products  AS INTEGER) AS used_products
+        FROM per_comp pc CROSS JOIN total_active ta
+        ORDER BY pc.blended_pi DESC NULLS LAST
+        """
+
+        # Per-competitor mapping_progress: counts by classification at product grain
+        sql_mapping_progress = """
+        WITH product_class AS (
+            SELECT DISTINCT product_id, competitor_name, classification
+            FROM base_tmp
+            WHERE competitor_name IS NOT NULL AND classification IS NOT NULL
+        )
+        SELECT
+            competitor_name,
+            CAST(COUNT(*) FILTER (WHERE classification = 'Mapped - Not PL') AS INTEGER) AS mapped_not_pl,
+            CAST(COUNT(*) FILTER (WHERE classification = 'Mapped - PL')     AS INTEGER) AS mapped_pl,
+            CAST(COUNT(*) FILTER (WHERE classification = 'Not Mapped - Not PL - Potential Match')    AS INTEGER) AS potential_not_pl,
+            CAST(COUNT(*) FILTER (WHERE classification = 'Not Mapped - PL - Potential Match')        AS INTEGER) AS potential_pl,
+            CAST(COUNT(*) FILTER (WHERE classification = 'Not Mapped - Not PL - No Potential Match') AS INTEGER) AS no_potential_not_pl,
+            CAST(COUNT(*) FILTER (WHERE classification = 'Not Mapped - PL - No Potential Match')     AS INTEGER) AS no_potential_pl,
+            CAST(COUNT(*) AS INTEGER) AS total
+        FROM product_class
+        GROUP BY competitor_name
+        """
+
+        # Overall classification breakdown (raw row counts, matches pandas value_counts)
+        sql_class_overall = """
+        SELECT
+            classification,
+            CAST(COUNT(*) AS INTEGER) AS cnt
+        FROM base_tmp
+        WHERE classification IS NOT NULL
+        GROUP BY classification
+        """
+
+        with self._duckdb_lock:
+            self._duckdb_conn.execute(
+                "CREATE OR REPLACE TEMPORARY TABLE base_tmp AS " + materialize_sql,
+                params,
+            )
+            kpi_row = self._duckdb_conn.execute(sql_kpis).fetchone()
+            comp_df = self._duckdb_conn.execute(sql_comp_pi).df()
+            map_df = self._duckdb_conn.execute(sql_mapping_progress).df()
+            class_df = self._duckdb_conn.execute(sql_class_overall).df()
+
+        # ── kpis ─────────────────────────────────────────────────────
+        (
+            total_products, eligible_count, mapped_count, needs_action,
+            nm, rm, npu, blended_pi,
+        ) = kpi_row
+        total_products = int(total_products or 0)
+        eligible_count = int(eligible_count or 0)
+        mapped_count = int(mapped_count or 0)
+        kpis = {
+            "blended_pi": float(blended_pi) if blended_pi is not None else None,
+            "total_products": total_products,
+            "eligible_products": eligible_count,
+            "eligible_pct": round(eligible_count / total_products * 100, 1) if total_products > 0 else 0.0,
+            "mapped_products": mapped_count,
+            "mapped_pct": round(mapped_count / eligible_count * 100, 1) if eligible_count > 0 else 0.0,
+            "needs_action": int(needs_action or 0),
+            "needs_mapping": int(nm or 0),
+            "review_match": int(rm or 0),
+            "needs_price_update": int(npu or 0),
+        }
+
+        # ── competitor_pi ────────────────────────────────────────────
+        competitor_pi = []
+        for r in comp_df.itertuples(index=False):
+            competitor_pi.append({
+                "competitor_name": str(r.competitor_name),
+                "blended_pi": float(r.blended_pi) if pd.notna(r.blended_pi) else None,
+                "pi_deviation": float(r.pi_deviation) if pd.notna(r.pi_deviation) else None,
+                "mapped_products": int(r.mapped_products),
+                "eligible_products": int(r.eligible_products),
+                "used_products": int(r.used_products),
+            })
+
+        # ── mapping_progress ─────────────────────────────────────────
+        mapping_progress = []
+        for r in map_df.itertuples(index=False):
+            mapped_total = int(r.mapped_not_pl) + int(r.mapped_pl)
+            potential_total = int(r.potential_not_pl) + int(r.potential_pl)
+            total = int(r.total)
+            mapping_progress.append({
+                "competitor_name": str(r.competitor_name),
+                "mapped_not_pl": int(r.mapped_not_pl),
+                "mapped_pl": int(r.mapped_pl),
+                "potential_not_pl": int(r.potential_not_pl),
+                "potential_pl": int(r.potential_pl),
+                "no_potential_not_pl": int(r.no_potential_not_pl),
+                "no_potential_pl": int(r.no_potential_pl),
+                "total": total,
+                "mapped_pct": round(mapped_total / total * 100, 1) if total > 0 else 0.0,
+                "potential_reach_pct": round((mapped_total + potential_total) / total * 100, 1) if total > 0 else 0.0,
+            })
+        mapping_progress.sort(key=lambda x: x["mapped_pct"], reverse=True)
+
+        # ── classification_breakdown ─────────────────────────────────
+        classification_counts = dict(zip(class_df["classification"], class_df["cnt"]))
+        classification_breakdown = {
+            "mapped_not_pl": int(classification_counts.get("Mapped - Not PL", 0)),
+            "mapped_pl": int(classification_counts.get("Mapped - PL", 0)),
+            "not_mapped_not_pl_potential": int(classification_counts.get("Not Mapped - Not PL - Potential Match", 0)),
+            "not_mapped_not_pl_no_potential": int(classification_counts.get("Not Mapped - Not PL - No Potential Match", 0)),
+            "not_mapped_pl_potential": int(classification_counts.get("Not Mapped - PL - Potential Match", 0)),
+            "not_mapped_pl_no_potential": int(classification_counts.get("Not Mapped - PL - No Potential Match", 0)),
+        }
+
+        return {
+            "kpis": kpis,
+            "competitor_pi": competitor_pi,
+            "mapping_progress": mapping_progress,
+            "classification_breakdown": classification_breakdown,
+        }

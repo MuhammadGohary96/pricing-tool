@@ -1,8 +1,8 @@
 # DuckDB Migration Plan — Filter Performance Optimization
 
-**Version:** 1.1
+**Version:** 1.2
 **Created:** 2026-05-19
-**Status:** Phase 0 ✅ · Phase 1 ✅ · Phase 2 In Progress
+**Status:** Phase 0 ✅ · Phase 1 ✅ · Phase 2.1 ✅ · Phase 2.2 ✅ · Phase 2.3 ✅
 **Estimated effort:** 4–6 working days
 **Goal:** Reduce filter-change latency from 22–33s to **<2s**.
 
@@ -11,9 +11,11 @@
 | Phase | Status | Result |
 |---|---|---|
 | Phase 0 — Spike | ✅ Done | 533× speedup on single-FP `blended-pi`, perfect parity |
-| Phase 1 — DuckDB service + first endpoint | ✅ Done | Live endpoint: 305× faster (33s → 0.1s), 0 mismatches on 148 subcategories |
-| Phase 2 — Migrate remaining 4 endpoints | ⏳ Next | dashboard, products-pivoted, kpi-summary, competitor-pi |
-| Phase 3 — Polish + observability | ⏳ Pending | Server-Timing header, slow query log |
+| Phase 1 — DuckDB service + first endpoint | ✅ Done | `blended-pi` live: 33s → 0.1s (305×) |
+| Phase 2.1 — Per-competitor enrichment for blended-pi | ✅ Done | Full parity on 148 subcats; sorted Parquet + 3-stage pre-warm |
+| Phase 2.2 — executive/dashboard | ✅ Done | 22s → 0.12-0.28s (~140×). Full parity across kpis/competitor_pi/mapping_progress/classification_breakdown |
+| Phase 2.3 — products-pivoted (+ all _apply_filters consumers) | ✅ Done | 22s → 0.67s (33×). Overrode `_apply_filters` so EVERY filter-heavy method speeds up automatically |
+| Phase 3 — Polish + observability | ⏳ Pending | Server-Timing header, slow query log, parquet refresh on bg loader |
 
 ---
 
