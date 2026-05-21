@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 def write_parquet(df: pd.DataFrame, path: Path) -> None:
     """Write a DataFrame to Parquet with snappy compression and 100K row groups.
 
+    Rows are sorted by `fp_name` first so DuckDB's zone-map pruning can skip
+    most row groups when an FP filter is pushed down (the dominant filter
+    pattern in this app). Within each FP, rows are sorted by sub_category_name
+    so subcategory-filtered queries also benefit.
+
     The atomic-rename pattern guards against half-written files when an
     in-flight DuckDB query opens the file mid-write.
     """
@@ -32,6 +37,11 @@ def write_parquet(df: pd.DataFrame, path: Path) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
 
     t0 = time.time()
+    # Sort for zone-map effectiveness on hot-path filters
+    sort_keys = [c for c in ("fp_name", "sub_category_name", "product_id") if c in df.columns]
+    if sort_keys:
+        df = df.sort_values(sort_keys, kind="mergesort").reset_index(drop=True)
+
     table = pa.Table.from_pandas(df, preserve_index=False)
     pq.write_table(
         table,

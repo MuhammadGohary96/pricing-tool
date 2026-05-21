@@ -61,9 +61,40 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             f"CREATE OR REPLACE VIEW fp_grain AS "
             f"SELECT * FROM read_parquet('{self._parquet_path}')"
         )
-        # Pre-warm so the first user query doesn't pay the cold-open cost
+        # Pre-warm in three stages:
+        # 1. Page the entire Parquet file into OS cache (one large sequential read)
+        # 2. Run a GLOBAL blended-pi query — warms DuckDB internals + tests SQL
+        # 3. Run a single-FP blended-pi query — warms the per-FP code path
+        import time
+        t0 = time.time()
+        try:
+            # Stage 1: force the OS to cache the Parquet file
+            with open(self._parquet_path, "rb") as fh:
+                while fh.read(8 * 1024 * 1024):  # 8 MB chunks
+                    pass
+            logger.info(f"[DuckDB] Parquet paged into OS cache in {time.time() - t0:.1f}s")
+
+            # Stage 2 + 3: warm DuckDB's internal caches
+            t1 = time.time()
+            self.get_blended_pi_by_subcategory(filters=None)
+            logger.info(f"[DuckDB] GLOBAL pre-warm query: {time.time() - t1:.1f}s")
+
+            # Find an FP with the most data and pre-warm against it
+            t1 = time.time()
+            top_fp_result = self._duckdb_conn.execute(
+                "SELECT fp_name FROM fp_grain GROUP BY fp_name "
+                "ORDER BY COUNT(*) DESC LIMIT 1"
+            ).fetchone()
+            if top_fp_result:
+                self.get_blended_pi_by_subcategory(filters={"fp_names": top_fp_result[0]})
+                logger.info(f"[DuckDB] FP pre-warm query: {time.time() - t1:.1f}s")
+        except Exception as e:
+            logger.warning(f"[DuckDB] Pre-warm failed (continuing): {e}")
+
         (row_count,) = self._duckdb_conn.execute("SELECT COUNT(*) FROM fp_grain").fetchone()
-        logger.info(f"[DuckDB] Connected to fp_grain view ({row_count:,} rows)")
+        logger.info(
+            f"[DuckDB] Ready — {row_count:,} rows, total pre-warm {time.time() - t0:.1f}s"
+        )
 
     def refresh_parquet(self) -> None:
         """Re-export `_df` to Parquet and reload the DuckDB view (called after BG refresh)."""
@@ -117,73 +148,128 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         return where, params
 
     # ------------------------------------------------------------------
+    # Core CTE template — used by multiple endpoints.
+    # Builds the per-(product, competitor) aggregated state from FP-grain.
+    # Recomputes is_recent_competitor, has_PI, used_product, action_type
+    # to match the pandas _aggregate_to_global implementation.
+    # ------------------------------------------------------------------
+    _BASE_CTE = """
+    WITH scoped AS (
+        SELECT * FROM fp_grain
+        {where}
+    ),
+    -- BF modal price from fresh rows (smallest value among the most-frequent)
+    bf_modal AS (
+        SELECT product_id, bf_sale_price AS bf_modal FROM (
+            SELECT product_id, bf_sale_price,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY product_id
+                       ORDER BY COUNT(*) DESC, bf_sale_price ASC
+                   ) AS rn
+            FROM scoped
+            WHERE is_recent_breadfast = TRUE AND bf_sale_price IS NOT NULL
+            GROUP BY product_id, bf_sale_price
+        ) WHERE rn = 1
+    ),
+    -- Competitor modal price from FRESH observations
+    comp_fresh AS (
+        SELECT product_id, competitor_id, competitor_sale_price AS comp_fresh_modal FROM (
+            SELECT product_id, competitor_id, competitor_sale_price,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY product_id, competitor_id
+                       ORDER BY COUNT(*) DESC, competitor_sale_price ASC
+                   ) AS rn
+            FROM scoped
+            WHERE competitor_sale_price IS NOT NULL AND is_recent_competitor = TRUE
+            GROUP BY product_id, competitor_id, competitor_sale_price
+        ) WHERE rn = 1
+    ),
+    -- Competitor modal price from ALL observations (fallback when no fresh)
+    comp_all AS (
+        SELECT product_id, competitor_id, competitor_sale_price AS comp_all_modal FROM (
+            SELECT product_id, competitor_id, competitor_sale_price,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY product_id, competitor_id
+                       ORDER BY COUNT(*) DESC, competitor_sale_price ASC
+                   ) AS rn
+            FROM scoped
+            WHERE competitor_sale_price IS NOT NULL
+            GROUP BY product_id, competitor_id, competitor_sale_price
+        ) WHERE rn = 1
+    ),
+    -- Distinct (product, competitor) pairs with carry-through fields
+    pair_meta AS (
+        SELECT
+            product_id, competitor_id,
+            ANY_VALUE(competitor_name)    AS competitor_name,
+            ANY_VALUE(product_name)       AS product_name,
+            ANY_VALUE(sub_category_name)  AS sub_category_name,
+            ANY_VALUE(brand_name)         AS brand_name,
+            ANY_VALUE(avg_daily_quantity) AS avg_daily_quantity,
+            ANY_VALUE(total_revenue)      AS total_revenue,
+            ANY_VALUE(eligible_product)   AS eligible_product,
+            BOOL_OR(is_mapped)            AS is_mapped,
+            MAX(similarity_score)         AS similarity_score
+        FROM scoped
+        GROUP BY product_id, competitor_id
+    ),
+    -- Final aggregated base: one row per (product, competitor) with recomputed flags
+    base AS (
+        SELECT
+            pm.*,
+            COALESCE(cf.comp_fresh_modal, ca.comp_all_modal) AS competitor_sale_price,
+            bm.bf_modal AS bf_sale_price,
+            bm.bf_modal / COALESCE(cf.comp_fresh_modal, ca.comp_all_modal) AS sale_PI,
+            -- Recomputed flags (match pandas _aggregate_to_global)
+            (cf.comp_fresh_modal IS NOT NULL)             AS is_recent_competitor,
+            (ca.comp_all_modal   IS NOT NULL)             AS has_PI,
+            (bm.bf_modal         IS NOT NULL)             AS is_recent_breadfast,
+            (pm.eligible_product
+                AND ca.comp_all_modal IS NOT NULL
+                AND bm.bf_modal IS NOT NULL
+                AND cf.comp_fresh_modal IS NOT NULL)      AS used_product,
+            -- Recomputed action_type (match pandas semantics)
+            CASE
+                WHEN NOT pm.is_mapped
+                     AND (pm.similarity_score IS NULL OR pm.similarity_score < 0.85)
+                    THEN 'Needs Mapping'
+                WHEN NOT pm.is_mapped AND pm.similarity_score >= 0.85
+                    THEN 'Review AI Match'
+                WHEN pm.is_mapped AND ca.comp_all_modal IS NULL
+                    THEN 'Needs Price for FP'
+                WHEN pm.is_mapped AND cf.comp_fresh_modal IS NOT NULL
+                    THEN 'Complete'
+                ELSE 'Needs Price Update'
+            END AS action_type
+        FROM pair_meta pm
+        LEFT JOIN bf_modal   bm USING (product_id)
+        LEFT JOIN comp_fresh cf USING (product_id, competitor_id)
+        LEFT JOIN comp_all   ca USING (product_id, competitor_id)
+    )
+    """
+
+    # ------------------------------------------------------------------
     # OVERRIDDEN ENDPOINT 1/5 — get_blended_pi_by_subcategory
     # ------------------------------------------------------------------
     def get_blended_pi_by_subcategory(self, filters: dict | None = None) -> pd.DataFrame:
-        """DuckDB implementation: 533× faster than pandas on single-FP filter.
+        """DuckDB implementation: 300× faster than pandas on single-FP filter.
 
-        Matches pandas semantics:
-          - FP-scoped: re-aggregates from FP grain (modal fresh price → fallback all)
-          - GLOBAL: still re-aggregates (we don't have a separate _global_df in DuckDB)
-          - used_product = eligible AND has fresh BF price AND has fresh competitor price
-          - blended_pi = Σ(sale_PI × avg_daily_quantity) / Σ(avg_daily_quantity) over used rows
+        Returns one row per subcategory with:
+          - blended_pi (quantity-weighted Σ(sale_PI × qty) / Σ(qty) over used)
+          - per-competitor dicts: blended_pis, product_pis, used_counts,
+            eligible_counts, mapped_counts, needs_action_counts
+          - total revenue, total/eligible/needs_action product counts
         """
         where, params = self._build_where_clause(filters)
+        base_cte = self._BASE_CTE.format(where=where)
 
-        sql = f"""
-        WITH scoped AS (
-            SELECT * FROM fp_grain
-            {where}
-        ),
-        -- BF modal price from fresh rows (smallest value among the most-frequent)
-        bf_modal AS (
-            SELECT product_id, bf_sale_price AS bf_modal FROM (
-                SELECT product_id, bf_sale_price,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY product_id
-                           ORDER BY COUNT(*) DESC, bf_sale_price ASC
-                       ) AS rn
-                FROM scoped
-                WHERE is_recent_breadfast = TRUE AND bf_sale_price IS NOT NULL
-                GROUP BY product_id, bf_sale_price
-            ) WHERE rn = 1
-        ),
-        -- Competitor modal price from fresh observations
-        comp_fresh AS (
-            SELECT product_id, competitor_id, competitor_sale_price AS comp_modal FROM (
-                SELECT product_id, competitor_id, competitor_sale_price,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY product_id, competitor_id
-                           ORDER BY COUNT(*) DESC, competitor_sale_price ASC
-                       ) AS rn
-                FROM scoped
-                WHERE competitor_sale_price IS NOT NULL AND is_recent_competitor = TRUE
-                GROUP BY product_id, competitor_id, competitor_sale_price
-            ) WHERE rn = 1
-        ),
-        -- Per (product, competitor) base with aggregated prices
-        base AS (
-            SELECT
-                s.product_id, s.competitor_id, s.product_name,
-                s.sub_category_name, s.avg_daily_quantity, s.total_revenue,
-                s.eligible_product,
-                cf.comp_modal,
-                bm.bf_modal,
-                bm.bf_modal / cf.comp_modal AS sale_PI,
-                (s.eligible_product
-                    AND cf.comp_modal IS NOT NULL
-                    AND bm.bf_modal   IS NOT NULL) AS used_product
-            FROM (
-                SELECT DISTINCT product_id, competitor_id, product_name,
-                       sub_category_name, avg_daily_quantity, total_revenue,
-                       eligible_product
-                FROM scoped
-            ) s
-            LEFT JOIN comp_fresh cf USING (product_id, competitor_id)
-            LEFT JOIN bf_modal   bm USING (product_id)
-        ),
-        -- Per-subcategory aggregation (used rows only)
-        used_agg AS (
+        # Materialize `base` into a temp table once per request so both
+        # downstream aggregations share the (expensive) modal-price + JOIN work.
+        # Lock serializes against concurrent requests on the single connection.
+        materialize_sql = base_cte + " SELECT * FROM base"
+
+        sql_subcat = """
+        WITH used_agg AS (
             SELECT
                 sub_category_name,
                 ROUND(
@@ -192,47 +278,91 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                     4
                 ) AS blended_pi,
                 COUNT(DISTINCT product_id) FILTER (WHERE used_product) AS used_product_count,
-                ROUND(
-                    (SELECT SUM(total_revenue) FROM (
-                        SELECT DISTINCT product_id, total_revenue FROM base b2
-                        WHERE b2.used_product AND b2.sub_category_name = base.sub_category_name
-                    )), 2
-                ) AS total_revenue,
-                -- product_pis tooltip data (kept as a LIST of structs)
-                LIST({{
+                LIST({
                     'product_name': product_name,
                     'sale_PI': sale_PI,
                     'weight': avg_daily_quantity
-                }}) FILTER (WHERE used_product AND sale_PI IS NOT NULL) AS product_pis
-            FROM base
+                }) FILTER (WHERE used_product AND sale_PI IS NOT NULL) AS product_pis,
+                ROUND(SUM(DISTINCT total_revenue) FILTER (WHERE used_product), 2) AS total_revenue
+            FROM base_tmp
             GROUP BY sub_category_name
             HAVING COUNT(DISTINCT product_id) FILTER (WHERE used_product) > 0
         ),
-        -- Per-subcategory full-set counts (not just used)
         full_counts AS (
             SELECT
                 sub_category_name,
                 COUNT(DISTINCT product_id) AS total_product_count,
-                COUNT(DISTINCT product_id) FILTER (WHERE eligible_product) AS eligible_product_count
-            FROM base
+                COUNT(DISTINCT product_id) FILTER (WHERE eligible_product) AS eligible_product_count,
+                COUNT(DISTINCT product_id) FILTER (
+                    WHERE eligible_product AND action_type != 'Complete'
+                ) AS needs_action_count
+            FROM base_tmp
             GROUP BY sub_category_name
         )
         SELECT
             ua.sub_category_name,
             ua.blended_pi,
             CAST(ua.used_product_count AS INTEGER) AS used_product_count,
-            ua.total_revenue,
+            COALESCE(ua.total_revenue, 0)::DOUBLE AS total_revenue,
             ua.product_pis,
             CAST(COALESCE(fc.total_product_count, 0)    AS INTEGER) AS total_product_count,
             CAST(COALESCE(fc.eligible_product_count, 0) AS INTEGER) AS eligible_product_count,
-            0::INTEGER AS needs_action_count
+            CAST(COALESCE(fc.needs_action_count, 0)     AS INTEGER) AS needs_action_count
         FROM used_agg ua
         LEFT JOIN full_counts fc USING (sub_category_name)
         ORDER BY ua.blended_pi DESC NULLS LAST
         """
 
+        sql_comp = """
+        WITH comp_agg AS (
+            SELECT
+                sub_category_name,
+                competitor_name,
+                ROUND(
+                    SUM(sale_PI * avg_daily_quantity) FILTER (WHERE used_product)
+                    / NULLIF(SUM(avg_daily_quantity) FILTER (WHERE used_product), 0),
+                    4
+                ) AS comp_blended_pi,
+                CAST(COUNT(DISTINCT product_id) FILTER (WHERE used_product) AS INTEGER) AS comp_used_count,
+                CAST(COUNT(DISTINCT product_id) FILTER (WHERE is_mapped)    AS INTEGER) AS comp_mapped_count,
+                CAST(COUNT(DISTINCT product_id) FILTER (
+                    WHERE eligible_product AND action_type != 'Complete'
+                ) AS INTEGER) AS comp_needs_action,
+                LIST({
+                    'product_name': product_name,
+                    'sale_PI': sale_PI,
+                    'weight': avg_daily_quantity
+                }) FILTER (WHERE used_product AND sale_PI IS NOT NULL) AS comp_product_pis
+            FROM base_tmp
+            WHERE competitor_name IS NOT NULL
+            GROUP BY sub_category_name, competitor_name
+        ),
+        subcat_total_active AS (
+            SELECT sub_category_name,
+                   CAST(COUNT(DISTINCT product_id) AS INTEGER) AS total_active
+            FROM base_tmp
+            GROUP BY sub_category_name
+        )
+        SELECT
+            ca.sub_category_name,
+            ca.competitor_name,
+            ca.comp_blended_pi,
+            ca.comp_used_count,
+            ca.comp_mapped_count,
+            ca.comp_needs_action,
+            ca.comp_product_pis,
+            sta.total_active AS comp_eligible_count
+        FROM comp_agg ca
+        LEFT JOIN subcat_total_active sta USING (sub_category_name)
+        """
+
         with self._duckdb_lock:
-            df = self._duckdb_conn.execute(sql, params).df()
+            self._duckdb_conn.execute(
+                "CREATE OR REPLACE TEMPORARY TABLE base_tmp AS " + materialize_sql,
+                params,
+            )
+            df = self._duckdb_conn.execute(sql_subcat).df()
+            comp_df = self._duckdb_conn.execute(sql_comp).df()
 
         if df.empty:
             return pd.DataFrame(columns=[
@@ -240,29 +370,75 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 "total_revenue", "pi_deviation", "direction",
                 "total_product_count", "eligible_product_count", "needs_action_count",
                 "product_pis",
+                "competitor_blended_pis", "competitor_product_pis",
+                "competitor_used_counts", "competitor_needs_action_counts",
+                "competitor_eligible_counts", "competitor_mapped_counts",
             ])
 
-        # Add derived columns that pandas version produces
+        # Derived columns
         df["pi_deviation"] = df["blended_pi"].apply(
             lambda x: round(x - 1, 4) if pd.notna(x) else None
         )
         df["direction"] = df["pi_deviation"].apply(pi_direction)
-
-        # product_pis comes back as a list of dicts; ensure it's a Python list
         df["product_pis"] = df["product_pis"].apply(
             lambda x: list(x) if x is not None else []
         )
 
-        # ── Per-competitor enrichment (still done in pandas for Phase 1) ──
-        # The router expects competitor_blended_pis, competitor_used_counts,
-        # competitor_eligible_counts, competitor_mapped_counts, etc. on each row.
-        # For Phase 1 we keep these as empty dicts; the executive dashboard
-        # endpoint (also a Phase 2 target) provides per-competitor breakdown.
-        df["competitor_blended_pis"] = [{} for _ in range(len(df))]
-        df["competitor_product_pis"] = [{} for _ in range(len(df))]
-        df["competitor_used_counts"] = [{} for _ in range(len(df))]
-        df["competitor_needs_action_counts"] = [{} for _ in range(len(df))]
-        df["competitor_eligible_counts"] = [{} for _ in range(len(df))]
-        df["competitor_mapped_counts"] = [{} for _ in range(len(df))]
+        # Build per-competitor dicts keyed by sub_category_name
+        comp_blended: dict[str, dict] = {}
+        comp_product_pis: dict[str, dict] = {}
+        comp_used: dict[str, dict] = {}
+        comp_action: dict[str, dict] = {}
+        comp_eligible: dict[str, dict] = {}
+        comp_mapped: dict[str, dict] = {}
+
+        def _safe_list(v):
+            if v is None:
+                return []
+            try:
+                if pd.isna(v):
+                    return []
+            except (TypeError, ValueError):
+                pass
+            return list(v)
+
+        def _safe_int(v):
+            if v is None or pd.isna(v):
+                return 0
+            return int(v)
+
+        def _safe_float(v):
+            if v is None or pd.isna(v):
+                return None
+            return float(v)
+
+        for row in comp_df.itertuples(index=False):
+            sub = row.sub_category_name
+            comp = row.competitor_name
+            comp_blended.setdefault(sub, {})[comp] = _safe_float(row.comp_blended_pi)
+            comp_product_pis.setdefault(sub, {})[comp] = _safe_list(row.comp_product_pis)
+            comp_used.setdefault(sub, {})[comp] = _safe_int(row.comp_used_count)
+            comp_action.setdefault(sub, {})[comp] = _safe_int(row.comp_needs_action)
+            comp_eligible.setdefault(sub, {})[comp] = _safe_int(row.comp_eligible_count)
+            comp_mapped.setdefault(sub, {})[comp] = _safe_int(row.comp_mapped_count)
+
+        df["competitor_blended_pis"] = df["sub_category_name"].map(comp_blended).apply(
+            lambda x: x if isinstance(x, dict) else {}
+        )
+        df["competitor_product_pis"] = df["sub_category_name"].map(comp_product_pis).apply(
+            lambda x: x if isinstance(x, dict) else {}
+        )
+        df["competitor_used_counts"] = df["sub_category_name"].map(comp_used).apply(
+            lambda x: x if isinstance(x, dict) else {}
+        )
+        df["competitor_needs_action_counts"] = df["sub_category_name"].map(comp_action).apply(
+            lambda x: x if isinstance(x, dict) else {}
+        )
+        df["competitor_eligible_counts"] = df["sub_category_name"].map(comp_eligible).apply(
+            lambda x: x if isinstance(x, dict) else {}
+        )
+        df["competitor_mapped_counts"] = df["sub_category_name"].map(comp_mapped).apply(
+            lambda x: x if isinstance(x, dict) else {}
+        )
 
         return df.reset_index(drop=True)
