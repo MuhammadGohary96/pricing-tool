@@ -182,6 +182,7 @@ watchDebounced(
     filters.competitor,
     filters.fpNames,
     filters.includePrivateLabel,
+    filters.priceFallback,
   ],
   async () => {
     try {

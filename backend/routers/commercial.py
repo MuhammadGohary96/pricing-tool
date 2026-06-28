@@ -66,6 +66,7 @@ def get_kpis(request: Request, filters: dict = Depends(_filters)):
 
 @router.get("/treemap")
 def get_treemap(request: Request, filters: dict = Depends(_filters)):
+    # Product-level aggregate — unaffected by the competitor price fallback.
     svc = request.app.state.data_service
     df = svc.get_blended_pi_by_subcategory(filters)
     children = []
@@ -95,6 +96,7 @@ def _serialize_pi_points(raw_pis):
 
 @router.get("/blended-pi")
 def get_blended_pi(request: Request, filters: dict = Depends(_filters)):
+    # Product-level aggregate — unaffected by the competitor price fallback.
     svc = request.app.state.data_service
     df = svc.get_blended_pi_by_subcategory(filters)
     all_competitors = set()
@@ -255,10 +257,19 @@ def get_products_pivoted(
 
 
 @router.get("/products/{product_id}/fp-matrix")
-def get_product_fp_matrix(request: Request, product_id: str, filters: dict = Depends(_filters)):
-    """Per-FP × per-competitor pricing matrix for a single product (modal view)."""
+def get_product_fp_matrix(
+    request: Request,
+    product_id: str,
+    price_fallback: bool = Query(False),
+    filters: dict = Depends(_filters),
+):
+    """Per-FP × per-competitor pricing matrix for a single product (modal view).
+
+    price_fallback=true fills mapped-but-not-fresh cells with the
+    product×competitor modal price (state 'estimated').
+    """
     svc = request.app.state.data_service
-    return svc.get_product_fp_matrix(product_id, filters)
+    return svc.get_product_fp_matrix(product_id, filters, price_fallback=price_fallback)
 
 
 @router.post("/catalog/enrich")

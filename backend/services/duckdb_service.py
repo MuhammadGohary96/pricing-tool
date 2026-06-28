@@ -116,7 +116,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         t0 = time.time()
         self._duckdb_conn.execute(
             "CREATE OR REPLACE TABLE global_base AS "
-            + self._BASE_CTE.format(where="")
+            + self._base_cte("")
             + " SELECT * FROM base"
         )
         (n,) = self._duckdb_conn.execute("SELECT COUNT(*) FROM global_base").fetchone()
@@ -146,7 +146,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         with self._duckdb_lock:
             if fp_names:
                 where, params = self._build_where_clause({"fp_names": fp_names})
-                sql = self._BASE_CTE.format(where=where) + " SELECT * FROM base"
+                sql = self._base_cte(where) + " SELECT * FROM base"
                 aggregated = self._duckdb_conn.execute(sql, params).df()
             else:
                 # GLOBAL: pre-materialized aggregation (~150K rows, fast)
@@ -384,6 +384,11 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             -- (matches pandas _aggregate_to_global lines 623-626)
             (bm.bf_modal IS NOT NULL AND cf.comp_fresh_modal IS NOT NULL) AS prices_recently_updated,
             (bm.bf_modal IS NOT NULL AND cf.comp_fresh_modal IS NOT NULL) AS updated,
+            -- Usable gate: eligible pair with a BF modal AND a FRESH competitor
+            -- modal. The competitor-price fallback is a purely FP-grain effect
+            -- (it fills non-fresh FPs of a pair that IS fresh somewhere), so it
+            -- never changes this product-level gate — a pair with a fresh price
+            -- is already counted, and a stale-only pair correctly stays out.
             (pm.eligible_product
                 AND ca.comp_all_modal IS NOT NULL
                 AND bm.bf_modal IS NOT NULL
@@ -408,6 +413,12 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
     )
     """
 
+    def _base_cte(self, where: str) -> str:
+        """_BASE_CTE with the WHERE clause injected. The product-level gate
+        (`used_product`) is fixed to the observed definition — the competitor
+        price fallback is a purely FP-grain effect and never touches this path."""
+        return self._BASE_CTE.format(where=where)
+
     # ------------------------------------------------------------------
     # OVERRIDDEN ENDPOINT 1/5 — get_blended_pi_by_subcategory
     # ------------------------------------------------------------------
@@ -419,9 +430,10 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
           - per-competitor dicts: blended_pis, product_pis, used_counts,
             eligible_counts, mapped_counts, needs_action_counts
           - total revenue, total/eligible/needs_action product counts
+        Product-level: unaffected by the competitor price fallback (FP-grain only).
         """
         where, params = self._build_where_clause(filters)
-        base_cte = self._BASE_CTE.format(where=where)
+        base_cte = self._base_cte(where)
 
         # Materialize `base` into a temp table once per request so both
         # downstream aggregations share the (expensive) modal-price + JOIN work.
@@ -626,26 +638,81 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
     # Same quantity-weighted blend as get_blended_pi_by_subcategory, grouped
     # by fp_name × competitor_name straight off the FP grain (no FP collapse).
     # ------------------------------------------------------------------
-    def get_fp_competitor_pi(self, filters: dict | None = None) -> dict:
+    def get_fp_competitor_pi(self, filters: dict | None = None, price_fallback: bool = False) -> dict:
         where, params = self._build_where_clause(filters)
-        sql = """
-        WITH scoped AS (SELECT * FROM fp_grain {where})
-        SELECT
-            fp_name,
-            competitor_name,
-            ROUND(
-                SUM(sale_PI * avg_daily_quantity) FILTER (WHERE used_product)
-                / NULLIF(SUM(avg_daily_quantity) FILTER (WHERE used_product), 0),
-                4
-            ) AS blended_pi,
-            CAST(COUNT(DISTINCT product_id) FILTER (WHERE used_product)     AS INTEGER) AS used_count,
-            CAST(COUNT(DISTINCT product_id) FILTER (WHERE eligible_product) AS INTEGER) AS eligible_count
-        FROM scoped
-        WHERE competitor_name IS NOT NULL AND fp_name IS NOT NULL
-        GROUP BY fp_name, competitor_name
-        HAVING COUNT(DISTINCT product_id) FILTER (WHERE eligible_product) > 0
-        ORDER BY fp_name, competitor_name
-        """.format(where=where)
+        if not price_fallback:
+            # Observed-only — unchanged from the original (the regression guard:
+            # price_fallback=False must stay byte-identical to pre-feature output).
+            sql = """
+            WITH scoped AS (SELECT * FROM fp_grain {where})
+            SELECT
+                fp_name,
+                competitor_name,
+                ROUND(
+                    SUM(sale_PI * avg_daily_quantity) FILTER (WHERE used_product)
+                    / NULLIF(SUM(avg_daily_quantity) FILTER (WHERE used_product), 0),
+                    4
+                ) AS blended_pi,
+                CAST(COUNT(DISTINCT product_id) FILTER (WHERE used_product)     AS INTEGER) AS used_count,
+                CAST(0 AS INTEGER) AS estimated_count,
+                CAST(COUNT(DISTINCT product_id) FILTER (WHERE eligible_product) AS INTEGER) AS eligible_count
+            FROM scoped
+            WHERE competitor_name IS NOT NULL AND fp_name IS NOT NULL
+            GROUP BY fp_name, competitor_name
+            HAVING COUNT(DISTINCT product_id) FILTER (WHERE eligible_product) > 0
+            ORDER BY fp_name, competitor_name
+            """.format(where=where)
+        else:
+            # Fallback ON — fill mapped, non-fresh (product, fp, competitor) cells
+            # with the per-(product, competitor) FRESH modal price computed over ALL
+            # FPs, recompute the per-FP PI, and count them as estimated. The estimate
+            # is drawn ONLY from fresh prices: a pair with no fresh price anywhere
+            # (stale-only) has no fresh modal, so it is never estimated here (it stays
+            # excluded — its stale price surfaces, flagged "outdated", in the product
+            # FP-matrix, never in this blended aggregation). The modal CTE scans the
+            # full grain (a price is a product-level property, independent of the FP
+            # filter).
+            sql = """
+            WITH scoped AS (SELECT * FROM fp_grain {where}),
+            modal AS (
+                SELECT product_id, competitor_name, competitor_sale_price AS modal_price FROM (
+                    SELECT product_id, competitor_name, competitor_sale_price,
+                           ROW_NUMBER() OVER (PARTITION BY product_id, competitor_name
+                               ORDER BY COUNT(*) DESC, competitor_sale_price ASC) AS rn
+                    FROM fp_grain
+                    WHERE competitor_sale_price > 0 AND is_recent_competitor = TRUE
+                    GROUP BY product_id, competitor_name, competitor_sale_price
+                ) WHERE rn = 1
+            ),
+            enriched AS (
+                SELECT s.*,
+                    (s.used_product
+                     OR (s.is_mapped AND s.eligible_product AND NOT s.used_product
+                         AND m.modal_price IS NOT NULL AND s.bf_sale_price IS NOT NULL)) AS used_eff,
+                    (NOT s.used_product AND s.is_mapped AND s.eligible_product
+                     AND m.modal_price IS NOT NULL AND s.bf_sale_price IS NOT NULL) AS is_estimated,
+                    CASE WHEN s.used_product THEN s.sale_PI
+                         ELSE s.bf_sale_price / NULLIF(m.modal_price, 0) END AS pi_eff
+                FROM scoped s
+                LEFT JOIN modal m USING (product_id, competitor_name)
+            )
+            SELECT
+                fp_name,
+                competitor_name,
+                ROUND(
+                    SUM(pi_eff * avg_daily_quantity) FILTER (WHERE used_eff)
+                    / NULLIF(SUM(avg_daily_quantity) FILTER (WHERE used_eff), 0),
+                    4
+                ) AS blended_pi,
+                CAST(COUNT(DISTINCT product_id) FILTER (WHERE used_eff)                    AS INTEGER) AS used_count,
+                CAST(COUNT(DISTINCT product_id) FILTER (WHERE used_eff AND is_estimated)   AS INTEGER) AS estimated_count,
+                CAST(COUNT(DISTINCT product_id) FILTER (WHERE eligible_product)            AS INTEGER) AS eligible_count
+            FROM enriched
+            WHERE competitor_name IS NOT NULL AND fp_name IS NOT NULL
+            GROUP BY fp_name, competitor_name
+            HAVING COUNT(DISTINCT product_id) FILTER (WHERE eligible_product) > 0
+            ORDER BY fp_name, competitor_name
+            """.format(where=where)
         with self._duckdb_lock:
             df = self._duckdb_conn.execute(sql, params).df()
         return self._shape_fp_competitor_pi(df)
@@ -656,10 +723,10 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
 
         Computed in a single materialization pass via the shared `base_tmp`
         temp table; ~100× faster than the pandas implementation on single-FP
-        filters.
+        filters. Product-level: unaffected by the competitor price fallback.
         """
         where, params = self._build_where_clause(filters)
-        base_cte = self._BASE_CTE.format(where=where)
+        base_cte = self._base_cte(where)
         materialize_sql = base_cte + " SELECT * FROM base"
 
         # KPIs: total / eligible / mapped / needs_action breakdown + blended PI.

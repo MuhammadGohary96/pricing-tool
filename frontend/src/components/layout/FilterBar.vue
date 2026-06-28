@@ -79,6 +79,25 @@
         <span class="text-body text-grey-600 group-hover:text-grey-900 transition-colors whitespace-nowrap">Include Private Label</span>
       </label>
 
+      <!-- Price-fallback mode: fill mapped-but-not-fresh prices with the typical
+           (modal) price, flagged estimated. It changes the numbers, so the
+           on-state is visible here (the full disclosure banner lands next). -->
+      <button
+        type="button"
+        :aria-pressed="filters.priceFallback"
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-body font-medium transition-colors whitespace-nowrap active:scale-[0.98]"
+        :class="filters.priceFallback
+          ? 'border-brand-primary bg-brand-50 text-brand-primary'
+          : 'border-grey-200 bg-white text-grey-600 hover:border-grey-300'"
+        :title="filters.priceFallback
+          ? 'Estimating missing prices from the typical price across fulfillment points'
+          : 'Fill mapped-but-unpriced cells with the typical (modal) price, flagged estimated'"
+        @click="filters.setFilter('priceFallback', !filters.priceFallback)"
+      >
+        <span class="font-mono">≈</span>
+        {{ filters.priceFallback ? 'Estimating prices' : 'Estimate missing prices' }}
+      </button>
+
       <Transition name="filter">
         <div v-if="loading" class="flex items-center gap-1.5 text-caption text-brand-primary font-medium">
           <Loader2 class="w-3.5 h-3.5 animate-spin" />

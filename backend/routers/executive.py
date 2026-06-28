@@ -39,6 +39,8 @@ def get_summary(request: Request):
 
 @router.get("/dashboard")
 def get_dashboard(request: Request, filters: dict = Depends(_filters)):
+    # Product-level aggregates are unaffected by the competitor price fallback
+    # (it is a purely FP-grain effect — see get_fp_competitor_pi).
     svc = request.app.state.data_service
     return svc.get_executive_dashboard(filters)
 
@@ -62,10 +64,18 @@ def get_category_performance(request: Request, filters: dict = Depends(_filters)
 
 
 @router.get("/fp-competitor-pi")
-def get_fp_competitor_pi(request: Request, filters: dict = Depends(_filters)):
-    """Blended PI per (fulfillment point × competitor) — geographic exposure."""
+def get_fp_competitor_pi(
+    request: Request,
+    price_fallback: bool = Query(False),
+    filters: dict = Depends(_filters),
+):
+    """Blended PI per (fulfillment point × competitor) — geographic exposure.
+
+    price_fallback=true fills mapped-but-not-fresh FP cells with the
+    per-(product, competitor) modal price, counted as estimated.
+    """
     svc = request.app.state.data_service
-    return svc.get_fp_competitor_pi(filters)
+    return svc.get_fp_competitor_pi(filters, price_fallback=price_fallback)
 
 
 @router.get("/week-over-week")

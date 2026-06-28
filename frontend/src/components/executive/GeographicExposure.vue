@@ -34,9 +34,10 @@
             class="w-full pl-8 pr-3 py-1.5 text-body border border-grey-200 rounded-lg bg-grey-50 focus:bg-white focus:border-brand-primary focus:ring-2 focus:ring-brand-lightest outline-none transition-all"
           />
         </div>
-        <span class="text-micro text-grey-400 ml-auto inline-flex items-center gap-1.5">
-          <span class="w-2.5 h-2.5 rounded-sm border border-dashed border-grey-300"></span> low coverage (&lt;20%)
-        </span>
+        <div class="text-micro text-grey-400 ml-auto inline-flex items-center gap-3">
+          <span v-if="estimatedPct > 0" class="inline-flex items-center gap-1" title="Cells filled from the typical fresh price across fulfillment points"><span class="font-mono text-brand-primary">≈</span> {{ estimatedPct }}% estimated</span>
+          <span class="inline-flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm border border-dashed border-grey-300"></span> low coverage (&lt;20%)</span>
+        </div>
       </div>
 
       <!-- Region-grouped grid (Areas collapsed by default) -->
@@ -78,10 +79,16 @@
                 <td v-for="comp in competitors" :key="comp" class="px-2 py-2 border-b border-grey-100 text-center align-middle">
                   <template v-if="fp.cells[comp] && fp.cells[comp].blended_pi != null">
                     <span
-                      class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-mono text-caption font-semibold"
-                      :class="[piBgClass(fp.cells[comp].blended_pi), piTextClass(fp.cells[comp].blended_pi), isThin(fp.cells[comp]) ? 'opacity-55 ring-1 ring-dashed ring-grey-300' : '']"
+                      class="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-md font-mono text-caption font-semibold"
+                      :class="[
+                        piBgClass(fp.cells[comp].blended_pi),
+                        piTextClass(fp.cells[comp].blended_pi),
+                        isFullyEstimated(fp.cells[comp]) ? 'opacity-60 ring-1 ring-dashed ring-brand-light'
+                          : (isThin(fp.cells[comp]) ? 'opacity-55 ring-1 ring-dashed ring-grey-300' : ''),
+                      ]"
                       :title="cellTitle(fp.cells[comp])"
                     >
+                      <span v-if="isEstimated(fp.cells[comp])" class="text-[9px] opacity-80" aria-label="estimated">≈</span>
                       <span class="text-[9px]">{{ piArrow(fp.cells[comp].blended_pi) }}</span>{{ fp.cells[comp].blended_pi.toFixed(2) }}
                     </span>
                   </template>
@@ -117,12 +124,23 @@ const expandedAreas = ref(new Set())  // empty = all collapsed by default
 const MIN_COVERAGE = 20
 function isThin(c) { return c.coverage_pct < MIN_COVERAGE }
 
+// Estimate flags (backend fills mapped-but-not-fresh cells with the modal price).
+function isEstimated(c) { return (c.estimated_count ?? 0) > 0 }
+function isFullyEstimated(c) { return c.used_count > 0 && (c.observed_count ?? c.used_count) === 0 }
+
 const cells = computed(() => props.data?.cells ?? [])
 const competitors = computed(() => props.data?.competitors ?? [])
 const hasData = computed(() => cells.value.length > 0)
 const fpCount = computed(() => new Set(cells.value.map(c => c.fp_name)).size)
+const estimatedPct = computed(() => props.data?.estimated_pct ?? 0)
 
 function cellTitle(c) {
+  const est = c.estimated_count ?? 0
+  if (est > 0) {
+    const obs = c.observed_count ?? 0
+    const split = `${obs} observed + ${est} estimated of ${c.eligible_count} eligible`
+    return obs === 0 ? `Fully estimated — ${split}` : `Partly estimated — ${split}`
+  }
   const base = `${c.used_count} products priced, ${c.coverage_pct}% of the eligible basket`
   return isThin(c) ? `Low coverage, ${base}` : base
 }

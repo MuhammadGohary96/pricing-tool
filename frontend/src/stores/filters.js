@@ -12,6 +12,9 @@ export const useFiltersStore = defineStore('filters', {
     competitor: [],
     fpNames: [],
     includePrivateLabel: true,
+    // Mode (not a scope filter): fill mapped-but-not-fresh prices with the
+    // product×competitor modal, flagged estimated. Default OFF.
+    priceFallback: false,
     categories: [],
     subcategories: [],
     globalTiers: [],
@@ -34,6 +37,7 @@ export const useFiltersStore = defineStore('filters', {
       if (state.competitor.length) params.competitor = state.competitor.join(',')
       if (state.fpNames.length) params.fp_names = state.fpNames.join(',')
       if (!state.includePrivateLabel) params.exclude_private_label = true
+      if (state.priceFallback) params.price_fallback = true
       return params
     },
     hasActiveFilters(state) {

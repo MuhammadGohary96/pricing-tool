@@ -121,11 +121,19 @@
                         <span class="font-mono">{{ cell.pi != null ? cell.pi.toFixed(2) : '—' }}</span>
                       </span>
                     </div>
-                    <!-- stale -->
-                    <div v-else-if="cell.state === 'stale'" class="flex flex-col items-end gap-1">
+                    <!-- estimated (fallback fill) -->
+                    <div v-else-if="cell.state === 'estimated'" class="flex flex-col items-end gap-1" :title="`Estimated — typical price across fulfillment points (no fresh price at ${row.fp_name})`">
+                      <span class="font-mono text-caption font-medium text-grey-500 inline-flex items-center gap-0.5"><span class="text-[9px]">≈</span>{{ fmt(cell.price) }}</span>
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-micro font-bold ring-1 ring-dashed ring-brand-light opacity-80" :class="[piBgClass(cell.pi), piTextClass(cell.pi)]">
+                        <span class="text-[9px]">≈</span>
+                        <span class="font-mono">{{ cell.pi != null ? cell.pi.toFixed(2) : '—' }}</span>
+                      </span>
+                    </div>
+                    <!-- outdated — only a stale price exists; shown for reference, never blended -->
+                    <div v-else-if="cell.state === 'outdated'" class="flex flex-col items-end gap-1" :title="`Outdated — only a stale competitor price exists${cell.days_since_update != null ? ` (${cell.days_since_update} days old)` : ''}; shown for reference, not counted in the blended PI`">
                       <span class="font-mono text-caption font-medium text-grey-400">{{ fmt(cell.price) }}</span>
-                      <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-micro font-semibold text-grey-400 bg-grey-100 border border-dashed border-grey-300">
-                        <Clock class="w-2.5 h-2.5" />{{ cell.days_since_update != null ? `${cell.days_since_update}d old` : 'stale' }}
+                      <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-micro font-semibold text-amber-700 bg-amber-50 border border-dashed border-amber-300">
+                        <Clock class="w-2.5 h-2.5" />{{ cell.days_since_update != null ? `${cell.days_since_update}d old` : 'outdated' }}
                       </span>
                     </div>
                     <!-- mapped, no price -->
@@ -149,6 +157,8 @@
             <span class="inline-flex items-center gap-1.5 text-micro text-grey-500"><span class="w-5 h-3.5 rounded border border-grey-200" :class="SWATCH_PARITY" />Parity ({{ PI_CHEAP }}–{{ PI_EXPENSIVE }})</span>
             <span class="inline-flex items-center gap-1.5 text-micro text-grey-500"><span class="w-5 h-3.5 rounded border border-grey-200" :class="SWATCH_PRICIER" />{{ legendPricier }}</span>
             <span class="inline-flex items-center gap-1.5 text-micro text-grey-500"><span class="w-5 h-3.5 rounded" :style="{ background: HATCH }" />Not mapped</span>
+            <span v-if="summary.estimated_cells" class="inline-flex items-center gap-1.5 text-micro text-grey-500" title="Filled from the typical fresh price across fulfillment points"><span class="font-mono text-brand-primary">≈</span> estimated</span>
+            <span v-if="summary.outdated_cells" class="inline-flex items-center gap-1.5 text-micro text-grey-500" title="Only a stale price exists — shown for reference, not blended"><Clock class="w-2.5 h-2.5 text-amber-600" /> outdated</span>
           </div>
         </template>
 

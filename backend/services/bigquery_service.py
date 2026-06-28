@@ -484,7 +484,7 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             return None
         return df[df["product_id"].astype(str) == str(product_id)]
 
-    def get_product_fp_matrix(self, product_id, filters: dict | None = None) -> dict:
+    def get_product_fp_matrix(self, product_id, filters: dict | None = None, price_fallback: bool = False) -> dict:
         """One product's full FP × competitor price matrix from the (product, fp,
         competitor)-grain frame. Each cell carries the competitor's modal price
         at that FP and its sale_PI (bf_fp / competitor_fp — same convention as
@@ -579,26 +579,38 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 action = "Complete"
             else:
                 action = "Needs Price Update"
-            # Aggregated competitor price + PI over the filtered FPs: fresh-preferred
-            # modal price (same basis as the pivot-table cells) and bf ÷ that price,
-            # so the modal's Min/Max-PI chips match what the pivot shows.
-            agg_source = fresh if not fresh.empty else priced
-            agg_price = _modal(agg_source["competitor_sale_price"]) if not agg_source.empty else None
-            agg_pi = round(bf_sale / agg_price, 4) if (bf_sale and agg_price) else None
+            # FRESH-only modal — the single basis for both estimates and the Min/Max-PI
+            # chips. A pair with no fresh price anywhere has no fresh modal, so it never
+            # produces an estimate and drops out of the chip ranking (it cannot be
+            # judged on a stale price).
+            fresh_modal = _modal(fresh["competitor_sale_price"]) if not fresh.empty else None
+            # Stale modal — shown (flagged "outdated") ONLY for a pair with no fresh
+            # price anywhere; it is reference-only and never feeds any blend or chip.
+            stale_only = fresh.empty and not priced.empty
+            stale_modal = _modal(priced["competitor_sale_price"]) if stale_only else None
+            stale_days_s = priced["days_since_update"].dropna() if "days_since_update" in priced else pd.Series([], dtype=float)
+            stale_days = int(stale_days_s.min()) if (stale_only and not stale_days_s.empty) else None
+            agg_pi = round(bf_sale / fresh_modal, 4) if (bf_sale and fresh_modal) else None
             comp_meta[comp] = {
                 "competitor_name": comp,
                 "is_mapped": is_mapped,
                 "competitor_product_name": comp_product_name,
                 "similarity_score": _s(sim),
                 "action": action,
-                "agg_price": _s(agg_price),
+                "agg_price": _s(fresh_modal),   # Min/Max chips read this (fresh-only)
                 "agg_pi": _s(agg_pi),
+                "fresh_modal": fresh_modal,
+                "stale_only": stale_only,
+                "stale_modal": _s(stale_modal),
+                "stale_days": stale_days,
             }
 
         # Build the matrix rows (one per FP)
         rows = []
         used_pis = []
         priced_fresh = 0
+        estimated_cells = 0
+        outdated_cells = 0
         for fp in fp_names:
             fdf = sub[sub["fp_name"] == fp]
             fp_bf_recent = fdf[fdf.get("is_recent_breadfast", False) == True]  # noqa: E712
@@ -607,32 +619,62 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 fp_bf = _modal(fdf["bf_sale_price"])
             cells = []
             for comp in competitors:
+                meta = comp_meta[comp]
                 cell = {"competitor_name": comp, "state": "not_mapped",
-                        "price": None, "pi": None, "days_since_update": None}
-                if not comp_meta[comp]["is_mapped"]:
+                        "price": None, "pi": None, "days_since_update": None,
+                        "is_estimated": False, "is_outdated": False}
+                if not meta["is_mapped"]:
                     cells.append(cell)
                     continue
                 cfdf = fdf[fdf["competitor_name"] == comp]
                 priced = cfdf[cfdf["competitor_sale_price"] > 0]
-                if priced.empty:
-                    cell["state"] = "no_price"
-                    cells.append(cell)
-                    continue
-                fresh = priced[priced.get("is_recent_competitor", False) == True]  # noqa: E712
-                source = fresh if not fresh.empty else priced
-                price = _modal(source["competitor_sale_price"])
-                days = source["days_since_update"].dropna()
-                cell["price"] = _s(price)
-                cell["days_since_update"] = int(days.min()) if not days.empty else None
-                pi = (fp_bf / price) if (fp_bf and price) else None
-                cell["pi"] = _s(round(pi, 4)) if pi is not None else None
+                fresh = priced[priced.get("is_recent_competitor", False) == True] if not priced.empty else priced  # noqa: E712
                 if not fresh.empty:
+                    # Observed FRESH price at this FP — trusted, always blended.
+                    price = _modal(fresh["competitor_sale_price"])
+                    days = fresh["days_since_update"].dropna()
+                    cell["price"] = _s(price)
+                    cell["days_since_update"] = int(days.min()) if not days.empty else None
+                    pi = (fp_bf / price) if (fp_bf and price) else None
+                    cell["pi"] = _s(round(pi, 4)) if pi is not None else None
                     cell["state"] = "priced"
                     priced_fresh += 1
                     if pi is not None:
                         used_pis.append(pi)
+                elif price_fallback and meta["fresh_modal"] and fp_bf:
+                    # ESTIMATED: no fresh price at this FP, but the pair IS fresh at
+                    # some FP → fill with its FRESH modal. Counts toward the blend.
+                    est = meta["fresh_modal"]
+                    cell["price"] = _s(est)
+                    cell["pi"] = _s(round(fp_bf / est, 4))
+                    cell["state"] = "estimated"
+                    cell["is_estimated"] = True
+                    estimated_cells += 1
+                    used_pis.append(fp_bf / est)
+                elif meta["stale_only"] and meta["stale_modal"]:
+                    # OUTDATED: the pair has NO fresh price anywhere — show the modal of
+                    # its stale prices for reference, flagged outdated, NEVER blended.
+                    out = meta["stale_modal"]
+                    cell["price"] = _s(out)
+                    cell["pi"] = _s(round(fp_bf / out, 4)) if fp_bf else None
+                    cell["days_since_update"] = meta["stale_days"]
+                    cell["state"] = "outdated"
+                    cell["is_outdated"] = True
+                    outdated_cells += 1
+                elif not priced.empty:
+                    # A stale observation exists at this FP for a pair that is fresh
+                    # elsewhere (estimate off / unavailable) — show it, flagged
+                    # outdated; never blended.
+                    price = _modal(priced["competitor_sale_price"])
+                    days = priced["days_since_update"].dropna()
+                    cell["price"] = _s(price)
+                    cell["days_since_update"] = int(days.min()) if not days.empty else None
+                    cell["pi"] = _s(round(fp_bf / price, 4)) if (fp_bf and price) else None
+                    cell["state"] = "outdated"
+                    cell["is_outdated"] = True
+                    outdated_cells += 1
                 else:
-                    cell["state"] = "stale"
+                    cell["state"] = "no_price"
                 cells.append(cell)
             rows.append({"fp_name": fp, "bf_sale_price": _s(fp_bf), "cells": cells})
 
@@ -653,12 +695,18 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 "bf_regular_price": _s(float(first["bf_regular_price"])) if pd.notna(first.get("bf_regular_price")) else None,
                 "bf_price_updated_at": str(bf_updated.max()) if not bf_updated.empty else None,
             },
-            "competitors": [comp_meta[c] for c in competitors],
+            "competitors": [
+                {k: v for k, v in comp_meta[c].items()
+                 if k not in ("fresh_modal", "stale_only", "stale_modal", "stale_days")}
+                for c in competitors
+            ],
             "rows": rows,
             "summary": {
                 "blended_pi": blended,
                 "total_cells": len(competitors) * len(fp_names),
                 "priced_fresh_cells": priced_fresh,
+                "estimated_cells": estimated_cells,
+                "outdated_cells": outdated_cells,
                 "action": overall_action,
             },
         }
@@ -923,6 +971,8 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
 
         cells = []
         competitors = set()
+        tot_used = 0
+        tot_est = 0
         for _, r in df.iterrows():
             fp = r["fp_name"]
             comp = r["competitor_name"]
@@ -931,7 +981,10 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             competitors.add(comp)
             pi = _f(r.get("blended_pi"))
             used = int(_f(r.get("used_count")) or 0)
+            est = int(_f(r.get("estimated_count")) or 0)
             elig = int(_f(r.get("eligible_count")) or 0)
+            tot_used += used
+            tot_est += est
             # FP names are scoped "<Area> FP #<n>"; Area is the prefix.
             area = str(fp).split(" FP #")[0].strip() or "Other"
             cells.append({
@@ -940,39 +993,82 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 "competitor_name": comp,
                 "blended_pi": round(float(pi), 4) if pi is not None else None,
                 "used_count": used,
+                "estimated_count": est,
+                "observed_count": used - est,
                 "eligible_count": elig,
                 "coverage_pct": round(used / elig * 100, 1) if elig else 0.0,
+                # Cell rests entirely on estimates (no fresh-priced product in it).
+                "is_estimated": est > 0 and (used - est) == 0,
             })
-        return {"competitors": sorted(competitors), "cells": cells}
+        return {
+            "competitors": sorted(competitors),
+            "cells": cells,
+            # Share of contributing products that are estimated (0 when fallback off).
+            "estimated_pct": round(tot_est / tot_used * 100, 1) if tot_used else 0.0,
+        }
 
-    def get_fp_competitor_pi(self, filters: dict = None) -> dict:
+    def _fallback_modal_map(self) -> dict:
+        """(product_id, competitor_name) → estimate price: modal of the FRESH
+        competitor prices over all FPs. A pair with no fresh price anywhere has
+        no entry here, so it is never estimated (its stale price surfaces, flagged
+        outdated, only in the product FP-matrix). Mirrors the fresh-only modal CTE
+        in the DuckDB get_fp_competitor_pi fallback."""
+        fresh = self._df[(self._df["competitor_sale_price"] > 0)
+                         & (self._df.get("is_recent_competitor", False) == True)]  # noqa: E712
+
+        def _mode(s):
+            s = s.dropna()
+            if s.empty:
+                return None
+            vc = s.value_counts()
+            return float(min(vc[vc == vc.max()].index))
+
+        return fresh.groupby(["product_id", "competitor_name"])["competitor_sale_price"].apply(_mode).to_dict()
+
+    def get_fp_competitor_pi(self, filters: dict = None, price_fallback: bool = False) -> dict:
         """Quantity-weighted blended PI per (fulfillment point × competitor).
 
         Same blend as get_blended_pi_by_subcategory (Σ(sale_PI·qty)/Σ(qty) over
-        used rows), grouped by fp_name × competitor_name off the FP grain.
+        used rows), grouped by fp_name × competitor_name off the FP grain. When
+        price_fallback is on, mapped-but-not-fresh cells are filled with the
+        per-(product, competitor) modal price and counted as estimated.
         """
         df = self._apply_filters(self._df, filters)
         if df is None or df.empty:
             return {"competitors": [], "cells": []}
-        d = df[df["fp_name"].notna() & df["competitor_name"].notna()]
+        d = df[df["fp_name"].notna() & df["competitor_name"].notna()].copy()
+        d["used_eff"] = d["used_product"] == True  # noqa: E712
+        d["is_estimated"] = False
+        d["pi_eff"] = d["sale_PI"]
+        if price_fallback:
+            modal = self._fallback_modal_map()
+            d["modal_price"] = list(d.set_index(["product_id", "competitor_name"]).index.map(modal))
+            fill = (~d["used_eff"]) & (d.get("is_mapped") == True) & (d["eligible_product"] == True) \
+                & d["modal_price"].notna() & d["bf_sale_price"].notna()  # noqa: E712
+            d.loc[fill, "used_eff"] = True
+            d.loc[fill, "is_estimated"] = True
+            d.loc[fill, "pi_eff"] = d.loc[fill, "bf_sale_price"] / d.loc[fill, "modal_price"]
         rows = []
         for (fp, comp), g in d.groupby(["fp_name", "competitor_name"]):
             elig = int(g.loc[g["eligible_product"] == True, "product_id"].nunique())
             if elig == 0:
                 continue
-            u = g[g["used_product"] == True]
+            u = g[g["used_eff"]]
             qty = u["avg_daily_quantity"].sum()
-            pi = (u["sale_PI"] * u["avg_daily_quantity"]).sum() / qty if qty else None
+            pi = (u["pi_eff"] * u["avg_daily_quantity"]).sum() / qty if qty else None
             rows.append({
                 "fp_name": fp,
                 "competitor_name": comp,
                 "blended_pi": pi if (pi is not None and not pd.isna(pi)) else None,
                 "used_count": int(u["product_id"].nunique()),
+                "estimated_count": int(u.loc[u["is_estimated"], "product_id"].nunique()),
                 "eligible_count": elig,
             })
         return self._shape_fp_competitor_pi(pd.DataFrame(rows))
 
     def get_blended_pi_by_subcategory(self, filters: dict = None) -> pd.DataFrame:
+        # Product-level aggregate — unaffected by the competitor price fallback
+        # (a purely FP-grain effect; see get_fp_competitor_pi / get_product_fp_matrix).
         df = self._apply_filters(self._df, filters)
         used = df[df["used_product"] == True]
         if used.empty:
@@ -1368,6 +1464,7 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         }
 
     def get_executive_dashboard(self, filters: dict = None) -> dict:
+        # Product-level aggregate — unaffected by the competitor price fallback.
         df = self._apply_filters(self._df, filters)
 
         # ─── KPIs ────────────────────────────────────────────────────
