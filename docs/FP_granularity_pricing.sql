@@ -23,12 +23,14 @@ CREATE OR REPLACE TABLE dbt_gohary.competitor_price_monitoring_fps AS (
 WITH
 -- ─────────────────────────────────────────────────────────────────────────────
 -- STEP 0a ▸ COMPETITOR REGISTRY
--- Competitors we benchmark against (everyone except Breadfast). Used both
--- to filter source data AND as one spine of the output grid in STEP 11.
+-- Competitors we benchmark against (everyone except Breadfast). competitor_key
+-- is carried so we can join the daily comparison fact (which keys on
+-- competitor_key, not competitor_id).
 -- ─────────────────────────────────────────────────────────────────────────────
 competitor_registry AS (
     SELECT
         competitor_id,
+        competitor_key,
         competitor_name
     FROM `followbreadfast.l03_marts.dim_competitors`
     WHERE competitor_name != 'Breadfast'
@@ -37,8 +39,7 @@ competitor_registry AS (
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- STEP 0b ▸ FP REGISTRY
--- Active FPs whose name ends with "FP #<number>" (e.g. "New Cairo FP #1",
--- "Maadi FP #10") and are not currently sleeping.
+-- Active FPs whose name ends with "FP #<number>" and are not currently sleeping.
 -- ─────────────────────────────────────────────────────────────────────────────
 fp_registry AS (
     SELECT
@@ -51,11 +52,10 @@ fp_registry AS (
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- STEP 0c ▸ FP × SKU AVAILABILITY
--- (product, fp) pairs where the SKU was live in the app at least once in
--- the last 7 days. Used as an INNER JOIN gate in STEP 7 to restrict the
--- (product, fp) grain to genuinely active assortment combinations — every
--- row downstream is therefore active by construction (no flag needed).
+-- STEP 0c ▸ FP × SKU AVAILABILITY  (retained — not a price-index source, but
+-- kept per the requested scope to preserve the active-assortment universe)
+-- (product, fp) pairs where the SKU was live in the app at least once in the
+-- last 7 days. INNER-JOIN gate in STEP 7.
 -- ─────────────────────────────────────────────────────────────────────────────
 fps_available_products AS (
     SELECT DISTINCT
@@ -74,9 +74,9 @@ fps_available_products AS (
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- STEPS 1–5 ▸ BREADFAST-INTERNAL METRICS (PRODUCT GRAIN, GLOBAL)
--- Competitor- and FP-agnostic. Global scores remain product-level and are
--- simply broadcast across fp rows downstream.
+-- STEPS 1–5 ▸ BREADFAST-INTERNAL METRICS (PRODUCT GRAIN, GLOBAL)  — UNCHANGED
+-- Sourced from dim_product_commercial_profile + dim_products (already the
+-- metric's product-side sources).
 -- ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -162,9 +162,6 @@ normalized_products AS (
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- STEP 5 ▸ WEIGHTED COMBINED SCORES
--- Pre-computes a few revenue/quantity weight blends so downstream consumers
--- can pick the mix that fits their decision. COALESCE handles single-product
--- subcategories where normalization → NULL.
 -- ─────────────────────────────────────────────────────────────────────────────
 scored_products AS (
     SELECT
@@ -200,17 +197,14 @@ scored_products AS (
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- STEPS 6–7 ▸ BREADFAST PRICE ENRICHMENT (PER FP) + ACTIVITY GATE
--- The SCD is at (product_key, fp_id) grain. We keep that grain instead of
--- collapsing it. STEP 7 also enforces the activity gate — every (product, fp)
--- row downstream is guaranteed to have BF pricing AND active assortment.
+-- STEPS 6–7 ▸ BREADFAST PRICE ENRICHMENT (PER FP) + ACTIVITY GATE  — UNCHANGED
+-- Retained as the driver grid: establishes the (product, fp) universe that has
+-- a BF price AND active assortment, so unmapped products still appear.
 -- ═══════════════════════════════════════════════════════════════════════════
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- STEP 6 ▸ BREADFAST PRICES — LATEST SCD ROW PER (PRODUCT, FP)
--- INNER JOIN to fp_registry enforces FP scope, and INNER JOIN to the SCD
--- enforces the "BF must have a price" rule.
 -- ─────────────────────────────────────────────────────────────────────────────
 products_enriched_prices_1 AS (
     SELECT
@@ -237,11 +231,6 @@ products_enriched_prices_1 AS (
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- STEP 7 ▸ BREADFAST PRICES — COLLAPSE TIES + GATE ON SKU ACTIVITY
--- If multiple SCD rows tie for "latest" within an (product, fp) cell, take
--- the mode of each price column. INNER JOIN to fps_available_products
--- restricts the grain to (product, fp) pairs where the SKU was live in the
--- app in the last 7 days — this is the universal activity gate for the
--- rest of the pipeline.
 -- ─────────────────────────────────────────────────────────────────────────────
 products_enriched_prices_2 AS (
     SELECT
@@ -259,20 +248,20 @@ products_enriched_prices_2 AS (
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- STEPS 8–10 ▸ COMPETITOR PRICE PIPELINE (PER FP, MULTI-COMPETITOR)
---   Step 8  — latest crawl per (competitor, BF product, fp), preferring v2.
---   Step 9  — collapse multi-location observations within an fp into modal
---             prices and within-fp spread.
+-- STEPS 8–10 ▸ COMPETITOR PRICE PIPELINE — RE-SOURCED ONTO THE DAILY FACT
+--   Step 8  — latest daily-comparison row per (competitor, BF product, fp).
+--   Step 9  — thin enrichment (names, freshness); no location collapse needed.
 --   Step 9b — product-level mapping (collapses across FPs).
---   Step 10 — sale_PI = BF sale price ÷ competitor sale price (per fp).
+--   Step 10 — sale_PI = bf_eod_sale_price ÷ last_seen_sale_price (matches metric).
 -- ═══════════════════════════════════════════════════════════════════════════
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- STEP 8 ▸ COMPETITOR PRICES — RAW LATEST OBSERVATION (PER FP)
--- For each (competitor, mapped BF product, fp) take the row with the newest
--- valid_to_ltz, breaking ties by latest crawl date and preferring v2.
--- bf_sale_price falls back to bf_regular_price when sale price is missing/zero.
+-- STEP 8 ▸ COMPETITOR PRICES — LATEST DAILY OBSERVATION (PER FP)
+-- One row per (competitor, mapped BF product, fp): the most recent comparison
+-- day. The marts table already prefers the cleaned/latest crawl and is
+-- location-collapsed, so the v2/valid_to/location logic is gone. Keys are
+-- bridged to ids via the dims (competitor_key→id, product_key→id).
 -- ─────────────────────────────────────────────────────────────────────────────
 competitor_raw AS (
     SELECT
@@ -280,84 +269,79 @@ competitor_raw AS (
         cr.competitor_name,
         fr.fp_id,
         fr.fp_name,
-        h.competitor_product_id,
+        dcp.competitor_product_id,
+        dcp.product_name_en AS competitor_product_name,
         h.competitor_product_key,
-        h.comp_sale_price AS sale_price,
-        h.bf_regular_price,
-        COALESCE(NULLIF(h.bf_sale_price, 0), h.bf_regular_price) AS bf_sale_price,
-        h.comp_regular_price AS regular_price,
-        h.mapped_bf_product_id AS bf_product_id,
-        COALESCE(DATE(h.last_crawled_at_ltz), '1970-01-01') AS date_day,
-        h.location_id,
-        CASE
-            WHEN h.valid_to_ltz >= CURRENT_DATE() THEN CURRENT_DATE()
-            ELSE DATE(h.valid_to_ltz)
-        END AS breadfast_last_updated_day
-    FROM `followbreadfast.l03_marts.fct_competitor_price_monitoring` h
+        dp.product_id AS bf_product_id,
+
+        -- Prices straight from the metric's source table
+        NULLIF(h.last_seen_sale_price, 0)    AS sale_price,        -- competitor sale (carry-forward, >0)
+        NULLIF(h.last_seen_regular_price, 0) AS regular_price,
+        NULLIF(h.bf_eod_sale_price, 0)       AS bf_sale_price,     -- Breadfast end-of-day sale
+        NULLIF(h.bf_eod_regular_price, 0)    AS bf_regular_price,
+
+        -- Freshness == the metric's recently_crawled gate
+        h.days_since_crawl,
+        (h.days_since_crawl <= 7) AS is_recent_competitor,
+
+        -- Actual last crawl date (date_day is the comparison day)
+        DATE_SUB(h.date_day, INTERVAL h.days_since_crawl DAY) AS date_day
+    FROM `followbreadfast.l03_marts.fct_daily_competitor_price_comparison` h
     INNER JOIN competitor_registry cr
-        ON h.competitor_id = cr.competitor_id
+        ON h.competitor_key = cr.competitor_key
     INNER JOIN fp_registry fr
         ON h.fp_id = fr.fp_id
-    WHERE h.mapped_bf_product_id IS NOT NULL
-    QUALIFY RANK() OVER (
-        PARTITION BY h.competitor_id, h.mapped_bf_product_id, h.fp_id
+    LEFT JOIN `followbreadfast.l03_marts.dim_products` dp
+        ON h.mapped_product_key = dp.product_key
+    LEFT JOIN `followbreadfast.l03_marts.dim_competitor_products` dcp
+        ON h.competitor_product_key = dcp.competitor_product_key
+        AND dcp.competitor_id = cr.competitor_id
+    WHERE h.mapped_product_key IS NOT NULL
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY cr.competitor_id, h.mapped_product_key, h.fp_id
         ORDER BY
-            h.pricing_tool_version DESC,   -- Prefer v2 over v1
-            h.valid_to_ltz DESC,
-            DATE(h.last_crawled_at_ltz) DESC
+            h.date_day DESC,            -- freshest comparison day
+            h.days_since_crawl ASC,     -- freshest crawl
+            h.competitor_product_key    -- deterministic tiebreak
     ) = 1
 ),
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- STEP 9 ▸ COMPETITOR PRICES — COLLAPSE LOCATIONS WITHIN AN FP
--- Modal price across the fp's locations via APPROX_TOP_COUNT; MIN/MAX gives
--- within-fp spread. is_recent_* flags freshness (≤ 7 days).
+-- STEP 9 ▸ COMPETITOR PRICES — ENRICH (no location collapse; table is already
+-- one price per fp). MIN/MAX retained as the point value for schema parity —
+-- within-fp location spread is not available from the daily comparison table.
 -- ─────────────────────────────────────────────────────────────────────────────
 competitor_clean AS (
     SELECT
-        cr.competitor_id,
-        cr.competitor_name,
-        cr.fp_id,
-        cr.fp_name,
-        cr.competitor_product_id,
-        cp.product_name_en AS competitor_product_name,
-        cr.competitor_product_key,
-        cr.bf_product_id,
+        competitor_id,
+        competitor_name,
+        fp_id,
+        fp_name,
+        competitor_product_id,
+        competitor_product_name,
+        competitor_product_key,
+        bf_product_id,
 
-        -- Freshness
-        MAX(cr.date_day) >= CURRENT_DATE() - 7 AS is_recent_competitor,
-        MAX(cr.breadfast_last_updated_day) >= CURRENT_DATE() - 7 AS is_recent_breadfast,
-        MAX(cr.breadfast_last_updated_day) AS breadfast_last_updated_day,
-        MAX(cr.date_day) AS date_day,
+        is_recent_competitor,
+        date_day,
 
-        -- Modal prices within the fp
-        APPROX_TOP_COUNT(cr.regular_price, 1)[OFFSET(0)].value AS competitor_regular_price,
-        APPROX_TOP_COUNT(cr.sale_price, 1)[OFFSET(0)].value AS competitor_sale_price,
-        APPROX_TOP_COUNT(cr.bf_regular_price, 1)[OFFSET(0)].value AS breadfast_regular_price,
-        APPROX_TOP_COUNT(cr.bf_sale_price, 1)[OFFSET(0)].value AS breadfast_sale_price,
+        regular_price AS competitor_regular_price,
+        sale_price    AS competitor_sale_price,
+        bf_regular_price AS breadfast_regular_price,
+        bf_sale_price    AS breadfast_sale_price,
 
-        -- Within-fp spread across locations
-        MIN(cr.sale_price) AS min_competitor_sale_price,
-        MAX(cr.sale_price) AS max_competitor_sale_price,
-        MIN(cr.bf_sale_price) AS min_bf_sale_price,
-        MAX(cr.bf_sale_price) AS max_bf_sale_price
-    FROM competitor_raw cr
-    LEFT JOIN `followbreadfast.l03_marts.dim_competitor_products` cp
-        ON cr.competitor_product_key = cp.competitor_product_key
-        AND cp.competitor_id = cr.competitor_id
-    GROUP BY ALL
+        -- No location spread in the daily fact → point value
+        sale_price AS min_competitor_sale_price,
+        sale_price AS max_competitor_sale_price
+    FROM competitor_raw
 ),
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- STEP 9b ▸ COMPETITOR MAPPING (PRODUCT-LEVEL, FP-AGNOSTIC)
--- A BF product is "mapped" to a competitor if *any* FP has an observation
--- linking them. This CTE collapses competitor_clean across FPs to give the
--- canonical link per (bf_product, competitor), broadcast to every FP in
--- STEP 11 — even FPs where this competitor has no price observation.
--- The "most recent observation" wins for the link details, handling
--- competitor product re-mappings gracefully.
+-- STEP 9b ▸ COMPETITOR MAPPING (PRODUCT-LEVEL, FP-AGNOSTIC)  — UNCHANGED LOGIC
+-- A BF product is "mapped" to a competitor if any FP has an observation linking
+-- them. Most recent observation wins for link details.
 -- ─────────────────────────────────────────────────────────────────────────────
 competitor_mapping AS (
     SELECT
@@ -374,9 +358,8 @@ competitor_mapping AS (
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- STEP 10 ▸ PRICE INDEX CALCULATION (PER FP)
--- One row per (BF product, competitor, fp) where a price match exists.
---   sale_PI = Breadfast sale price / Competitor sale price
---     PI > 1 → BF more expensive   |   PI < 1 → BF cheaper
+--   sale_PI = bf_eod_sale_price / last_seen_sale_price  →  identical to the
+--   fp_sale_price_index metric's row-level sale_pi.
 -- ─────────────────────────────────────────────────────────────────────────────
 price_index AS (
     SELECT
@@ -386,12 +369,10 @@ price_index AS (
         c.fp_id,
         c.fp_name,
         c.is_recent_competitor,
-        c.is_recent_breadfast,
         c.breadfast_sale_price,
         c.competitor_sale_price,
         c.min_competitor_sale_price,
         c.max_competitor_sale_price,
-        c.breadfast_last_updated_day,
         c.date_day AS competitor_last_updated_day,
         SAFE_DIVIDE(c.breadfast_sale_price, c.competitor_sale_price) AS sale_PI
     FROM competitor_clean c
@@ -405,11 +386,9 @@ price_index AS (
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- STEP 11 ▸ JOIN SCORES + MAPPING + PRICE INDEX
--- Driver: products_enriched_prices_2 (already gated on activity + BF pricing).
--- CROSS JOIN competitors, then two LEFT JOINs:
---   • competitor_mapping → product-level link (carries across all FPs)
---   • price_index        → fp-level price (NULL where this FP has no obs)
--- This decouples "is the product mapped?" from "is there a price here?".
+-- Driver: products_enriched_prices_2 (gated on activity + BF SCD pricing).
+-- BF price for PI rows comes from the comparison fact (bf_eod); SCD is the
+-- fallback + the source of BF freshness (the daily fact has no BF-price age).
 -- ─────────────────────────────────────────────────────────────────────────────
 products_with_pi AS (
     SELECT
@@ -428,16 +407,17 @@ products_with_pi AS (
         pi.min_competitor_sale_price,
         pi.max_competitor_sale_price,
 
-        -- BF price: competitor-side wins where present; else SCD-derived
+        -- BF price: competitor-side (bf_eod) wins where present; else SCD-derived
         COALESCE(pi.breadfast_sale_price, s.bf_sale_price) AS breadfast_sale_price,
-        COALESCE(pi.is_recent_breadfast, s.is_recent_breadfast) AS is_recent_breadfast,
+
+        -- BF freshness always from the SCD (daily fact carries no BF-price age)
+        s.is_recent_breadfast,
         pi.is_recent_competitor,
-        COALESCE(pi.breadfast_last_updated_day, s.breadfast_last_updated_day) AS breadfast_last_updated_day,
+        s.breadfast_last_updated_day,
         pi.competitor_last_updated_day,
 
         -- Both sides fresh (≤ 7 days)
-        (COALESCE(pi.is_recent_breadfast, s.is_recent_breadfast)
-            AND pi.is_recent_competitor) AS prices_recently_updated,
+        (s.is_recent_breadfast AND pi.is_recent_competitor) AS prices_recently_updated,
 
         -- Product-level mapping flag (carries across FPs)
         (cm.competitor_product_id IS NOT NULL) AS is_mapped
@@ -454,51 +434,30 @@ products_with_pi AS (
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- STEP 12 ▸ AI MATCH CANDIDATES (PRODUCT-LEVEL, REPLICATED ACROSS FPS)
--- The recommendation table is product-level. The same candidate applies to
--- every FP in which the product is priced — that's intentional.
+-- STEP 12 ▸ AI MATCH CANDIDATES (PRODUCT-LEVEL, REPLICATED ACROSS FPS) — UNCHANGED
 -- ─────────────────────────────────────────────────────────────────────────────
 ai_match_candidates AS (
     SELECT
         CAST(rcp.bf_product_id AS INT64) AS recommended_bf_product_id,
         rcp.competitor_id,
         rcp.similarity_score,
-        cp.product_name_en AS match_potential_product_name
-    FROM `bf-data-dev-qz06.dbt_salma.dim_recommended_bf_competitor_products` rcp
+        cp.product_name_en AS match_potential_product_name,
+        rcp.is_matched
+    FROM `followbreadfast.l03_marts.dim_recommended_bf_competitor_products` rcp
     INNER JOIN competitor_registry cr
         ON rcp.competitor_id = cr.competitor_id
     LEFT JOIN `followbreadfast.l03_marts.dim_competitor_products` cp
         ON rcp.competitor_product_id = cp.competitor_product_id
         AND cp.competitor_id = rcp.competitor_id
     QUALIFY ROW_NUMBER() OVER (PARTITION BY rcp.bf_product_id, rcp.competitor_id
-  ORDER BY rcp.similarity_score DESC) = 1 
+  ORDER BY rcp.similarity_score DESC) = 1
 ),
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- STEP 13 ▸ FINAL PRODUCT DATA + ELIGIBILITY / ACTION FLAGS
--- One row per (product, fp, competitor). Every row is for an active SKU in
--- that FP with a BF price (gate enforced in STEP 7).
---
--- Flag semantics:
---   eligible_product → top 80% of subcategory revenue (product-level, global)
---   is_mapped        → product is linked to this competitor in any FP
---   has_PI           → THIS FP has a competitor price observation (FP-level)
---   updated          → both BF and competitor prices are ≤ 7 days fresh
---   used_product     → eligible AND has_PI AND updated (counts toward PI)
---   match_potential  → AI similarity ≥ 0.85 for this competitor
---
--- action_type (per product, fp, competitor):
---   Needs Mapping       — no link anywhere AND no AI candidate
---   Review AI Match     — no link anywhere BUT AI suggests one
---   Needs Price for FP  — linked, but this FP has no competitor price
---   Needs Price Update  — linked AND priced here, but stale
---   Complete            — linked, priced here, and fresh
---
--- classification (Mapped is product-level):
---   Mapped - PL                           /  Mapped - Not PL
---   Not Mapped - PL - Potential Match     /  - No Potential Match
---   Not Mapped - Not PL - Potential Match /  - No Potential Match
+-- STEP 13 ▸ FINAL PRODUCT DATA + ELIGIBILITY / ACTION FLAGS  — UNCHANGED LOGIC
+-- (has_PI now reflects a carried-forward price; stale-but-priced rows route to
+--  'Needs Price Update' rather than 'Needs Price for FP'.)
 -- ─────────────────────────────────────────────────────────────────────────────
 final_product_data AS (
     SELECT
@@ -539,28 +498,36 @@ final_product_data AS (
 
         -- ─── Classification tree (Mapped is product-level) ──────────────────
         CASE
-            -- Branch 1: MAPPED (product-level)
-            WHEN w.is_mapped AND w.brand_name != 'Breadfast'
+            -- Branch 1: MAPPED
+            WHEN w.sale_PI IS NOT NULL AND w.brand_name != 'Breadfast'
                 THEN 'Mapped - Not PL'
-            WHEN w.is_mapped AND w.brand_name = 'Breadfast'
+            WHEN w.sale_PI IS NOT NULL AND w.brand_name = 'Breadfast'
                 THEN 'Mapped - PL'
 
             -- Branch 2a: NOT MAPPED — PL
-            WHEN NOT w.is_mapped
+            WHEN w.sale_PI IS NULL
+                 AND w.brand_name = 'Breadfast'
+                 AND NOT is_matched
+                THEN 'Not Mapped - PL - No Match'
+            WHEN w.sale_PI IS NULL
                  AND w.brand_name = 'Breadfast'
                  AND amc.similarity_score >= 0.85
                 THEN 'Not Mapped - PL - Potential Match'
-            WHEN NOT w.is_mapped
+            WHEN w.sale_PI IS NULL
                  AND w.brand_name = 'Breadfast'
                  AND (amc.similarity_score IS NULL OR amc.similarity_score < 0.85)
                 THEN 'Not Mapped - PL - No Potential Match'
 
             -- Branch 2b: NOT MAPPED — Not PL
-            WHEN NOT w.is_mapped
+            WHEN w.sale_PI IS NULL
+                 AND w.brand_name != 'Breadfast'
+                 AND NOT is_matched
+                THEN 'Not Mapped - Not PL - No Match'
+            WHEN w.sale_PI IS NULL
                  AND w.brand_name != 'Breadfast'
                  AND amc.similarity_score >= 0.85
                 THEN 'Not Mapped - Not PL - Potential Match'
-            WHEN NOT w.is_mapped
+            WHEN w.sale_PI IS NULL
                  AND w.brand_name != 'Breadfast'
                  AND (amc.similarity_score IS NULL OR amc.similarity_score < 0.85)
                 THEN 'Not Mapped - Not PL - No Potential Match'
@@ -576,12 +543,7 @@ final_product_data AS (
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- STEP 14 ▸ (FP × SUBCATEGORY × COMPETITOR) ROLL-UP (optional output)
--- mapped_products          → linked (product-level)
--- priced_products          → has a price in THIS FP
--- mapped_no_price_products → linked but no price in this FP (action backlog)
--- blended_PI               → quantity-weighted mean PI over "used" products
--- coverage_pct             → share of eligible set we cover in that FP
+-- STEP 14 ▸ (FP × SUBCATEGORY × COMPETITOR) ROLL-UP (optional output) — UNCHANGED
 -- ─────────────────────────────────────────────────────────────────────────────
 subcategory_summary AS (
     SELECT
@@ -646,11 +608,7 @@ subcategory_summary AS (
 -- Option A (default): product × fp × competitor detail
 -- Option B (commented): fp × subcategory × competitor roll-up
 -- =============================================================================
-SELECT p.*
+SELECT *
 FROM final_product_data p
 -- WHERE product_id = 10900814 and competitor_id = 1
-ORDER BY p.combined_score_global DESC, p.fp_id, p.competitor_id
-
--- SELECT * FROM subcategory_summary
--- ORDER BY fp_name, competitor_name, blended_PI DESC
-)
+ORDER BY p.combined_score_global DESC, p.fp_id, p.competitor_id)

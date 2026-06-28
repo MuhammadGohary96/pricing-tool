@@ -11,7 +11,7 @@ from backend.models.metrics import (
     BlendedPITable,
     ProductPIPoint,
 )
-from backend.models.product import ProductRow, ProductDetailTable, ProductPriceUpdate
+from backend.models.product import ProductRow, ProductDetailTable
 
 router = APIRouter(prefix="/api/commercial", tags=["commercial"])
 
@@ -254,88 +254,25 @@ def get_products_pivoted(
     )
 
 
-@router.patch("/products/{product_id}")
-def update_product_price(product_id: str, body: ProductPriceUpdate, request: Request):
-    from backend.config import settings
-    from backend.services.catalog_client import update_product_price as catalog_update
-
-    # Use the user's Google token for Catalog API writes
-    user_token = getattr(request.state, "access_token", None)
-
-    catalog_synced = False
-    catalog_error = None
-    if product_id.isdigit() and user_token:
-        try:
-            catalog_update(
-                base_url=settings.BF_CATALOG_URL,
-                token=user_token,
-                product_id=int(product_id),
-                now_price=body.now_price,
-                now_sale_price=body.now_sale_price,
-            )
-            catalog_synced = True
-        except Exception as e:
-            catalog_error = str(e)
-            print(f"[Catalog] Write failed for product {product_id} ({getattr(request.state, 'email', '?')}): {e}")
-
-    # Always update in-memory DataFrame so subsequent GETs reflect the change
+@router.get("/products/{product_id}/fp-matrix")
+def get_product_fp_matrix(request: Request, product_id: str, filters: dict = Depends(_filters)):
+    """Per-FP × per-competitor pricing matrix for a single product (modal view)."""
     svc = request.app.state.data_service
-    mask = svc._df["product_id"] == product_id
-    if mask.any():
-        if body.now_price is not None:
-            svc._df.loc[mask, "now_price"] = body.now_price
-        if body.now_sale_price is not None:
-            svc._df.loc[mask, "now_sale_price"] = body.now_sale_price
-
-    return {
-        "ok": True,
-        "product_id": product_id,
-        "now_price": body.now_price,
-        "now_sale_price": body.now_sale_price,
-        "catalog_synced": catalog_synced,
-        "catalog_error": catalog_error,
-    }
+    return svc.get_product_fp_matrix(product_id, filters)
 
 
 @router.post("/catalog/enrich")
 def enrich_catalog_prices(request: Request):
-    """Bulk-fetch live prices from the Catalog API using the user's Google token."""
-    import threading
-
-    svc = request.app.state.data_service
-    user_token = getattr(request.state, "access_token", None)
+    """No-op. now_price/now_sale_price are now sourced from BigQuery
+    (bf_regular_price / modal sale price), so we no longer fetch live prices
+    from the Catalog API. Returns immediately as "done" so the frontend's
+    enrichment poll completes without spinning.
+    """
     enrichment = request.app.state.enrichment_status
-
-    # Dev mode: no token available, skip catalog enrichment
-    if not user_token:
-        enrichment["done"] = True
-        return {"ok": True, "already_enriched": True, "dev_mode": True}
-
-    # Already enriched or in progress
-    if enrichment.get("done"):
-        return {"ok": True, "already_enriched": True}
-    if enrichment.get("in_progress"):
-        return {"ok": True, "in_progress": True}
-
-    enrichment["in_progress"] = True
+    enrichment["done"] = True
+    enrichment["in_progress"] = False
     enrichment["error"] = None
-
-    def _enrich():
-        try:
-            matched = svc.enrich_with_catalog_prices(
-                token=user_token,
-                progress_status=enrichment,
-            )
-            enrichment["done"] = True
-            enrichment["in_progress"] = False
-            print(f"[Catalog] Enrichment complete — {matched} products enriched by {getattr(request.state, 'email', '?')}")
-        except Exception as e:
-            enrichment["error"] = str(e)
-            enrichment["in_progress"] = False
-            print(f"[Catalog] Enrichment failed: {e}")
-
-    thread = threading.Thread(target=_enrich, daemon=True)
-    thread.start()
+    return {"ok": True, "already_enriched": True, "source": "bigquery"}
 
     return {"ok": True, "started": True}
 

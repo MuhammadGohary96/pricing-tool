@@ -1,18 +1,19 @@
 <template>
-  <button
-    class="text-caption px-3 py-1.5 rounded-lg border border-grey-200 bg-white hover:bg-grey-100 hover:shadow-card flex items-center gap-1.5 disabled:opacity-40 transition-all"
-    :disabled="loading"
+  <PillButton
+    variant="ghost"
+    size="sm"
+    :icon="Download"
+    :loading="loading"
     @click="handleExport"
   >
-    <Loader2 v-if="loading" class="w-3.5 h-3.5 animate-spin" />
-    <Download v-else class="w-3.5 h-3.5" />
     {{ loading ? 'Exporting...' : label }}
-  </button>
+  </PillButton>
 </template>
 
 <script setup>
 import { ref } from 'vue'
-import { Download, Loader2 } from 'lucide-vue-next'
+import { Download } from 'lucide-vue-next'
+import PillButton from './PillButton.vue'
 
 const props = defineProps({
   label: { type: String, default: 'Export CSV' },

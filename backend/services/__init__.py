@@ -4,18 +4,21 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def _upgrade_to_duckdb(service):
+def _upgrade_to_duckdb(service, parquet_from_source: bool = False):
     """Re-class an existing BigQueryPricingDataService instance into a
     DuckDBPricingDataService and attach the DuckDB connection.
 
-    This avoids re-loading data from BigQuery — we just write the in-memory
-    `_df` to Parquet and open a DuckDB view over it.
+    parquet_from_source=True means `_df` was just read FROM the fp-grain Parquet,
+    so `_init_duckdb` must NOT rewrite it (the file is authoritative and its
+    mtime drives the background-refresh staleness check). Cold/pickle loads pass
+    False so the Parquet is (re)written to match the freshly-built `_df`.
     """
     from backend.services.duckdb_service import DuckDBPricingDataService
 
     service.__class__ = DuckDBPricingDataService
     service._parquet_path = __import__("pathlib").Path(settings.DUCKDB_PARQUET_PATH)
     service._max_parquet_age_hours = 24
+    service._parquet_from_source = parquet_from_source
     service._duckdb_conn = None
     service._duckdb_lock = __import__("threading").Lock()
     service._init_duckdb()
@@ -39,6 +42,100 @@ def create_data_service(startup_status: dict = None):
     else:
         from backend.services.mock_data_service import MockPricingDataService
         return MockPricingDataService()
+
+
+def create_data_service_from_parquet():
+    """Rehydrate the data service from the Parquet cache (no pickle).
+
+    Reads `_df` from the fp-grain Parquet and `_competitor_df` from the
+    competitor-grain Parquet, re-aggregates `_global_df`, then upgrades to
+    DuckDB. Returns None if the fp-grain Parquet is absent (caller falls back).
+    """
+    if settings.DATA_SOURCE != "bigquery":
+        return None
+
+    from pathlib import Path
+    import pandas as pd
+    from backend.services import parquet_cache as pc
+    from backend.services.bigquery_service import BigQueryPricingDataService
+
+    fp_path = Path(settings.DUCKDB_PARQUET_PATH)
+    if not pc.exists(fp_path):
+        logger.info("[Parquet] No fp-grain Parquet found — cannot load from Parquet cache")
+        return None
+
+    service = BigQueryPricingDataService.__new__(BigQueryPricingDataService)
+    from google.cloud import bigquery
+    service._client = bigquery.Client(project=settings.BQ_PROJECT_ID, location=settings.BQ_LOCATION)
+    service._project = settings.BQ_PROJECT_ID
+    service._dataset = settings.BQ_DATASET
+    service._table = settings.BQ_TABLE
+    service._location = settings.BQ_LOCATION
+    service._startup_status = None
+
+    # The 4.9M-row pandas `_df` is NOT loaded on the serving path: DuckDB queries
+    # the Parquet directly, now_price/now_sale_price come from the base SQL,
+    # GLOBAL is served by `global_base`, and filter/fp options are SQL. Skipping
+    # it frees ~300-400 MB RAM and the Parquet→pandas read. `_df` is rebuilt only
+    # during a fresh BigQuery load (cold start / background refresh).
+    service._df = None
+    service._global_df = None
+
+    # _competitor_df from competitor-grain Parquet (rebuild derived date cols).
+    # Kept as pandas — small (~150K rows) and the competitor tab is pandas-based.
+    comp_path = Path(settings.COMPETITOR_PARQUET_PATH)
+    if pc.exists(comp_path):
+        cdf = pc.read_df(comp_path)
+        cdf = service._derive_competitor_date_cols(cdf)
+        service._competitor_df = cdf.reset_index(drop=True)
+    else:
+        logger.warning("[Parquet] No competitor-grain Parquet — competitor tab will be empty until refresh")
+        service._competitor_df = pd.DataFrame()
+
+    logger.info(
+        f"[Parquet] Loaded service from Parquet (no pandas _df): "
+        f"{len(service._competitor_df):,} competitor rows; GLOBAL via DuckDB global_base"
+    )
+
+    if settings.USE_DUCKDB:
+        service = _upgrade_to_duckdb(service, parquet_from_source=True)
+    return service
+
+
+def save_parquet_cache(service) -> None:
+    """Persist the service's in-memory frames to the Parquet cache.
+
+    Replaces the legacy multi-GB pickle. Writes the fp-grain Parquet (also the
+    artifact DuckDB queries) and a competitor-grain Parquet (derived `*_date`
+    columns dropped — they're rebuilt on load).
+    """
+    from datetime import datetime
+    from pathlib import Path
+    from backend.services import parquet_cache as pc
+
+    fp_path = Path(settings.DUCKDB_PARQUET_PATH)
+    pc.write_parquet(service._df, fp_path)
+
+    comp = getattr(service, "_competitor_df", None)
+    if comp is not None and not comp.empty:
+        comp = comp.drop(
+            columns=[c for c in comp.columns if c.endswith("_date")],
+            errors="ignore",
+        )
+        pc.write_parquet(comp, Path(settings.COMPETITOR_PARQUET_PATH))
+
+    # Record the sync marker (powers the UI "last synced" + the smart hourly
+    # refresh's change-detection). bq_table_modified is best-effort.
+    bq_modified_iso = None
+    try:
+        client = getattr(service, "_client", None)
+        if client is not None:
+            tbl = client.get_table(f"{settings.BQ_PROJECT_ID}.{settings.BQ_DATASET}.{settings.BQ_TABLE}")
+            if tbl.modified is not None:
+                bq_modified_iso = tbl.modified.isoformat()
+    except Exception as exc:
+        logger.warning(f"[Sync] Could not read BQ table modified time: {exc}")
+    pc.write_sync_state(fp_path.parent, datetime.now().isoformat(), bq_modified_iso)
 
 
 def create_data_service_from_cache(cached_data: dict):

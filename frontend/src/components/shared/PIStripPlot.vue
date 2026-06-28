@@ -6,10 +6,10 @@
       class="block"
       @mouseleave="hoveredIdx = null"
     >
-      <!-- Background zones: left=red (low PI, BF expensive), middle=yellow, right=green (high PI, BF cheaper) -->
-      <rect :x="0" y="0" :width="zoneLowPct + '%'" height="28" fill="#fee2e2" rx="2" />
-      <rect :x="zoneLowPct + '%'" y="0" :width="(zoneHighPct - zoneLowPct) + '%'" height="28" fill="#fef9c3" />
-      <rect :x="zoneHighPct + '%'" y="0" :width="(100 - zoneHighPct) + '%'" height="28" fill="#dcfce7" rx="2" />
+      <!-- Background zones (PI = BF ÷ Comp): left=cheap/cool (low PI), middle=parity/green, right=pricey/warm (high PI) -->
+      <rect :x="0" y="0" :width="zoneLowPct + '%'" height="28" fill="#DBEAFE" rx="2" />
+      <rect :x="zoneLowPct + '%'" y="0" :width="(zoneHighPct - zoneLowPct) + '%'" height="28" fill="#DCFCE7" />
+      <rect :x="zoneHighPct + '%'" y="0" :width="(100 - zoneHighPct) + '%'" height="28" fill="#FEE2E2" rx="2" />
 
       <!-- Parity line at 1.0 -->
       <line :x1="parityPct + '%'" y1="2" :x2="parityPct + '%'" y2="26" stroke="#9ca3af" stroke-width="1" stroke-dasharray="2,2" />

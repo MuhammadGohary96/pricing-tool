@@ -52,11 +52,13 @@ export const useFiltersStore = defineStore('filters', {
   },
 
   actions: {
-    async fetchFilterOptions() {
+    async fetchFilterOptions(force = false) {
       const CACHE_KEY = 'bf_filter_options'
       const CACHE_TTL = 15 * 60 * 1000 // 15 minutes
 
-      try {
+      // force=true bypasses the cache so newly-synced values (e.g. new FPs)
+      // show up immediately after a background BigQuery refresh.
+      if (!force) try {
         const cached = sessionStorage.getItem(CACHE_KEY)
         if (cached) {
           const { data, ts } = JSON.parse(cached)

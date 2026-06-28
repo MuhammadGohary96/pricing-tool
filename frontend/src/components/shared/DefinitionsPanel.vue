@@ -1,5 +1,5 @@
 <template>
-  <div class="bg-white rounded-lg shadow-card overflow-hidden">
+  <div class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden">
     <button
       class="w-full px-4 py-2.5 flex items-center justify-between hover:bg-grey-50 transition-colors"
       @click="toggle"

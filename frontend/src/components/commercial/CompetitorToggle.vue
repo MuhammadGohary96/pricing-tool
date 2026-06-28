@@ -1,59 +1,52 @@
 <template>
-  <div class="relative" ref="wrapper">
+  <div class="flex items-center gap-2 flex-wrap">
+    <span class="text-micro font-semibold uppercase tracking-wide text-grey-400 mr-0.5">Competitors</span>
+
     <button
-      class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-body font-medium transition-colors"
-      :class="hasSelection
-        ? 'border-brand-primary bg-brand-50 text-brand-primary'
-        : 'border-grey-200 bg-white text-grey-700 hover:border-grey-300'"
-      @click="open = !open"
+      v-for="comp in visibleComps"
+      :key="comp"
+      type="button"
+      :aria-pressed="isSelected(comp)"
+      :title="isSelected(comp) ? `Hide ${comp}` : `Show ${comp}`"
+      class="group inline-flex items-center gap-1.5 pl-1 pr-3 py-1 rounded-full ring-1 text-caption font-semibold transition-[transform,background-color,box-shadow,color] duration-200 ease-premium active:scale-[0.97]"
+      :class="isSelected(comp)
+        ? 'bg-brand-50 ring-brand-light/60 text-brand-dark'
+        : 'bg-white ring-grey-200 text-grey-400 hover:ring-grey-300'"
+      @click="toggle(comp)"
     >
-      <EyeIcon class="w-3.5 h-3.5" />
-      Competitors
-      <span
-        class="text-micro px-1.5 py-px rounded-full font-bold"
-        :class="hasSelection ? 'bg-brand-primary text-white' : 'bg-grey-100 text-grey-500'"
-      >{{ hasSelection ? modelValue.length : 'All' }}</span>
-      <ChevronDown class="w-3 h-3 transition-transform" :class="open ? 'rotate-180' : ''" />
+      <span :class="isSelected(comp) ? '' : 'grayscale opacity-50 group-hover:opacity-70 transition-opacity'">
+        <CompetitorLogo :name="comp" size="md" />
+      </span>
+      {{ comp }}
     </button>
 
-    <Transition name="dropdown">
-      <div
-        v-if="open"
-        class="absolute z-30 mt-1 left-0 bg-white rounded-lg shadow-lg border border-grey-200 py-1 min-w-[200px]"
-      >
-        <button
-          class="w-full text-left px-3 py-1.5 text-body text-brand-primary font-medium hover:bg-brand-50 transition-colors"
-          @click="selectAll"
-        >{{ hasSelection ? 'Show All' : 'Deselect All' }}</button>
-        <div class="border-t border-grey-100 my-1"></div>
-        <label
-          v-for="comp in visibleComps"
-          :key="comp"
-          class="flex items-center gap-2 px-3 py-1 cursor-pointer hover:bg-grey-50 transition-colors"
-        >
-          <input
-            type="checkbox"
-            :checked="isSelected(comp)"
-            class="w-3.5 h-3.5 rounded border-grey-300 accent-brand-primary cursor-pointer"
-            @change="toggle(comp)"
-          />
-          <CompetitorLogo :name="comp" />
-          <span class="text-body text-grey-700">{{ comp }}</span>
-        </label>
-        <button
-          v-if="competitors.length > defaultLimit"
-          class="w-full text-left px-3 py-1.5 text-caption text-grey-500 hover:bg-grey-50 transition-colors border-t border-grey-100 mt-1"
-          @click="showAll = !showAll"
-        >{{ showAll ? 'Show fewer' : `Show all ${competitors.length}` }}</button>
-      </div>
-    </Transition>
+    <!-- Expand when there are more than the default limit -->
+    <button
+      v-if="competitors.length > defaultLimit"
+      type="button"
+      class="inline-flex items-center gap-1 px-3 py-1.5 rounded-full ring-1 ring-grey-200 bg-white text-caption font-medium text-grey-500 hover:ring-grey-300 active:scale-[0.97] transition-[transform,box-shadow] duration-200 ease-premium"
+      @click="showAll = !showAll"
+    >
+      <component :is="showAll ? ChevronLeft : Plus" class="w-3 h-3" />
+      {{ showAll ? 'Show fewer' : `${competitors.length - defaultLimit} more` }}
+    </button>
+
+    <!-- Reset to all when a partial selection is active -->
+    <button
+      v-if="hasSelection"
+      type="button"
+      class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-caption font-medium text-grey-400 hover:text-brand-primary hover:bg-brand-50 active:scale-[0.97] transition-[transform,background-color,color] duration-200 ease-premium"
+      title="Show all competitors"
+      @click="selectAll"
+    >
+      <RotateCcw class="w-3 h-3" /> All
+    </button>
   </div>
 </template>
 
 <script setup>
 import { ref, computed } from 'vue'
-import { onClickOutside } from '@vueuse/core'
-import { Eye as EyeIcon, ChevronDown } from 'lucide-vue-next'
+import { Plus, ChevronLeft, RotateCcw } from 'lucide-vue-next'
 import CompetitorLogo from '../shared/CompetitorLogo.vue'
 
 const props = defineProps({
@@ -64,15 +57,14 @@ const props = defineProps({
 
 const emit = defineEmits(['update:modelValue'])
 
-const open = ref(false)
 const showAll = ref(false)
-const wrapper = ref(null)
-onClickOutside(wrapper, () => { open.value = false })
 
 const visibleComps = computed(() =>
   showAll.value ? props.competitors : props.competitors.slice(0, props.defaultLimit)
 )
 
+// Empty model = every competitor shown. A partial selection means the user has
+// hidden some, so the "All" reset becomes available.
 const hasSelection = computed(() => props.modelValue.length > 0 && props.modelValue.length < props.competitors.length)
 
 function isSelected(comp) {
@@ -89,7 +81,7 @@ function toggle(comp) {
   } else {
     current.push(comp)
   }
-  // If all selected or none, reset to empty (= show all)
+  // All or none selected → reset to empty (= show all)
   if (current.length === 0 || current.length === props.competitors.length) {
     emit('update:modelValue', [])
   } else {
@@ -101,13 +93,3 @@ function selectAll() {
   emit('update:modelValue', [])
 }
 </script>
-
-<style scoped>
-.dropdown-enter-active, .dropdown-leave-active {
-  transition: opacity 0.15s, transform 0.15s;
-}
-.dropdown-enter-from, .dropdown-leave-to {
-  opacity: 0;
-  transform: translateY(-4px);
-}
-</style>

@@ -1,9 +1,9 @@
 <template>
-  <div class="bg-white rounded-lg shadow-card overflow-hidden">
+  <div class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden">
     <div class="px-4 py-3 border-b border-grey-100 flex items-center justify-between">
       <div class="flex items-center gap-2">
         <Search class="w-4 h-4 text-brand-primary" />
-        <span class="text-subheading font-bold text-grey-900">Product Explorer</span>
+        <span class="text-subheading font-bold text-grey-900 tracking-tightish">Product Explorer</span>
         <span class="text-caption text-grey-400 ml-1">{{ total.toLocaleString() }} products</span>
       </div>
       <div class="flex items-center gap-3">
@@ -83,7 +83,7 @@
             </td>
             <td class="px-3 py-2.5 text-right">
               <span v-if="row.sale_PI != null" class="text-body font-mono font-semibold" :class="piClass(row.sale_PI)">
-                {{ row.sale_PI.toFixed(4) }}
+                <span class="text-[10px] mr-0.5 opacity-70">{{ piArrow(row.sale_PI) }}</span>{{ row.sale_PI.toFixed(2) }}
               </span>
               <span v-else class="text-caption text-grey-400">—</span>
             </td>
@@ -128,6 +128,7 @@
 import { Search } from 'lucide-vue-next'
 import ExportButton from '../shared/ExportButton.vue'
 import CompetitorLogo from '../shared/CompetitorLogo.vue'
+import { piTextClass, piArrow } from '../../utils/piColor'
 
 defineProps({
   items: { type: Array, default: () => [] },
@@ -147,10 +148,10 @@ function freshnessBadge(days) {
   return 'bg-red-50 text-red-700'
 }
 
+// Delegate to the shared "both tails bad" system (PI = BF ÷ Comp): cheaper = cool,
+// parity = green, pricier = warm. Replaces the old inverted high-PI-is-green logic.
 function piClass(pi) {
-  if (pi >= 1.05) return 'text-green-600'
-  if (pi <= 0.95) return 'text-red-600'
-  return 'text-grey-700'
+  return piTextClass(pi)
 }
 
 function statusBadge(row) {

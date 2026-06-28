@@ -43,11 +43,6 @@ class ProductRow(BaseModel):
     match_potential_product_name: Optional[str] = None
 
 
-class ProductPriceUpdate(BaseModel):
-    now_price: Optional[float] = None
-    now_sale_price: Optional[float] = None
-
-
 class ProductDetailTable(BaseModel):
     items: list[ProductRow]
     total_count: int

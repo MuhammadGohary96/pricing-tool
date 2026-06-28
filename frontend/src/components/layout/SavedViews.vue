@@ -16,7 +16,7 @@
     <Transition name="dropdown">
       <div
         v-if="open"
-        class="absolute z-30 mt-1 left-0 bg-white rounded-lg shadow-lg border border-grey-200 py-1 min-w-[220px]"
+        class="absolute z-30 mt-1 left-0 bg-white rounded-xl shadow-dropdown ring-1 ring-grey-200/70 py-1 min-w-[220px]"
       >
         <div class="px-3 py-1 text-micro font-semibold text-grey-400 uppercase tracking-wide">Presets</div>
         <button
@@ -70,7 +70,7 @@ const filters = useFiltersStore()
 const PRESETS = [
   { name: 'All Categories', filters: {} },
   { name: 'Top Tier Only', filters: { globalTier: ['T1'] } },
-  { name: 'Needs Action', filters: { actionType: ['Needs Mapping', 'Needs Price Update', 'Review AI Match'] } },
+  { name: 'Needs Action', filters: { actionType: ['Needs Mapping', 'Needs Price Update', 'Review Match'] } },
 ]
 
 const LS_KEY = 'bf_saved_views'

@@ -22,7 +22,7 @@ import duckdb
 import pandas as pd
 
 from backend.services.bigquery_service import BigQueryPricingDataService
-from backend.services.parquet_cache import is_fresh, write_parquet
+from backend.services.parquet_cache import exists as parquet_exists, is_fresh, write_parquet
 from backend.utils.calculations import pi_direction
 
 logger = logging.getLogger(__name__)
@@ -50,9 +50,18 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         self._init_duckdb()
 
     def _init_duckdb(self) -> None:
-        """Materialize Parquet from `_df` if stale/missing, then open a DuckDB view."""
-        if not is_fresh(self._parquet_path, self._max_parquet_age_hours):
-            logger.info(f"[DuckDB] Parquet missing/stale → writing from in-memory _df")
+        """Open a DuckDB view over the fp-grain Parquet.
+
+        Writes the Parquet from the in-memory `_df` UNLESS the Parquet is the
+        authoritative source of `_df` (set via `_parquet_from_source`). Writing
+        is otherwise required so the Parquet matches the freshly-loaded `_df`
+        (cold BigQuery load or legacy pickle load). We deliberately do NOT write
+        based on file age — that would reset the mtime and defeat the
+        background-refresh staleness check in main.py.
+        """
+        parquet_from_source = getattr(self, "_parquet_from_source", False)
+        if not parquet_exists(self._parquet_path) or not parquet_from_source:
+            logger.info("[DuckDB] Writing fp-grain Parquet from in-memory _df")
             write_parquet(self._df, self._parquet_path)
 
         self._duckdb_conn = duckdb.connect(":memory:", read_only=False)
@@ -61,6 +70,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             f"CREATE OR REPLACE VIEW fp_grain AS "
             f"SELECT * FROM read_parquet('{self._parquet_path}')"
         )
+        self._materialize_global_base()
         # Pre-warm in three stages:
         # 1. Page the entire Parquet file into OS cache (one large sequential read)
         # 2. Run a GLOBAL blended-pi query — warms DuckDB internals + tests SQL
@@ -96,6 +106,22 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             f"[DuckDB] Ready — {row_count:,} rows, total pre-warm {time.time() - t0:.1f}s"
         )
 
+    def _materialize_global_base(self) -> None:
+        """Materialize the GLOBAL (unfiltered) aggregated base into a DuckDB
+        table so GLOBAL queries hit a ~150K-row table instead of re-aggregating
+        4.9M rows on every request — the DuckDB equivalent of the old pandas
+        `_global_df` precompute, but using the single `_BASE_CTE` definition.
+        """
+        import time
+        t0 = time.time()
+        self._duckdb_conn.execute(
+            "CREATE OR REPLACE TABLE global_base AS "
+            + self._BASE_CTE.format(where="")
+            + " SELECT * FROM base"
+        )
+        (n,) = self._duckdb_conn.execute("SELECT COUNT(*) FROM global_base").fetchone()
+        logger.info(f"[DuckDB] Materialized global_base: {n:,} rows in {time.time() - t0:.1f}s")
+
     def refresh_parquet(self) -> None:
         """Re-export `_df` to Parquet and reload the DuckDB view (called after BG refresh)."""
         with self._duckdb_lock:
@@ -104,39 +130,30 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 f"CREATE OR REPLACE VIEW fp_grain AS "
                 f"SELECT * FROM read_parquet('{self._parquet_path}')"
             )
-            logger.info("[DuckDB] Refreshed Parquet + reopened view")
+            self._materialize_global_base()
+            logger.info("[DuckDB] Refreshed Parquet + reopened view + rebuilt global_base")
 
     # ------------------------------------------------------------------
-    # OVERRIDDEN — _apply_filters: speeds up EVERY method that goes through
-    # this code path (which is all the filter-heavy ones). Routes the FP-filter
-    # case through DuckDB; GLOBAL falls through to the pandas _global_df.
+    # OVERRIDDEN — _apply_filters: the single aggregation path for EVERY
+    # filter-heavy method. Both GLOBAL and FP-scoped now go through DuckDB
+    # `_BASE_CTE` (the pandas `_global_df` path is retired):
+    #   - GLOBAL    → read the pre-materialized `global_base` table (fast)
+    #   - FP-scoped → run `_BASE_CTE` with a WHERE on fp_name
+    # then merge catalog prices + apply the remaining filters in pandas.
     # ------------------------------------------------------------------
     def _apply_filters(self, df: pd.DataFrame, filters: dict | None = None) -> pd.DataFrame:
         fp_names = filters.get("fp_names") if filters else None
-        if not fp_names:
-            # GLOBAL: parent uses pre-aggregated _global_df (already fast)
-            return super()._apply_filters(df, filters)
-
-        # FP-scoped: run DuckDB aggregation, return as pandas DataFrame, then
-        # apply remaining filters in pandas (the small post-aggregation frame
-        # makes pandas filtering trivially fast).
-        where, params = self._build_where_clause({"fp_names": fp_names})
-        base_cte = self._BASE_CTE.format(where=where)
-        sql = base_cte + " SELECT * FROM base"
         with self._duckdb_lock:
-            aggregated = self._duckdb_conn.execute(sql, params).df()
+            if fp_names:
+                where, params = self._build_where_clause({"fp_names": fp_names})
+                sql = self._BASE_CTE.format(where=where) + " SELECT * FROM base"
+                aggregated = self._duckdb_conn.execute(sql, params).df()
+            else:
+                # GLOBAL: pre-materialized aggregation (~150K rows, fast)
+                aggregated = self._duckdb_conn.execute("SELECT * FROM global_base").df()
 
-        # Merge in catalog-enriched prices (now_price, now_sale_price) from
-        # the pandas `_df`. These are updated post-startup by the catalog
-        # enrichment process and may not be in the Parquet snapshot.
-        if "now_price" in self._df.columns or "now_sale_price" in self._df.columns:
-            price_cols = [c for c in ("product_id", "now_price", "now_sale_price")
-                          if c in self._df.columns]
-            now_prices = self._df[price_cols].drop_duplicates("product_id")
-            aggregated = aggregated.merge(now_prices, on="product_id", how="left")
-        else:
-            aggregated["now_price"] = None
-            aggregated["now_sale_price"] = None
+        # now_price / now_sale_price come from BQ in the base query
+        # (bf_regular_price / modal sale). Read-only — price editing was removed.
 
         # Apply remaining filters in pandas (now operating on the small
         # aggregated frame — ~150K rows max, much faster than scanning 4.5M)
@@ -159,6 +176,60 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             if filters.get("exclude_private_label"):
                 filtered = filtered[~filtered["brand_name"].str.lower().str.contains("breadfast", na=False)]
         return filtered
+
+    # ------------------------------------------------------------------
+    # OVERRIDDEN — filter/fp option lists, sourced from DuckDB instead of the
+    # pandas `_df` (which is no longer loaded on the serving path).
+    # ------------------------------------------------------------------
+    def _load_product_rows(self, product_id):
+        """Fetch one product's fp-grain rows from the Parquet view (the pandas
+        `_df` isn't loaded on the DuckDB serving path)."""
+        with self._duckdb_lock:
+            return self._duckdb_conn.execute(
+                "SELECT * FROM fp_grain WHERE CAST(product_id AS VARCHAR) = ?",
+                [str(product_id)],
+            ).df()
+
+    def get_fp_options(self) -> list[str]:
+        with self._duckdb_lock:
+            rows = self._duckdb_conn.execute(
+                "SELECT DISTINCT fp_name FROM fp_grain WHERE fp_name IS NOT NULL ORDER BY fp_name"
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def get_filter_options(self, main_category: Optional[str] = None) -> dict:
+        con = self._duckdb_conn
+        with self._duckdb_lock:
+            mains = [r[0] for r in con.execute(
+                "SELECT DISTINCT commercial_category_name FROM global_base "
+                "WHERE commercial_category_name IS NOT NULL ORDER BY 1"
+            ).fetchall()]
+            if main_category:
+                subs = [r[0] for r in con.execute(
+                    "SELECT DISTINCT sub_category_name FROM global_base "
+                    "WHERE sub_category_name IS NOT NULL AND commercial_category_name = ? ORDER BY 1",
+                    [main_category],
+                ).fetchall()]
+            else:
+                subs = [r[0] for r in con.execute(
+                    "SELECT DISTINCT sub_category_name FROM global_base "
+                    "WHERE sub_category_name IS NOT NULL ORDER BY 1"
+                ).fetchall()]
+            brands = [r[0] for r in con.execute(
+                "SELECT DISTINCT brand_name FROM global_base WHERE brand_name IS NOT NULL ORDER BY 1"
+            ).fetchall()]
+            comps = [r[0] for r in con.execute(
+                "SELECT DISTINCT competitor_name FROM global_base WHERE competitor_name IS NOT NULL ORDER BY 1"
+            ).fetchall()]
+        return {
+            "main_categories": mains,
+            "sub_categories": subs,
+            "global_tiers": ["Top+", "Top", "Medium", "Low", "Very Low"],
+            "subcat_tiers": ["Top+", "Top", "Medium", "Low", "Very Low"],
+            "action_types": ["Needs Mapping", "Review Match", "Needs Price Update", "Complete"],
+            "brands": brands,
+            "competitors": comps,
+        }
 
     # ------------------------------------------------------------------
     # Filter parsing helpers — translate the dict-of-filters into SQL
@@ -234,7 +305,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                        ORDER BY COUNT(*) DESC, competitor_sale_price ASC
                    ) AS rn
             FROM scoped
-            WHERE competitor_sale_price IS NOT NULL AND is_recent_competitor = TRUE
+            WHERE competitor_sale_price > 0 AND is_recent_competitor = TRUE
             GROUP BY product_id, competitor_id, competitor_sale_price
         ) WHERE rn = 1
     ),
@@ -247,7 +318,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                        ORDER BY COUNT(*) DESC, competitor_sale_price ASC
                    ) AS rn
             FROM scoped
-            WHERE competitor_sale_price IS NOT NULL
+            WHERE competitor_sale_price > 0
             GROUP BY product_id, competitor_id, competitor_sale_price
         ) WHERE rn = 1
     ),
@@ -268,7 +339,13 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             ANY_VALUE(eligible_product)            AS eligible_product,
             BOOL_OR(is_mapped)                     AS is_mapped,
             MAX(similarity_score)                  AS similarity_score,
-            ANY_VALUE(classification)              AS classification,
+            -- MIN (not ANY_VALUE) so the pick is DETERMINISTIC *and* correct:
+            -- 12.5% of pairs have classification that varies across FP rows, and
+            -- for all of them is_mapped=BOOL_OR is True. "Mapped …" sorts before
+            -- "Not Mapped …", so MIN picks the Mapped label — matching is_mapped.
+            -- (ANY_VALUE picked arbitrarily → wobbling counts; MAX would have
+            --  wrongly labeled every varying-but-mapped pair "Not Mapped".)
+            MIN(classification)                    AS classification,
             ANY_VALUE(weighted_score)              AS weighted_score,
             ANY_VALUE(norm_revenue)                AS norm_revenue,
             ANY_VALUE(norm_quantity)               AS norm_quantity,
@@ -280,11 +357,11 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             ANY_VALUE(competitor_product_name)     AS competitor_product_name,
             ANY_VALUE(match_potential)             AS match_potential,
             ANY_VALUE(match_potential_product_name) AS match_potential_product_name,
-            MIN(days_since_update) FILTER (WHERE competitor_sale_price IS NOT NULL)        AS days_since_update,
-            MIN(competitor_sale_price) FILTER (WHERE competitor_sale_price IS NOT NULL)    AS min_competitor_sale_price,
-            MAX(competitor_sale_price) FILTER (WHERE competitor_sale_price IS NOT NULL)    AS max_competitor_sale_price,
-            MAX(bf_price_updated_at) FILTER (WHERE competitor_sale_price IS NOT NULL)      AS bf_price_updated_at,
-            MAX(competitor_price_updated_at) FILTER (WHERE competitor_sale_price IS NOT NULL) AS competitor_price_updated_at
+            MIN(days_since_update) FILTER (WHERE competitor_sale_price > 0)        AS days_since_update,
+            MIN(competitor_sale_price) FILTER (WHERE competitor_sale_price > 0)    AS min_competitor_sale_price,
+            MAX(competitor_sale_price) FILTER (WHERE competitor_sale_price > 0)    AS max_competitor_sale_price,
+            MAX(bf_price_updated_at) FILTER (WHERE competitor_sale_price > 0)      AS bf_price_updated_at,
+            MAX(competitor_price_updated_at) FILTER (WHERE competitor_sale_price > 0) AS competitor_price_updated_at
         FROM scoped
         GROUP BY product_id, competitor_id
     ),
@@ -294,11 +371,19 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             pm.*,
             COALESCE(cf.comp_fresh_modal, ca.comp_all_modal) AS competitor_sale_price,
             bm.bf_modal AS bf_sale_price,
+            -- "now" prices sourced from BQ (no live Catalog-API fetch):
+            -- now_price = regular price, now_sale_price = modal sale price.
+            pm.bf_regular_price AS now_price,
+            bm.bf_modal         AS now_sale_price,
             bm.bf_modal / COALESCE(cf.comp_fresh_modal, ca.comp_all_modal) AS sale_PI,
             -- Recomputed flags (match pandas _aggregate_to_global)
             (cf.comp_fresh_modal IS NOT NULL)             AS is_recent_competitor,
             (ca.comp_all_modal   IS NOT NULL)             AS has_PI,
             (bm.bf_modal         IS NOT NULL)             AS is_recent_breadfast,
+            -- prices_recently_updated/updated = BF fresh AND competitor fresh
+            -- (matches pandas _aggregate_to_global lines 623-626)
+            (bm.bf_modal IS NOT NULL AND cf.comp_fresh_modal IS NOT NULL) AS prices_recently_updated,
+            (bm.bf_modal IS NOT NULL AND cf.comp_fresh_modal IS NOT NULL) AS updated,
             (pm.eligible_product
                 AND ca.comp_all_modal IS NOT NULL
                 AND bm.bf_modal IS NOT NULL
@@ -357,11 +442,25 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                     'product_name': product_name,
                     'sale_PI': sale_PI,
                     'weight': avg_daily_quantity
-                }) FILTER (WHERE used_product AND sale_PI IS NOT NULL) AS product_pis,
-                ROUND(SUM(DISTINCT total_revenue) FILTER (WHERE used_product), 2) AS total_revenue
+                }) FILTER (WHERE used_product AND sale_PI IS NOT NULL) AS product_pis
             FROM base_tmp
             GROUP BY sub_category_name
             HAVING COUNT(DISTINCT product_id) FILTER (WHERE used_product) > 0
+        ),
+        -- Revenue summed over DISTINCT used products (total_revenue is product-
+        -- level, constant across competitor rows). Matches pandas
+        -- drop_duplicates("product_id")["total_revenue"].sum(). NB: a plain
+        -- SUM(DISTINCT total_revenue) is WRONG — it collapses two different
+        -- products that happen to share an identical revenue value.
+        used_rev AS (
+            SELECT sub_category_name, ROUND(SUM(rev), 2) AS total_revenue
+            FROM (
+                SELECT sub_category_name, product_id, ANY_VALUE(total_revenue) AS rev
+                FROM base_tmp
+                WHERE used_product
+                GROUP BY sub_category_name, product_id
+            )
+            GROUP BY sub_category_name
         ),
         full_counts AS (
             SELECT
@@ -378,12 +477,13 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             ua.sub_category_name,
             ua.blended_pi,
             CAST(ua.used_product_count AS INTEGER) AS used_product_count,
-            COALESCE(ua.total_revenue, 0)::DOUBLE AS total_revenue,
+            COALESCE(ur.total_revenue, 0)::DOUBLE AS total_revenue,
             ua.product_pis,
             CAST(COALESCE(fc.total_product_count, 0)    AS INTEGER) AS total_product_count,
             CAST(COALESCE(fc.eligible_product_count, 0) AS INTEGER) AS eligible_product_count,
             CAST(COALESCE(fc.needs_action_count, 0)     AS INTEGER) AS needs_action_count
         FROM used_agg ua
+        LEFT JOIN used_rev ur USING (sub_category_name)
         LEFT JOIN full_counts fc USING (sub_category_name)
         ORDER BY ua.blended_pi DESC NULLS LAST
         """
@@ -521,6 +621,35 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
     # ------------------------------------------------------------------
     # OVERRIDDEN ENDPOINT 2/5 — get_executive_dashboard
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Blended PI per (fulfillment point × competitor) — Geographic exposure.
+    # Same quantity-weighted blend as get_blended_pi_by_subcategory, grouped
+    # by fp_name × competitor_name straight off the FP grain (no FP collapse).
+    # ------------------------------------------------------------------
+    def get_fp_competitor_pi(self, filters: dict | None = None) -> dict:
+        where, params = self._build_where_clause(filters)
+        sql = """
+        WITH scoped AS (SELECT * FROM fp_grain {where})
+        SELECT
+            fp_name,
+            competitor_name,
+            ROUND(
+                SUM(sale_PI * avg_daily_quantity) FILTER (WHERE used_product)
+                / NULLIF(SUM(avg_daily_quantity) FILTER (WHERE used_product), 0),
+                4
+            ) AS blended_pi,
+            CAST(COUNT(DISTINCT product_id) FILTER (WHERE used_product)     AS INTEGER) AS used_count,
+            CAST(COUNT(DISTINCT product_id) FILTER (WHERE eligible_product) AS INTEGER) AS eligible_count
+        FROM scoped
+        WHERE competitor_name IS NOT NULL AND fp_name IS NOT NULL
+        GROUP BY fp_name, competitor_name
+        HAVING COUNT(DISTINCT product_id) FILTER (WHERE eligible_product) > 0
+        ORDER BY fp_name, competitor_name
+        """.format(where=where)
+        with self._duckdb_lock:
+            df = self._duckdb_conn.execute(sql, params).df()
+        return self._shape_fp_competitor_pi(df)
+
     def get_executive_dashboard(self, filters: dict | None = None) -> dict:
         """Executive dashboard payload (KPIs + per-competitor PI + mapping
         progress + classification breakdown).
@@ -586,12 +715,16 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
              ) FROM pair_metrics)                                                         AS blended_pi
         """
 
-        # Per-competitor blended PI + mapped/used/eligible counts
-        # `eligible_products` here means "total active products in the result set"
-        # (same value for all competitors) — matches commercial.py expectation.
+        # Per-competitor blended PI + mapped/used/eligible counts.
+        # `eligible_products` = count of ELIGIBLE products (top-80% revenue head),
+        # so Utilization = used / eligible. (Mapping Coverage uses total active,
+        # which the frontend reads from mapping_progress.total.)
         sql_comp_pi = """
-        WITH total_active AS (
-            SELECT COUNT(DISTINCT product_id) AS total_active FROM base_tmp
+        WITH active_counts AS (
+            SELECT
+                COUNT(DISTINCT product_id) AS total_active,
+                COUNT(DISTINCT product_id) FILTER (WHERE eligible_product) AS eligible_active
+            FROM base_tmp
         ),
         per_comp AS (
             SELECT
@@ -611,28 +744,39 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             pc.competitor_name,
             pc.blended_pi,
             CASE WHEN pc.blended_pi IS NOT NULL THEN ROUND(pc.blended_pi - 1, 4) END AS pi_deviation,
-            CAST(pc.mapped_products AS INTEGER) AS mapped_products,
-            CAST(ta.total_active   AS INTEGER) AS eligible_products,
-            CAST(pc.used_products  AS INTEGER) AS used_products
-        FROM per_comp pc CROSS JOIN total_active ta
+            CAST(pc.mapped_products  AS INTEGER) AS mapped_products,
+            CAST(ac.eligible_active  AS INTEGER) AS eligible_products,
+            CAST(pc.used_products    AS INTEGER) AS used_products
+        FROM per_comp pc CROSS JOIN active_counts ac
         ORDER BY pc.blended_pi DESC NULLS LAST
         """
 
-        # Per-competitor mapping_progress: counts by classification at product grain
+        # Per-competitor mapping_progress at product grain.
+        # The mapped/not-mapped split is driven by is_mapped (the SAME definition
+        # the Blended-PI-by-competitor table uses), NOT by the classification
+        # string — the two disagree in the source data, and is_mapped is the
+        # source of truth. PL vs Not-PL still comes from the classification token
+        # (always present, e.g. "… - PL - …" / "… - Not PL - …"), and the
+        # not-mapped reason buckets are counted ONLY among is_mapped = FALSE. This
+        # makes mapped_not_pl + mapped_pl = mapped_products and all buckets sum to
+        # total, so the donut is internally consistent and matches that table.
         sql_mapping_progress = """
         WITH product_class AS (
-            SELECT DISTINCT product_id, competitor_name, classification
+            SELECT DISTINCT product_id, competitor_name, classification, is_mapped
             FROM base_tmp
             WHERE competitor_name IS NOT NULL AND classification IS NOT NULL
         )
         SELECT
             competitor_name,
-            CAST(COUNT(*) FILTER (WHERE classification = 'Mapped - Not PL') AS INTEGER) AS mapped_not_pl,
-            CAST(COUNT(*) FILTER (WHERE classification = 'Mapped - PL')     AS INTEGER) AS mapped_pl,
-            CAST(COUNT(*) FILTER (WHERE classification = 'Not Mapped - Not PL - Potential Match')    AS INTEGER) AS potential_not_pl,
-            CAST(COUNT(*) FILTER (WHERE classification = 'Not Mapped - PL - Potential Match')        AS INTEGER) AS potential_pl,
-            CAST(COUNT(*) FILTER (WHERE classification = 'Not Mapped - Not PL - No Potential Match') AS INTEGER) AS no_potential_not_pl,
-            CAST(COUNT(*) FILTER (WHERE classification = 'Not Mapped - PL - No Potential Match')     AS INTEGER) AS no_potential_pl,
+            CAST(COUNT(*) FILTER (WHERE is_mapped AND classification LIKE '%Not PL%')     AS INTEGER) AS mapped_not_pl,
+            CAST(COUNT(*) FILTER (WHERE is_mapped AND classification NOT LIKE '%Not PL%') AS INTEGER) AS mapped_pl,
+            CAST(COUNT(*) FILTER (WHERE NOT is_mapped AND classification = 'Not Mapped - Not PL - Potential Match')    AS INTEGER) AS potential_not_pl,
+            CAST(COUNT(*) FILTER (WHERE NOT is_mapped AND classification = 'Not Mapped - PL - Potential Match')        AS INTEGER) AS potential_pl,
+            CAST(COUNT(*) FILTER (WHERE NOT is_mapped AND classification = 'Not Mapped - Not PL - No Potential Match') AS INTEGER) AS no_potential_not_pl,
+            CAST(COUNT(*) FILTER (WHERE NOT is_mapped AND classification = 'Not Mapped - PL - No Potential Match')     AS INTEGER) AS no_potential_pl,
+            -- "No Match" = master-data DECIDED there's no competitor equivalent (resolved)
+            CAST(COUNT(*) FILTER (WHERE NOT is_mapped AND classification = 'Not Mapped - Not PL - No Match') AS INTEGER) AS no_match_not_pl,
+            CAST(COUNT(*) FILTER (WHERE NOT is_mapped AND classification = 'Not Mapped - PL - No Match')     AS INTEGER) AS no_match_pl,
             CAST(COUNT(*) AS INTEGER) AS total
         FROM product_class
         GROUP BY competitor_name
@@ -692,11 +836,23 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             })
 
         # ── mapping_progress ─────────────────────────────────────────
+        # is_mapped count per competitor (same figure the Blended-PI-by-competitor
+        # table uses for Mapping Coverage), so the Product-classification mapped %
+        # is computed identically (mapped_products / total) instead of from the
+        # classification buckets.
+        mapped_products_by_comp = {
+            str(r.competitor_name): int(r.mapped_products) for r in comp_df.itertuples(index=False)
+        }
         mapping_progress = []
         for r in map_df.itertuples(index=False):
             mapped_total = int(r.mapped_not_pl) + int(r.mapped_pl)
             potential_total = int(r.potential_not_pl) + int(r.potential_pl)
+            no_match_total = int(r.no_match_not_pl) + int(r.no_match_pl)
             total = int(r.total)
+            mapped_products = mapped_products_by_comp.get(str(r.competitor_name), mapped_total)
+            # No-Match products are a master-data decision (unmappable) → exclude
+            # them from the reachable universe so reach % isn't dragged down.
+            reachable = total - no_match_total
             mapping_progress.append({
                 "competitor_name": str(r.competitor_name),
                 "mapped_not_pl": int(r.mapped_not_pl),
@@ -705,9 +861,14 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 "potential_pl": int(r.potential_pl),
                 "no_potential_not_pl": int(r.no_potential_not_pl),
                 "no_potential_pl": int(r.no_potential_pl),
+                "no_match_not_pl": int(r.no_match_not_pl),
+                "no_match_pl": int(r.no_match_pl),
                 "total": total,
-                "mapped_pct": round(mapped_total / total * 100, 1) if total > 0 else 0.0,
-                "potential_reach_pct": round((mapped_total + potential_total) / total * 100, 1) if total > 0 else 0.0,
+                # is_mapped count (matches Blended PI by competitor); mapped_pct now
+                # uses it over total so the classification donut and that table agree.
+                "mapped_products": mapped_products,
+                "mapped_pct": round(mapped_products / total * 100, 1) if total > 0 else 0.0,
+                "potential_reach_pct": round((mapped_total + potential_total) / reachable * 100, 1) if reachable > 0 else 0.0,
             })
         mapping_progress.sort(key=lambda x: x["mapped_pct"], reverse=True)
 
@@ -720,6 +881,8 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             "not_mapped_not_pl_no_potential": int(classification_counts.get("Not Mapped - Not PL - No Potential Match", 0)),
             "not_mapped_pl_potential": int(classification_counts.get("Not Mapped - PL - Potential Match", 0)),
             "not_mapped_pl_no_potential": int(classification_counts.get("Not Mapped - PL - No Potential Match", 0)),
+            "not_mapped_not_pl_no_match": int(classification_counts.get("Not Mapped - Not PL - No Match", 0)),
+            "not_mapped_pl_no_match": int(classification_counts.get("Not Mapped - PL - No Match", 0)),
         }
 
         return {

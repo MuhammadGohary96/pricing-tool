@@ -5,12 +5,12 @@
     </button>
     <ChevronRight class="w-3.5 h-3.5 text-grey-300 shrink-0" />
     <span class="text-grey-900 font-medium">{{ subcategory }}</span>
-    <button class="ml-0.5 text-grey-400 hover:text-grey-700 leading-none text-lg" @click="$emit('clear')">&times;</button>
+    <button class="ml-0.5 text-grey-400 hover:text-grey-700" aria-label="Clear subcategory filter" @click="$emit('clear')"><X class="w-3.5 h-3.5" /></button>
   </div>
 </template>
 
 <script setup>
-import { ChevronRight } from 'lucide-vue-next'
+import { ChevronRight, X } from 'lucide-vue-next'
 defineProps({ subcategory: { type: String, default: null } })
 defineEmits(['clear'])
 </script>

@@ -27,16 +27,32 @@
   --action-review-ai: #a3007c;
   --action-needs-update: #d4a0c3;
   --action-complete: #f3e3ed;
+
+  /* Page ground — calm cool-paper biased toward the magenta accent. */
+  --paper: #FAF8FC;
+  --paper-2: #F3EFF8;
+  --ink: #1C1622;
+  --line: #ECE6F3;
+
+  /* Premium ease-out curve — used for entrances and micro-interactions */
+  --ease-premium: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: var(--grey-900);
-  background: #e8e4f7;
+  background: var(--paper);
   margin: 0;
   padding: 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Tabular figures wherever numbers render in the mono face, so price/PI
+   columns stay vertically aligned across rows. */
+.font-mono {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
 }
 
 /* ===== ANIMATION SYSTEM ===== */
@@ -80,17 +96,22 @@ body {
   100% { opacity: 1; transform: translateX(0); }
 }
 
-/* Utility classes */
+/* Utility classes.
+   fill-mode `backwards` (not `both`): elements stay hidden during their
+   stagger delay, then revert to the base style once the animation ends.
+   Using `both` would hold the final `transform: translateY(0)` forever, and a
+   non-none transform creates a persistent stacking context that traps absolutely
+   positioned children (dropdowns) behind later siblings. */
 .animate-fade-in-up {
-  animation: fadeInUp 0.3s ease-out both;
+  animation: fadeInUp 0.3s ease-out backwards;
 }
 
 .animate-fade-in-down {
-  animation: fadeInDown 0.3s ease-out both;
+  animation: fadeInDown 0.3s ease-out backwards;
 }
 
 .animate-scale-in {
-  animation: scaleIn 0.2s ease-out both;
+  animation: scaleIn 0.2s ease-out backwards;
 }
 
 .skeleton-shimmer {
@@ -106,6 +127,53 @@ body {
 .animate-count-pulse {
   animation: countPulse 0.4s ease-out;
 }
+
+/* Indeterminate "refreshing" bar for in-place data refetch (filter/sort/search).
+   Rests full-width when motion is disabled, so reduced-motion users still see a
+   clear busy state rather than an empty track. */
+@keyframes indeterminateBar {
+  0%   { transform: translateX(-100%) scaleX(0.45); }
+  50%  { transform: translateX(0%) scaleX(0.6); }
+  100% { transform: translateX(100%) scaleX(0.45); }
+}
+.animate-indeterminate {
+  transform-origin: left center;
+  animation: indeterminateBar 1.2s ease-in-out infinite;
+}
+
+/* Capped table-row entrance: rows lift in with a short stagger on first paint.
+   Only the first ~14 rows are delayed (keeps large paginated tables fast);
+   the global prefers-reduced-motion block below neutralises it. */
+@keyframes rowIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* Opacity-only entrance for tables with position:sticky columns — a lingering
+   transform on <tr> would break the frozen-column stickiness. */
+@keyframes rowFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.stagger-rows > tr {
+  animation: rowIn 0.42s var(--ease-premium) backwards;
+}
+.stagger-rows-fade > tr {
+  animation: rowFade 0.5s var(--ease-premium) backwards;
+}
+.stagger-rows > tr:nth-child(1), .stagger-rows-fade > tr:nth-child(1) { animation-delay: 0.02s; }
+.stagger-rows > tr:nth-child(2), .stagger-rows-fade > tr:nth-child(2) { animation-delay: 0.04s; }
+.stagger-rows > tr:nth-child(3), .stagger-rows-fade > tr:nth-child(3) { animation-delay: 0.06s; }
+.stagger-rows > tr:nth-child(4), .stagger-rows-fade > tr:nth-child(4) { animation-delay: 0.08s; }
+.stagger-rows > tr:nth-child(5), .stagger-rows-fade > tr:nth-child(5) { animation-delay: 0.10s; }
+.stagger-rows > tr:nth-child(6), .stagger-rows-fade > tr:nth-child(6) { animation-delay: 0.12s; }
+.stagger-rows > tr:nth-child(7), .stagger-rows-fade > tr:nth-child(7) { animation-delay: 0.14s; }
+.stagger-rows > tr:nth-child(8), .stagger-rows-fade > tr:nth-child(8) { animation-delay: 0.16s; }
+.stagger-rows > tr:nth-child(9), .stagger-rows-fade > tr:nth-child(9) { animation-delay: 0.18s; }
+.stagger-rows > tr:nth-child(10), .stagger-rows-fade > tr:nth-child(10) { animation-delay: 0.20s; }
+.stagger-rows > tr:nth-child(11), .stagger-rows-fade > tr:nth-child(11) { animation-delay: 0.22s; }
+.stagger-rows > tr:nth-child(12), .stagger-rows-fade > tr:nth-child(12) { animation-delay: 0.24s; }
+.stagger-rows > tr:nth-child(13), .stagger-rows-fade > tr:nth-child(13) { animation-delay: 0.26s; }
+.stagger-rows > tr:nth-child(n+14), .stagger-rows-fade > tr:nth-child(n+14) { animation-delay: 0.28s; }
 
 /* Stagger delay utilities */
 .stagger-1 { animation-delay: 0.05s; }

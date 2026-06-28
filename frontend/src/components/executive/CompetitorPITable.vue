@@ -1,9 +1,9 @@
 <template>
-  <div class="bg-white rounded-lg shadow-card overflow-hidden">
+  <div class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden">
     <div class="px-4 py-3 border-b border-grey-100 flex items-center gap-2">
       <TrendingUp class="w-4 h-4 text-brand-primary" />
-      <span class="text-subheading font-bold text-grey-900">Blended PI by Competitor</span>
-      <span class="text-caption text-grey-400 ml-1">sorted by PI ↓</span>
+      <h2 class="text-subheading font-bold text-grey-900 tracking-tightish">Blended PI by competitor</h2>
+      <span class="text-micro text-grey-400 ml-1">sorted by PI</span>
       <ExportButton :fetcher="exportData" filename="competitor_pi.csv" class="ml-auto" />
     </div>
 
@@ -29,7 +29,7 @@
           :key="row.competitor_name"
           class="hover:bg-brand-50 transition-colors cursor-pointer group relative"
           @click="$emit('select-competitor', row.competitor_name)"
-          @mouseenter="hoveredRow = row"
+          @mouseenter="onRowEnter(row, $event)"
           @mouseleave="hoveredRow = null"
         >
           <!-- Competitor name -->
@@ -48,7 +48,7 @@
               class="inline-block px-2.5 py-1 rounded-lg font-mono font-bold text-body"
               :class="[piBgClass(row.blended_pi), piTextClass(row.blended_pi)]"
             >
-              {{ row.blended_pi != null ? row.blended_pi.toFixed(4) : '—' }}
+              {{ row.blended_pi != null ? row.blended_pi.toFixed(2) : '—' }}
             </span>
           </td>
 
@@ -125,9 +125,10 @@
           <div class="flex flex-col gap-0.5">
             <div>Mapped: <b>{{ ((hoveredRow._mapping.mapped_not_pl || 0) + (hoveredRow._mapping.mapped_pl || 0)).toLocaleString() }}</b> ({{ hoveredRow._mapping.mapped_pct }}%)</div>
             <div>Potential: <b>{{ ((hoveredRow._mapping.potential_not_pl || 0) + (hoveredRow._mapping.potential_pl || 0)).toLocaleString() }}</b></div>
-            <div>No Match: <b>{{ ((hoveredRow._mapping.no_potential_not_pl || 0) + (hoveredRow._mapping.no_potential_pl || 0)).toLocaleString() }}</b></div>
+            <div>No Potential Match: <b>{{ ((hoveredRow._mapping.no_potential_not_pl || 0) + (hoveredRow._mapping.no_potential_pl || 0)).toLocaleString() }}</b></div>
+            <div class="text-grey-400">No Match (decided): <b>{{ ((hoveredRow._mapping.no_match_not_pl || 0) + (hoveredRow._mapping.no_match_pl || 0)).toLocaleString() }}</b></div>
             <div class="border-t border-grey-700 pt-0.5 mt-0.5">
-              Potential Reach: <b class="text-brand-light">{{ hoveredRow._mapping.potential_reach_pct }}%</b>
+              Potential Reach: <b class="text-brand-light">{{ hoveredRow._mapping.potential_reach_pct }}%</b> <span class="text-grey-400">(excl. No Match)</span>
             </div>
           </div>
         </div>
@@ -139,7 +140,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref } from 'vue'
 import { TrendingUp } from 'lucide-vue-next'
 import EmptyState from '../shared/EmptyState.vue'
 import ExportButton from '../shared/ExportButton.vue'
@@ -154,15 +155,17 @@ defineEmits(['select-competitor'])
 const hoveredRow = ref(null)
 const tooltipStyle = ref({})
 
-function onMouseMove(e) {
+// Anchor the tooltip to the row once on enter (right edge, vertically centered)
+// rather than tracking every mousemove frame — no per-frame reactive writes.
+function onRowEnter(row, e) {
+  hoveredRow.value = row
+  const r = e.currentTarget.getBoundingClientRect()
   tooltipStyle.value = {
-    left: `${e.clientX + 12}px`,
-    top: `${e.clientY - 10}px`,
+    left: `${Math.min(r.right - 8, window.innerWidth - 280)}px`,
+    top: `${r.top + r.height / 2}px`,
+    transform: 'translateY(-50%)',
   }
 }
-
-onMounted(() => window.addEventListener('mousemove', onMouseMove))
-onUnmounted(() => window.removeEventListener('mousemove', onMouseMove))
 
 function mappingCoveragePct(row) {
   const denom = row._mapping?.total ?? row.eligible_products ?? 0
@@ -193,18 +196,17 @@ function formatDeviation(dev) {
   return `${sign}${(dev * 100).toFixed(1)}%`
 }
 
+// Direction follows the PI scale (BF ÷ Competitor): positive deviation = BF
+// pricier = warm/red (demand risk); negative = BF cheaper = cool/blue. This
+// matches the colored blended-PI cell beside it; green is reserved for parity.
 function deviationClass(dev) {
-  if (dev == null) return 'text-grey-400'
-  if (dev > 0.005) return 'text-green-600'
-  if (dev < -0.005) return 'text-red-600'
-  return 'text-grey-400'
+  if (dev == null || Math.abs(dev) <= 0.005) return 'text-grey-400'
+  return dev > 0 ? 'text-red-700' : 'text-blue-700'
 }
 
 function deviationBgClass(dev) {
-  if (dev == null) return 'bg-grey-50'
-  if (dev > 0.005) return 'bg-green-50'
-  if (dev < -0.005) return 'bg-red-50'
-  return 'bg-grey-50'
+  if (dev == null || Math.abs(dev) <= 0.005) return 'bg-grey-50'
+  return dev > 0 ? 'bg-red-50' : 'bg-blue-50'
 }
 
 function exportData() {

@@ -1,5 +1,5 @@
 <template>
-  <div class="bg-white rounded-lg shadow-card px-5 py-3">
+  <div class="bg-white rounded-xl shadow-panel ring-1 ring-grey-200/70 px-5 py-3">
     <!-- Mobile toggle button -->
     <button class="lg:hidden flex items-center gap-1.5 text-body text-grey-600 font-medium mb-2" @click="expanded = !expanded">
       <FilterIcon class="w-4 h-4" />
@@ -116,36 +116,36 @@
         <span class="text-micro text-grey-400 font-medium">Filtered:</span>
         <span v-for="cat in filters.mainCategory" :key="'cat-' + cat" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
           {{ cat }}
-          <button class="hover:text-brand-dark" @click="removeChip('mainCategory', cat)">&times;</button>
+          <button class="hover:text-brand-dark" @click="removeChip('mainCategory', cat)"><X class="w-3 h-3" /></button>
         </span>
         <span v-for="sub in filters.subCategory" :key="'sub-' + sub" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
           {{ sub }}
-          <button class="hover:text-brand-dark" @click="removeChip('subCategory', sub)">&times;</button>
+          <button class="hover:text-brand-dark" @click="removeChip('subCategory', sub)"><X class="w-3 h-3" /></button>
         </span>
         <span v-for="tier in filters.globalTier" :key="'tier-' + tier" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
           {{ tier }}
-          <button class="hover:text-brand-dark" @click="removeChip('globalTier', tier)">&times;</button>
+          <button class="hover:text-brand-dark" @click="removeChip('globalTier', tier)"><X class="w-3 h-3" /></button>
         </span>
         <span v-for="action in filters.actionType" :key="'act-' + action" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
           {{ action }}
-          <button class="hover:text-brand-dark" @click="removeChip('actionType', action)">&times;</button>
+          <button class="hover:text-brand-dark" @click="removeChip('actionType', action)"><X class="w-3 h-3" /></button>
         </span>
         <span v-for="b in filters.brand" :key="'brand-' + b" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
           {{ b }}
-          <button class="hover:text-brand-dark" @click="removeChip('brand', b)">&times;</button>
+          <button class="hover:text-brand-dark" @click="removeChip('brand', b)"><X class="w-3 h-3" /></button>
         </span>
         <span v-for="c in filters.competitor" :key="'comp-' + c" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
           <CompetitorLogo :name="c" size="sm" />
           {{ c }}
-          <button class="hover:text-brand-dark" @click="removeChip('competitor', c)">&times;</button>
+          <button class="hover:text-brand-dark" @click="removeChip('competitor', c)"><X class="w-3 h-3" /></button>
         </span>
         <span v-for="fp in filters.fpNames" :key="'fp-' + fp" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
           {{ fp }}
-          <button class="hover:text-brand-dark" @click="removeChip('fpNames', fp)">&times;</button>
+          <button class="hover:text-brand-dark" @click="removeChip('fpNames', fp)"><X class="w-3 h-3" /></button>
         </span>
         <span v-if="!filters.includePrivateLabel" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-micro font-medium border border-amber-200">
           Excl. Private Label
-          <button class="hover:text-amber-900" @click="filters.setFilter('includePrivateLabel', true)">&times;</button>
+          <button class="hover:text-amber-900" @click="filters.setFilter('includePrivateLabel', true)"><X class="w-3 h-3" /></button>
         </span>
       </div>
     </Transition>
@@ -154,7 +154,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import { Filter as FilterIcon, Loader2, Link as LinkIcon, ChevronDown } from 'lucide-vue-next'
+import { Filter as FilterIcon, Loader2, Link as LinkIcon, ChevronDown, X } from 'lucide-vue-next'
 import MultiSelect from '../shared/MultiSelect.vue'
 import SavedViews from './SavedViews.vue'
 import CompetitorLogo from '../shared/CompetitorLogo.vue'

@@ -15,6 +15,16 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:5174"]
     USE_DUCKDB: bool = True  # Feature flag: route filter queries through DuckDB
     DUCKDB_PARQUET_PATH: str = "cache/pricing_data/fp_grain.parquet"
+    COMPETITOR_PARQUET_PATH: str = "cache/pricing_data/competitor_grain.parquet"
+    # Parquet-only cache: rehydrate in-memory frames from Parquet on startup
+    # instead of the legacy multi-GB pickle.
+    USE_PARQUET_CACHE: bool = True
+
+    # Hourly background auto-refresh. "Smart": each interval, a cheap BQ
+    # table-metadata check runs first and the full pull happens only when the
+    # source table changed since the last sync (non-blocking, hot-swapped).
+    AUTO_REFRESH_ENABLED: bool = True
+    REFRESH_INTERVAL_SECONDS: int = 3600
 
     TIER_ORDER: dict = {
         "Top+": 5, "Top": 4, "Medium": 3, "Low": 2, "Very Low": 1

@@ -9,6 +9,7 @@ export const useExecutiveStore = defineStore('executive', {
     piTrend: null,
     topActions: null,
     categoryPerformance: null,
+    fpCompetitorPi: null,  // { competitors: [], cells: [] } — geographic exposure
     loading: false,
     error: null,
     lastFetchedAt: null,
@@ -38,6 +39,7 @@ export const useExecutiveStore = defineStore('executive', {
           this.fetchPITrend(),
           this.fetchTopActions(),
           this.fetchCategoryPerformance(),
+          this.fetchFpCompetitorPi(),
         ])
       } catch (err) {
         this.error = err.message || 'Failed to load executive data'
@@ -79,6 +81,13 @@ export const useExecutiveStore = defineStore('executive', {
         const res = await executiveApi.getCategoryPerformance(this._params())
         this.categoryPerformance = res.data
       } catch { /* non-critical */ }
+    },
+
+    async fetchFpCompetitorPi() {
+      try {
+        const res = await executiveApi.getFpCompetitorPi(this._params())
+        this.fpCompetitorPi = res.data
+      } catch { /* non-critical — panel hides if unavailable */ }
     },
   },
 })

@@ -61,6 +61,13 @@ def get_category_performance(request: Request, filters: dict = Depends(_filters)
     return svc.get_category_performance(filters)
 
 
+@router.get("/fp-competitor-pi")
+def get_fp_competitor_pi(request: Request, filters: dict = Depends(_filters)):
+    """Blended PI per (fulfillment point × competitor) — geographic exposure."""
+    svc = request.app.state.data_service
+    return svc.get_fp_competitor_pi(filters)
+
+
 @router.get("/week-over-week")
 def get_week_over_week(request: Request):
     svc = request.app.state.data_service

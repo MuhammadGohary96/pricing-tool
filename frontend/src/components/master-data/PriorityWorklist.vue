@@ -1,20 +1,20 @@
 <template>
-  <div class="bg-white rounded-lg shadow-card overflow-hidden">
+  <div class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden">
     <div class="px-4 py-3 border-b border-grey-100 flex items-center gap-3 flex-wrap">
       <div class="flex items-center gap-2 shrink-0">
-        <span class="text-subheading font-bold text-grey-900">Priority Worklist</span>
+        <span class="text-subheading font-bold text-grey-900 tracking-tightish">Priority Worklist</span>
         <span class="text-caption text-grey-500">{{ total.toLocaleString() }} items</span>
       </div>
       <!-- Search -->
       <div class="relative flex-1 min-w-[180px]">
-        <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-grey-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35m0 0A7 7 0 1010 17a7 7 0 006.65-4.35z"/></svg>
+        <SearchIcon class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-grey-400 pointer-events-none" />
         <input
           v-model="search"
           type="text"
           placeholder="Search products..."
           class="w-full pl-8 pr-7 py-1.5 text-body border border-grey-200 rounded-lg bg-white focus:border-brand-primary focus:ring-1 focus:ring-brand-lightest outline-none transition-colors"
         />
-        <button v-if="search" class="absolute right-2 top-1/2 -translate-y-1/2 text-grey-400 hover:text-grey-700 text-lg leading-none" @click="search = ''">&times;</button>
+        <button v-if="search" class="absolute right-2 top-1/2 -translate-y-1/2 text-grey-400 hover:text-grey-700" aria-label="Clear search" @click="search = ''"><X class="w-3.5 h-3.5" /></button>
       </div>
       <ExportButton :fetcher="exportWorklist" filename="priority_worklist.csv" class="shrink-0" />
     </div>
@@ -31,11 +31,13 @@
               @click="toggleSort(col.key)"
               @keyup.enter="toggleSort(col.key)"
             >
-              <span class="inline-flex items-center gap-1">
+              <span v-if="col.label" class="inline-flex items-center gap-1">
                 {{ col.label }}
-                <span class="text-[10px] transition-colors" :class="sortKey === col.key ? 'text-brand-primary' : 'text-grey-400'">
-                  {{ sortKey === col.key ? (sortDir === 'asc' ? '↑' : '↓') : '↕' }}
-                </span>
+                <component
+                  :is="sortKey === col.key ? (sortDir === 'asc' ? ArrowUp : ArrowDown) : ChevronsUpDown"
+                  class="w-3 h-3 transition-colors"
+                  :class="sortKey === col.key ? 'text-brand-primary' : 'text-grey-400'"
+                />
               </span>
             </th>
           </tr>
@@ -68,7 +70,7 @@
             <td class="px-3 py-2 text-body" style="max-width: 200px">
               <!-- Matched: show competitor name -->
               <div v-if="row.competitor_product_name" class="flex items-center gap-1.5" :title="row.competitor_product_name">
-                <svg class="w-3.5 h-3.5 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+                <Link2 class="w-3.5 h-3.5 text-green-500 flex-shrink-0" />
                 <span class="text-grey-900 truncate">{{ row.competitor_product_name }}</span>
               </div>
               <!-- Potential match: show name + similarity badge -->
@@ -108,20 +110,20 @@
     </div>
     <div v-if="totalPages > 1" class="px-4 py-2.5 border-t border-grey-100 flex items-center justify-between bg-grey-50 gap-3">
       <span class="text-caption text-grey-500 shrink-0">
-        Showing {{ ((page - 1) * pageSize + 1).toLocaleString() }}&ndash;{{ Math.min(page * pageSize, total).toLocaleString() }} of {{ total.toLocaleString() }}
+        Showing {{ ((page - 1) * pageSize + 1).toLocaleString() }}-{{ Math.min(page * pageSize, total).toLocaleString() }} of {{ total.toLocaleString() }}
       </span>
       <div class="flex items-center gap-1">
         <button
           :disabled="page <= 1"
-          class="text-caption px-2.5 py-1 rounded-lg border border-grey-200 bg-white hover:bg-grey-100 disabled:opacity-40 transition-colors"
+          class="inline-flex items-center gap-1 text-caption pl-2 pr-2.5 py-1 rounded-lg border border-grey-200 bg-white hover:bg-grey-100 disabled:opacity-40 transition-colors"
           @click="$emit('page', page - 1)"
-        >&larr; Prev</button>
+        ><ChevronLeft class="w-3.5 h-3.5" /> Prev</button>
         <span class="text-caption text-grey-500 px-1">{{ page }} / {{ totalPages }}</span>
         <button
           :disabled="page >= totalPages"
-          class="text-caption px-2.5 py-1 rounded-lg border border-grey-200 bg-white hover:bg-grey-100 disabled:opacity-40 transition-colors"
+          class="inline-flex items-center gap-1 text-caption pl-2.5 pr-2 py-1 rounded-lg border border-grey-200 bg-white hover:bg-grey-100 disabled:opacity-40 transition-colors"
           @click="$emit('page', page + 1)"
-        >Next &rarr;</button>
+        >Next <ChevronRight class="w-3.5 h-3.5" /></button>
       </div>
     </div>
   </div>
@@ -133,7 +135,7 @@ import { useRouter } from 'vue-router'
 import TierBadge from '../shared/TierBadge.vue'
 import ActionBadge from '../shared/ActionBadge.vue'
 import EmptyState from '../shared/EmptyState.vue'
-import { Search as SearchIcon, ExternalLink } from 'lucide-vue-next'
+import { Search as SearchIcon, ExternalLink, X, ArrowUp, ArrowDown, ChevronsUpDown, Link2, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import ExportButton from '../shared/ExportButton.vue'
 
 const router = useRouter()

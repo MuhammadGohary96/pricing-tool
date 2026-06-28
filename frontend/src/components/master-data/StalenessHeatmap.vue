@@ -1,8 +1,8 @@
 <template>
-  <div class="bg-white rounded-lg shadow-card overflow-hidden">
+  <div class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden">
     <div class="px-4 py-3 border-b border-grey-100 flex items-center justify-between">
       <div class="flex items-center gap-1.5">
-        <span class="text-subheading font-bold text-grey-900">Staleness Heatmap</span>
+        <span class="text-subheading font-bold text-grey-900 tracking-tightish">Staleness Heatmap</span>
         <HelpTooltip text="Staleness = days since last competitor price update. Darker cells = more stale products needing re-scraping." />
       </div>
       <span class="text-micro px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary font-medium">Darker = more stale products</span>

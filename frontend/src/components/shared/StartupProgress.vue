@@ -1,11 +1,11 @@
 <template>
   <div class="fixed inset-0 z-50 bg-grey-100 flex items-center justify-center">
-    <div class="bg-white rounded-xl shadow-card-hover px-10 py-8 flex flex-col items-center gap-5 w-full max-w-md">
+    <div class="bg-white rounded-xl shadow-panel-hover px-10 py-8 flex flex-col items-center gap-5 w-full max-w-md">
       <!-- Logo -->
       <div class="flex items-center gap-3">
         <img src="/breadfast-icon.png" alt="Breadfast" class="w-10 h-10 rounded-lg shrink-0" />
         <div>
-          <div class="text-subheading font-bold text-grey-900">Breadfast Pricing Tool</div>
+          <div class="text-subheading font-bold text-grey-900 tracking-tightish">Breadfast Pricing Tool</div>
           <div class="text-caption text-grey-500">Loading data...</div>
         </div>
       </div>

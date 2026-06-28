@@ -11,20 +11,22 @@ export const useCommercialStore = defineStore('commercial', {
     productsTotal: 0,
     pivotedProducts: [],
     pivotedTotal: 0,
+    pivotedSubcatCount: 0,
     pivotedCompetitors: [],
     blendedCompetitors: [],
     needsActionOnly: false,
     funnelMapping: [],
     funnelCoverage: [],
     loading: false,
+    // in-place refetch flags (filter/sort/search) — distinct from full-page `loading`
+    refreshingBlended: false,
+    refreshingPivot: false,
     error: null,
     currentPage: 1,
     pageSize: 50,
     sortBy: 'weighted_score',
     sortDir: 'desc',
     search: '',
-    editedProducts: {},  // { productId: { catalog_synced, catalog_error } }
-    editHistory: [],     // last 10 price edits for undo
     lastFetchedAt: null,
   }),
 
@@ -61,9 +63,14 @@ export const useCommercialStore = defineStore('commercial', {
     },
 
     async fetchBlendedPI() {
-      const res = await commercialApi.getBlendedPI(this._params())
-      this.blendedPI = res.data.items || []
-      this.blendedCompetitors = res.data.competitors || []
+      this.refreshingBlended = true
+      try {
+        const res = await commercialApi.getBlendedPI(this._params())
+        this.blendedPI = res.data.items || []
+        this.blendedCompetitors = res.data.competitors || []
+      } finally {
+        this.refreshingBlended = false
+      }
     },
 
     async fetchProducts() {
@@ -81,19 +88,25 @@ export const useCommercialStore = defineStore('commercial', {
     },
 
     async fetchPivotedProducts() {
-      const params = {
-        ...this._params(),
-        page: this.currentPage,
-        page_size: this.pageSize,
-        sort_by: this.sortBy,
-        sort_dir: this.sortDir,
+      this.refreshingPivot = true
+      try {
+        const params = {
+          ...this._params(),
+          page: this.currentPage,
+          page_size: this.pageSize,
+          sort_by: this.sortBy,
+          sort_dir: this.sortDir,
+        }
+        if (this.search) params.search = this.search
+        if (this.needsActionOnly) params.action_type = 'Needs Mapping,Review Match,Needs Price Update'
+        const res = await commercialApi.getPivotedProducts(params)
+        this.pivotedProducts = res.data.items || []
+        this.pivotedTotal = res.data.total_count || 0
+        this.pivotedSubcatCount = res.data.subcategory_count || 0
+        this.pivotedCompetitors = res.data.competitors || []
+      } finally {
+        this.refreshingPivot = false
       }
-      if (this.search) params.search = this.search
-      if (this.needsActionOnly) params.action_type = 'Needs Mapping,Review Match,Needs Price Update'
-      const res = await commercialApi.getPivotedProducts(params)
-      this.pivotedProducts = res.data.items || []
-      this.pivotedTotal = res.data.total_count || 0
-      this.pivotedCompetitors = res.data.competitors || []
     },
 
     async setSort(key, dir) {
@@ -124,39 +137,6 @@ export const useCommercialStore = defineStore('commercial', {
       this.needsActionOnly = val
       this.currentPage = 1
       await this.fetchPivotedProducts()
-    },
-
-    async updateProductPrice(productId, nowPrice, nowSalePrice) {
-      const payload = {}
-      if (nowPrice !== undefined) payload.now_price = nowPrice
-      if (nowSalePrice !== undefined) payload.now_sale_price = nowSalePrice
-      const res = await commercialApi.updateProductPrice(productId, payload)
-      // Record previous values for undo before updating
-      const idx = this.products.findIndex(p => p.product_id === productId)
-      if (idx !== -1) {
-        const prev = {
-          productId,
-          prevNowPrice: this.products[idx].now_price,
-          prevNowSalePrice: this.products[idx].now_sale_price,
-          productName: this.products[idx].product_name,
-        }
-        this.editHistory = [prev, ...this.editHistory].slice(0, 10)
-        if (nowPrice !== undefined) this.products[idx].now_price = nowPrice
-        if (nowSalePrice !== undefined) this.products[idx].now_sale_price = nowSalePrice
-      }
-      // Track edit status
-      this.editedProducts[productId] = {
-        catalog_synced: res.data.catalog_synced,
-        catalog_error: res.data.catalog_error,
-      }
-      return res.data
-    },
-
-    async undoLastEdit() {
-      const last = this.editHistory[0]
-      if (!last) return
-      this.editHistory = this.editHistory.slice(1)
-      await this.updateProductPrice(last.productId, last.prevNowPrice, last.prevNowSalePrice)
     },
   },
 })

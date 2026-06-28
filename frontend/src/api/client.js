@@ -37,6 +37,13 @@ export const startupApi = {
   reload: () => api.post('/reload'),
 }
 
+export const dataApi = {
+  // Data freshness: last BQ sync time + whether a background refresh is running
+  getStatus: () => api.get('/data-status'),
+  // Non-blocking full BQ refresh (hot-swaps when it lands; app stays usable)
+  refreshNow: () => api.post('/refresh-now'),
+}
+
 export const filtersApi = {
   getCategories: () => api.get('/filters/categories'),
   getSubcategories: (main) => api.get('/filters/subcategories', { params: { main } }),
@@ -56,8 +63,8 @@ export const commercialApi = {
   getProducts: (params) => api.get('/commercial/products', { params }),
   getFunnel: (params) => api.get('/commercial/funnel', { params }),
   getPivotedProducts: (params) => api.get('/commercial/products-pivoted', { params }),
+  getProductFpMatrix: (productId, params) => api.get(`/commercial/products/${encodeURIComponent(productId)}/fp-matrix`, { params }),
   exportCSV: (params) => api.get('/commercial/export', { params, responseType: 'blob' }),
-  updateProductPrice: (productId, payload) => api.patch(`/commercial/products/${productId}`, payload),
 }
 
 export const masterDataApi = {
@@ -85,4 +92,5 @@ export const executiveApi = {
   getWeekOverWeek: () => api.get('/executive/week-over-week'),
   getTopActions: (limit = 10, params = {}) => api.get('/executive/top-actions', { params: { limit, ...params } }),
   getDashboard: (params) => api.get('/executive/dashboard', { params }),
+  getFpCompetitorPi: (params) => api.get('/executive/fp-competitor-pi', { params }),
 }

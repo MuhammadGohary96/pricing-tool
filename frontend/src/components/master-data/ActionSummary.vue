@@ -3,7 +3,7 @@
     <div
       v-for="card in cards"
       :key="card.key"
-      class="bg-white rounded-lg shadow-card px-4 py-4 flex items-center gap-4 cursor-pointer transition-all duration-150 border-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary"
+      class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 px-4 py-4 flex items-center gap-4 cursor-pointer transition-all duration-150 border-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary"
       :class="selected === card.key ? 'border-brand-primary bg-brand-50' : 'border-transparent hover:border-brand-light'"
       tabindex="0"
       :aria-pressed="selected === card.key"
@@ -20,7 +20,7 @@
       </div>
       <!-- Data -->
       <div class="min-w-0">
-        <div class="text-2xl font-bold text-grey-900 leading-tight tracking-tight">{{ card.value }}</div>
+        <div class="text-kpi text-grey-900 leading-tight tracking-tight tabular-nums">{{ card.value }}</div>
         <div class="text-caption text-grey-500 mt-0.5">{{ card.label }}</div>
       </div>
     </div>
@@ -76,7 +76,7 @@ const cards = computed(() => {
     {
       key: 'Needs Price Update',
       icon: RefreshCw,
-      iconBg: 'bg-blue-50 text-blue-500',
+      iconBg: 'bg-brand-50 text-brand-primary',
       value: props.counts.needs_price_update?.toLocaleString() ?? '--',
       label: 'Needs Price Update',
     },

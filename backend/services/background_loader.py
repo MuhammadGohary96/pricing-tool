@@ -96,24 +96,8 @@ class BackgroundDataLoader:
 
                 logger.info("[Background] Data service updated successfully")
 
-                # Save to cache for next startup
-                try:
-                    from backend.services.cache_service import DataCache
-
-                    cache = DataCache()
-                    cache_data = {
-                        "_df": new_service._df,
-                        "_global_df": new_service._global_df,
-                    }
-                    if hasattr(new_service, "_competitor_df"):
-                        cache_data["_competitor_df"] = new_service._competitor_df
-
-                    cache.save("pricing_data", cache_data)
-                    logger.info("[Background] Data cached successfully")
-
-                except Exception as e:
-                    logger.error(f"[Background] Failed to cache data: {e}")
-                    # Non-critical, continue
+                # NOTE: persistence is handled by the load_func (Parquet cache),
+                # not here. The legacy multi-GB pickle save was removed.
 
                 # Call success callback
                 if on_complete:

@@ -1,9 +1,9 @@
 <template>
-  <div class="bg-white rounded-lg shadow-card overflow-hidden">
-    <div class="px-4 py-3 border-b border-grey-100 flex items-center justify-between">
+  <div class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden">
+    <div class="px-4 py-3 border-b border-grey-100 flex items-center justify-between gap-3 flex-wrap">
       <div class="flex items-center gap-2">
         <BarChart2 class="w-4 h-4 text-brand-primary" />
-        <span class="text-subheading font-bold text-grey-900">Mapping Progress by Competitor</span>
+        <h2 class="text-subheading font-bold text-grey-900 tracking-tightish">Mapping progress by competitor</h2>
       </div>
       <!-- Summary badge + Legend -->
       <div class="flex items-center gap-3 flex-wrap">
@@ -34,6 +34,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { prefersReducedMotion } from '../../utils/motion'
 import { BarChart2 } from 'lucide-vue-next'
 import VChart from 'vue-echarts'
 import EmptyState from '../shared/EmptyState.vue'
@@ -59,7 +60,8 @@ const SEGMENTS = [
   { key: 'mapped_not_pl', label: 'Mapped', color: '#059669' },
   { key: 'mapped_pl',     label: 'Mapped (PL)', color: '#34D399' },
   { key: 'potential',     label: 'Potential Match', color: '#F59E0B' },
-  { key: 'no_potential',  label: 'No Match', color: '#E5E7EB' },
+  { key: 'no_potential',  label: 'No Potential Match', color: '#EF4444' },
+  { key: 'no_match',      label: 'No Match (decided)', color: '#9CA3AF' },
 ]
 
 const chartOption = computed(() => {
@@ -73,15 +75,22 @@ const chartOption = computed(() => {
   const mappedPl     = props.data.map((d, i) => pct(d.mapped_pl, i))
   const potential    = props.data.map((d, i) => pct((d.potential_not_pl || 0) + (d.potential_pl || 0), i))
   const noPotential  = props.data.map((d, i) => pct((d.no_potential_not_pl || 0) + (d.no_potential_pl || 0), i))
+  const noMatch      = props.data.map((d, i) => pct((d.no_match_not_pl || 0) + (d.no_match_pl || 0), i))
 
   const barH = Math.max(32, Math.min(48, 200 / Math.max(competitors.length, 1)))
 
   return {
-    animation: true,
+    animation: !prefersReducedMotion(),
     animationDuration: 500,
+    textStyle: { fontFamily: 'Geist, system-ui, sans-serif' },
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
+      backgroundColor: 'rgba(17,24,39,0.96)',
+      borderColor: 'transparent',
+      borderWidth: 0,
+      textStyle: { color: '#fff', fontSize: 11, fontFamily: 'Geist, system-ui, sans-serif' },
+      extraCssText: 'border-radius:10px;box-shadow:0 8px 24px rgba(40,16,48,0.18);padding:8px 10px;',
       formatter(params) {
         const idx = params[0].dataIndex
         const d = props.data[idx]
@@ -94,10 +103,11 @@ const chartOption = computed(() => {
           `Mapped: <b>${mapped.toLocaleString()}</b> (${d.mapped_pct}%)`,
           `&nbsp;&nbsp;Not PL: ${(d.mapped_not_pl || 0).toLocaleString()} · PL: ${(d.mapped_pl || 0).toLocaleString()}`,
           `Potential: <b>${pot.toLocaleString()}</b>`,
-          `No Match: <b>${((d.no_potential_not_pl || 0) + (d.no_potential_pl || 0)).toLocaleString()}</b>`,
+          `No Potential Match: <b>${((d.no_potential_not_pl || 0) + (d.no_potential_pl || 0)).toLocaleString()}</b>`,
+          `No Match (decided): <b>${((d.no_match_not_pl || 0) + (d.no_match_pl || 0)).toLocaleString()}</b>`,
           `<hr style="margin:4px 0;border-color:#e5e7eb"/>`,
           `Total: <b>${total.toLocaleString()}</b>`,
-          `Potential Reach: <b style="color:#a3007c">${d.potential_reach_pct}%</b> if potential mapped`,
+          `Potential Reach: <b style="color:#a3007c">${d.potential_reach_pct}%</b> (excl. No Match)`,
         ].join('<br/>')
       },
     },
@@ -161,24 +171,44 @@ const chartOption = computed(() => {
         },
       },
       {
-        name: 'No Match',
+        name: 'No Potential Match',
         type: 'bar',
         stack: 'total',
         barMaxWidth: barH,
         data: noPotential,
-        itemStyle: { color: '#E5E7EB' },
+        itemStyle: { color: '#EF4444' },
         label: {
           show: true,
           position: 'inside',
           fontSize: 9,
-          color: '#6B7280',
+          color: '#fff',
           formatter: p => p.value > 6 ? `${p.value}%` : '',
         },
       },
-      // Potential reach diamond markers
+      {
+        name: 'No Match (decided)',
+        type: 'bar',
+        stack: 'total',
+        barMaxWidth: barH,
+        data: noMatch,
+        itemStyle: { color: '#9CA3AF' },
+        label: {
+          show: true,
+          position: 'inside',
+          fontSize: 9,
+          color: '#fff',
+          formatter: p => p.value > 6 ? `${p.value}%` : '',
+        },
+      },
+      // Potential reach diamond — sits at the right edge of the mapped+potential
+      // segments (% of total), so it stays aligned with the stacked bar. (The
+      // headline reach % in the tooltip is computed excl. No Match.)
       {
         type: 'scatter',
-        data: props.data.map((d, i) => [d.potential_reach_pct, competitors[i]]),
+        data: props.data.map((d, i) => [
+          Math.round((mappedNotPl[i] + mappedPl[i] + potential[i]) * 10) / 10,
+          competitors[i],
+        ]),
         symbolSize: 10,
         symbol: 'diamond',
         itemStyle: { color: '#a3007c' },

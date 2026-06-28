@@ -1,9 +1,9 @@
 <template>
-  <div class="bg-white rounded-lg shadow-card overflow-hidden flex-1">
+  <div class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden flex-1">
     <div class="px-4 py-3 border-b border-grey-100 flex items-center justify-between">
       <div class="flex items-center gap-2">
         <Layers class="w-4 h-4 text-brand-primary" />
-        <span class="text-subheading font-bold text-grey-900">Category Breakdown</span>
+        <span class="text-subheading font-bold text-grey-900 tracking-tightish">Category Breakdown</span>
         <span class="text-caption text-grey-400 ml-1">by competitor</span>
       </div>
       <ExportButton :fetcher="exportData" filename="category_breakdown.csv" />
@@ -28,7 +28,7 @@
             <!-- Competitor Row -->
             <tr
               class="cursor-pointer transition-colors border-b border-grey-100"
-              :class="ex.comp === comp.competitor_name ? 'bg-brand-50 border-l-2 border-brand-primary' : 'hover:bg-grey-50'"
+              :class="ex.comp === comp.competitor_name ? 'bg-brand-50' : 'hover:bg-grey-50'"
               @click="toggleComp(comp.competitor_name)"
             >
               <td class="px-4 py-2.5">
@@ -46,7 +46,7 @@
               <template v-for="l1 in getChildren('l1', comp.competitor_name)" :key="`${comp.competitor_name}-${l1.category_level_1}`">
                 <tr
                   class="cursor-pointer transition-colors"
-                  :class="ex.l1 === compL1Key(comp.competitor_name, l1.category_level_1) ? 'bg-blue-50 border-l-2 border-blue-400' : 'hover:bg-grey-50'"
+                  :class="ex.l1 === compL1Key(comp.competitor_name, l1.category_level_1) ? 'bg-brand-50' : 'hover:bg-grey-50'"
                   @click.stop="toggleL1(comp.competitor_name, l1.category_level_1)"
                 >
                   <td class="py-2 pr-4" style="padding-left: 2rem">
@@ -63,7 +63,7 @@
                   <template v-for="l2 in getChildren('l2', comp.competitor_name, l1.category_level_1)" :key="`${comp.competitor_name}-${l1.category_level_1}-${l2.category_level_2}`">
                     <tr
                       class="cursor-pointer transition-colors"
-                      :class="ex.l2 === compL2Key(comp.competitor_name, l1.category_level_1, l2.category_level_2) ? 'bg-indigo-50 border-l-2 border-indigo-300' : 'hover:bg-grey-50'"
+                      :class="ex.l2 === compL2Key(comp.competitor_name, l1.category_level_1, l2.category_level_2) ? 'bg-brand-50' : 'hover:bg-grey-50'"
                       @click.stop="toggleL2(comp.competitor_name, l1.category_level_1, l2.category_level_2)"
                     >
                       <td class="py-2 pr-4" style="padding-left: 3.25rem">

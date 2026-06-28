@@ -123,17 +123,17 @@ class DataCache:
             age = datetime.now() - timestamp
             age_hours = age.total_seconds() / 3600
 
-            if age > timedelta(hours=self.MAX_AGE_HOURS):
-                logger.info(
-                    f"[Cache] Stale cache for '{cache_key}' "
-                    f"({age_hours:.1f} hours old, max: {self.MAX_AGE_HOURS}h)"
-                )
-                return None
-
+            # NOTE: we deliberately do NOT reject stale-but-present cache here.
+            # Returning slightly-old data lets the app start in seconds; the
+            # background refresh (gated by is_stale()) brings it current without
+            # blocking the UI. Rejecting here forced a full ~11-min BigQuery
+            # re-download on every cold start past the TTL — the opposite of the
+            # zero-downtime design. Only a version mismatch (above) invalidates.
             size_mb = cache_file.stat().st_size / (1024 * 1024)
+            staleness = "fresh" if age_hours <= self.MAX_AGE_HOURS else f"STALE — bg refresh will run"
             logger.info(
                 f"[Cache] Loaded '{cache_key}' from cache "
-                f"({age_hours:.1f} hours old, {size_mb:.1f} MB)"
+                f"({age_hours:.1f} hours old, {size_mb:.1f} MB, {staleness})"
             )
             return cache_data["data"]
 

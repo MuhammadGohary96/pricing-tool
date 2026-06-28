@@ -1,8 +1,8 @@
 <template>
-  <div class="bg-white rounded-lg shadow-card overflow-hidden">
+  <div class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden">
     <div class="px-4 py-3 border-b border-grey-100 flex items-center gap-2">
       <BarChart3 class="w-4 h-4 text-brand-primary" />
-      <span class="text-subheading font-bold text-grey-900">Competitors Products Last Update</span>
+      <span class="text-subheading font-bold text-grey-900 tracking-tightish">Competitors Products Last Update</span>
       <span class="text-caption text-grey-400 ml-1">last 30 days</span>
     </div>
     <div class="p-4">
@@ -58,7 +58,7 @@ const chartOption = computed(() => {
     stack: 'total',
     barMaxWidth: 24,
     itemStyle: {
-      color: COLORS[comp] || ['#a3007c', '#00B4D8', '#FF6B00', '#22C55E'][i % 4],
+      color: COLORS[comp] || ['#a3007c', '#7a005d', '#be4da1', '#d4a0c3'][i % 4],
       borderRadius: i === competitors.length - 1 ? [2, 2, 0, 0] : 0,
     },
     data: dates.map((d) => dataMap[`${d}|${comp}`] || 0),
