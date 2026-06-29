@@ -114,9 +114,10 @@ async def lifespan(app: FastAPI):
 
     def _check_and_refresh():
         """Smart freshness check (shared by the ↻ button and the hourly loop):
-        compare the BQ table's last-modified to our baseline and pull ONLY when
-        it changed. On no-change, just record that we verified (last_checked_at).
-        Never downloads unless something changed. Returns an outcome dict."""
+        compare the latest last-modified across BOTH source tables (pricing +
+        competitor) to our baseline and pull ONLY when either changed. On
+        no-change, just record that we verified (last_checked_at). Never
+        downloads unless something changed. Returns an outcome dict."""
         from datetime import datetime
         loader = app.state.background_loader
         if loader.is_loading():
@@ -125,14 +126,13 @@ async def lifespan(app: FastAPI):
         if svc is None or getattr(svc, "_client", None) is None:
             return {"ok": False, "status": "not_ready"}
         fp_path = Path(settings.DUCKDB_PARQUET_PATH)
-        try:
-            tbl = svc._client.get_table(
-                f"{settings.BQ_PROJECT_ID}.{settings.BQ_DATASET}.{settings.BQ_TABLE}"
-            )
-            modified = tbl.modified
-        except Exception as e:
-            logger.error(f"[Check] Could not read BQ table metadata: {e}")
-            return {"ok": False, "status": "error", "message": str(e)}
+        # Latest modified across BOTH source tables (pricing + competitor); a
+        # change in either must trigger a pull.
+        from backend.services import latest_bq_modified
+        modified = latest_bq_modified(svc._client)
+        if modified is None:
+            logger.error("[Check] Could not read BQ table metadata for either source table")
+            return {"ok": False, "status": "error", "message": "Could not read BQ table metadata"}
 
         state = pc.read_sync_state(fp_path.parent)
         baseline = _aware(state.get("bq_table_modified")) if state else None

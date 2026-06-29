@@ -8,9 +8,7 @@ class Settings(BaseSettings):
     BQ_TABLE: str = "pricing_index_analysis"
     BQ_COMPETITOR_TABLE: str = "competitor_products_analysis"
     BQ_LOCATION: str = "EU"
-    BF_CATALOG_URL: str = "https://catalog.breadfast.com/products"
     GOOGLE_CLIENT_ID: str = ""
-    BF_CATALOG_TOKEN: str = ""
     CACHE_TTL_SECONDS: int = 900
     CORS_ORIGINS: list[str] = ["http://localhost:5174"]
     USE_DUCKDB: bool = True  # Feature flag: route filter queries through DuckDB

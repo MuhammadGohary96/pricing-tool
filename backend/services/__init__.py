@@ -4,6 +4,30 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def latest_bq_modified(client):
+    """Max last-modified timestamp across BOTH source tables — the pricing table
+    AND the competitor table. The two are updated independently, so change
+    detection must watch both: a refresh should fire when EITHER changes.
+
+    Returns a tz-aware datetime, or None if neither table's metadata is readable
+    (callers treat None as "couldn't determine" rather than "unchanged").
+    """
+    if client is None:
+        return None
+    latest = None
+    for table in (settings.BQ_TABLE, settings.BQ_COMPETITOR_TABLE):
+        if not table:
+            continue
+        try:
+            tbl = client.get_table(f"{settings.BQ_PROJECT_ID}.{settings.BQ_DATASET}.{table}")
+            m = tbl.modified
+            if m is not None and (latest is None or m > latest):
+                latest = m
+        except Exception as exc:
+            logger.warning(f"[Sync] Could not read modified time for {table}: {exc}")
+    return latest
+
+
 def _upgrade_to_duckdb(service, parquet_from_source: bool = False):
     """Re-class an existing BigQueryPricingDataService instance into a
     DuckDBPricingDataService and attach the DuckDB connection.
@@ -125,16 +149,10 @@ def save_parquet_cache(service) -> None:
         pc.write_parquet(comp, Path(settings.COMPETITOR_PARQUET_PATH))
 
     # Record the sync marker (powers the UI "last synced" + the smart hourly
-    # refresh's change-detection). bq_table_modified is best-effort.
-    bq_modified_iso = None
-    try:
-        client = getattr(service, "_client", None)
-        if client is not None:
-            tbl = client.get_table(f"{settings.BQ_PROJECT_ID}.{settings.BQ_DATASET}.{settings.BQ_TABLE}")
-            if tbl.modified is not None:
-                bq_modified_iso = tbl.modified.isoformat()
-    except Exception as exc:
-        logger.warning(f"[Sync] Could not read BQ table modified time: {exc}")
+    # refresh's change-detection). Use the latest modified across BOTH source
+    # tables so a competitor-table-only change is still captured.
+    latest = latest_bq_modified(getattr(service, "_client", None))
+    bq_modified_iso = latest.isoformat() if latest is not None else None
     pc.write_sync_state(fp_path.parent, datetime.now().isoformat(), bq_modified_iso)
 
 

@@ -1,10 +1,15 @@
 """
 Google OAuth token validation middleware.
 
-Supports three auth modes:
-1. Google OAuth token → validated via Google tokeninfo, restricted to @breadfast.com
-2. Static JWT fallback → if BF_CATALOG_TOKEN is set, accepts that token directly
-3. Dev mode → if neither GOOGLE_CLIENT_ID nor BF_CATALOG_TOKEN is set, skips auth
+Auth modes:
+1. Google OAuth token → validated via Google tokeninfo; restricted to
+   @breadfast.com AND to tokens minted for THIS app (aud == GOOGLE_CLIENT_ID).
+2. Dev mode → if GOOGLE_CLIENT_ID is unset, auth is skipped (local dev only;
+   never deploy without GOOGLE_CLIENT_ID set).
+
+There is intentionally no static-token bypass: a shared secret that grants
+access when no Authorization header is present makes the whole API effectively
+public once that secret is configured.
 """
 
 import time
@@ -36,19 +41,13 @@ async def google_auth_middleware(request: Request, call_next):
     if _is_public(path) or not path.startswith("/api/"):
         return await call_next(request)
 
-    # Dev mode: skip auth when neither Google nor static token is configured
-    if not settings.GOOGLE_CLIENT_ID and not settings.BF_CATALOG_TOKEN:
+    # Dev mode: skip auth only when Google is not configured (local dev).
+    if not settings.GOOGLE_CLIENT_ID:
         request.state.email = "dev@breadfast.com"
         request.state.access_token = None
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization", "")
-
-    # If no auth header and we have a static token, use it as fallback
-    if not auth_header.startswith("Bearer ") and settings.BF_CATALOG_TOKEN:
-        request.state.email = "service@breadfast.com"
-        request.state.access_token = settings.BF_CATALOG_TOKEN
-        return await call_next(request)
 
     if not auth_header.startswith("Bearer "):
         return JSONResponse(
@@ -58,12 +57,6 @@ async def google_auth_middleware(request: Request, call_next):
 
     token = auth_header[7:]  # Strip "Bearer "
 
-    # Check if token matches the static catalog token
-    if settings.BF_CATALOG_TOKEN and token == settings.BF_CATALOG_TOKEN:
-        request.state.email = "service@breadfast.com"
-        request.state.access_token = token
-        return await call_next(request)
-
     # Validate as Google OAuth token
     user_info = _get_cached(token)
     if not user_info:
@@ -72,6 +65,12 @@ async def google_auth_middleware(request: Request, call_next):
             return JSONResponse(
                 status_code=401,
                 content={"error": "Invalid or expired token. Please sign in again."},
+            )
+        # Token must be minted for THIS app, not just any Google token.
+        if user_info.get("aud") != settings.GOOGLE_CLIENT_ID:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "Token was not issued for this application. Please sign in again."},
             )
         if not user_info.get("email", "").endswith("@breadfast.com"):
             return JSONResponse(
@@ -122,6 +121,8 @@ def _validate_google_token(token: str) -> dict | None:
             return {
                 "email": data.get("email", ""),
                 "email_verified": data.get("email_verified", "false") == "true",
+                # `aud` is the OAuth client id the token was issued to.
+                "aud": data.get("aud", ""),
             }
     except Exception:
         return None
