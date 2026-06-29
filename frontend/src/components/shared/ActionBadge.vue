@@ -16,10 +16,13 @@ const props = defineProps({
   action: { type: String, required: true },
 })
 
+// Single source of truth for action-state color across the app. Red/amber/green
+// are semantic status hues; "Needs Price Update" uses the brand magenta (the
+// in-tool action) rather than blue, which would collide with the PI cheaper-tail.
 const ACTION_MAP = {
   'Needs Mapping':      { icon: Link,         label: 'Needs Mapping',      style: 'background:#FEE2E2;color:#DC2626' },
   'Review Match':       { icon: BrainCircuit,  label: 'Review Match',       style: 'background:#FEF3C7;color:#D97706' },
-  'Needs Price Update': { icon: RefreshCw,     label: 'Needs Price Update', style: 'background:#DBEAFE;color:#2563EB' },
+  'Needs Price Update': { icon: RefreshCw,     label: 'Needs Price Update', style: 'background:#FDF2F9;color:#a3007c' },
   'Complete':           { icon: CircleCheck,   label: 'Complete',           style: 'background:#D1FAE5;color:#059669' },
 }
 

@@ -1,9 +1,9 @@
 <template>
-  <div class="bg-white rounded-lg shadow-card overflow-hidden flex-1">
+  <div class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden flex-1">
     <div class="px-4 py-3 border-b border-grey-100 flex items-center justify-between">
       <div class="flex items-center gap-2">
         <BarChart3 class="w-4 h-4 text-brand-primary" />
-        <span class="text-subheading font-bold text-grey-900">Mapping Summary</span>
+        <span class="text-subheading font-bold text-grey-900 tracking-tightish">Mapping Summary</span>
         <span class="text-caption text-grey-400 ml-1">per competitor</span>
       </div>
       <ExportButton :fetcher="exportData" filename="mapping_summary.csv" />

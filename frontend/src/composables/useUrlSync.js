@@ -2,7 +2,7 @@ import { watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useFiltersStore } from '../stores/filters'
 
-const FILTER_KEYS = ['mainCategory', 'subCategory', 'globalTier', 'subcatTier', 'actionType', 'brand']
+const FILTER_KEYS = ['mainCategory', 'subCategory', 'globalTier', 'subcatTier', 'actionType', 'brand', 'fpNames']
 const URL_PARAM_MAP = {
   mainCategory: 'category',
   subCategory: 'subcat',
@@ -10,6 +10,7 @@ const URL_PARAM_MAP = {
   subcatTier: 'subcat_tier',
   actionType: 'action',
   brand: 'brand',
+  fpNames: 'fp',
 }
 const REVERSE_MAP = Object.fromEntries(
   Object.entries(URL_PARAM_MAP).map(([k, v]) => [v, k])
@@ -37,6 +38,11 @@ export function useUrlSync() {
       filters.includePrivateLabel = false
       changed = true
     }
+    // Restore price-fallback mode
+    if (query.estimate === '1') {
+      filters.priceFallback = true
+      changed = true
+    }
     if (changed && query.category) {
       filters.fetchSubcategories()
     }
@@ -55,6 +61,9 @@ export function useUrlSync() {
     if (!filters.includePrivateLabel) {
       query.private_label = '0'
     }
+    if (filters.priceFallback) {
+      query.estimate = '1'
+    }
 
     const currentQuery = { ...route.query }
     // Remove filter params from current query
@@ -62,6 +71,7 @@ export function useUrlSync() {
       delete currentQuery[param]
     }
     delete currentQuery.private_label
+    delete currentQuery.estimate
 
     router.replace({ query: { ...currentQuery, ...query } })
   }
@@ -71,7 +81,7 @@ export function useUrlSync() {
 
   // Watch filter changes and sync to URL
   watch(
-    () => [...FILTER_KEYS.map(k => filters[k]), filters.includePrivateLabel],
+    () => [...FILTER_KEYS.map(k => filters[k]), filters.includePrivateLabel, filters.priceFallback],
     () => syncToUrl(),
     { deep: true }
   )

@@ -37,3 +37,9 @@ def get_competitors(request: Request):
     svc = request.app.state.data_service
     options = svc.get_filter_options()
     return {"competitors": options.get("competitors", [])}
+
+
+@router.get("/fps")
+def get_fps(request: Request):
+    svc = request.app.state.data_service
+    return {"fps": svc.get_fp_options()}

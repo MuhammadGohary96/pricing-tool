@@ -27,16 +27,23 @@
     <div class="ml-auto flex items-center gap-4">
       <!-- Sync Badge + Resync -->
       <div class="flex items-center gap-2 shrink-0">
-        <div class="text-micro text-white/50 flex items-center gap-1.5">
-          <span class="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0"></span>
-          {{ syncLabel }}
+        <div class="text-micro text-white/50 flex items-center gap-1.5" :title="syncTitle">
+          <template v-if="refreshing">
+            <Loader2 class="w-3 h-3 animate-spin shrink-0 text-brand-light" />
+            <span>Syncing{{ refreshPercent != null ? ` ${refreshPercent}%` : '…' }}</span>
+          </template>
+          <template v-else>
+            <span class="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0"></span>
+            {{ syncLabel }}
+          </template>
         </div>
         <button
           @click="$emit('resync')"
-          class="text-white/40 hover:text-white transition-colors p-1 rounded hover:bg-white/10"
-          title="Reload data from source"
+          class="text-white/40 hover:text-white transition-colors p-1 rounded hover:bg-white/10 disabled:opacity-30"
+          :disabled="refreshing"
+          title="Check for new data (pulls only if the source changed)"
         >
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          <RefreshCw class="w-3.5 h-3.5" />
         </button>
       </div>
 
@@ -60,9 +67,7 @@
         class="text-white/40 hover:text-white transition-colors p-1 rounded hover:bg-white/10"
         title="Sign out"
       >
-        <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
-          <path fill-rule="evenodd" d="M3 3a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V4a1 1 0 00-1-1H3zm7.707 3.293a1 1 0 010 1.414L9.414 9H17a1 1 0 110 2H9.414l1.293 1.293a1 1 0 01-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0z" clip-rule="evenodd"/>
-        </svg>
+        <LogOut class="w-4 h-4" />
       </button>
     </div>
   </header>
@@ -70,48 +75,70 @@
 
 <script setup>
 import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { Loader2, RefreshCw, LogOut } from 'lucide-vue-next'
 import { useAuthStore } from '../../stores/auth'
-import { useCommercialStore } from '../../stores/commercial'
-import { useMasterDataStore } from '../../stores/masterData'
-import { useExecutiveStore } from '../../stores/executive'
-import { useCompetitorProductsStore } from '../../stores/competitorProducts'
+import { dataApi } from '../../api/client'
 
-defineEmits(['resync'])
+const emit = defineEmits(['resync', 'data-updated'])
 
 const auth = useAuthStore()
-const commercial = useCommercialStore()
-const masterData = useMasterDataStore()
-const executive = useExecutiveStore()
-const competitorProducts = useCompetitorProductsStore()
 
-const now = ref(new Date())
-let timer = null
+// Data freshness reflects the backend's last BigQuery sync (auto-refreshes
+// hourly when the source table changes), NOT the browser's fetch time.
+const now = ref(Date.now())
+const lastCheckedAt = ref(null)    // badge counts from this (pull OR no-change check)
+const dataSyncedAt = ref(null)     // when data actually changed (tooltip + refetch trigger)
+const refreshing = ref(false)
+const refreshPercent = ref(null)
+let clockTimer = null
+let pollTimer = null
+let prevDataSyncedMs = null
+
+async function pollDataStatus() {
+  try {
+    const { data } = await dataApi.getStatus()
+    lastCheckedAt.value = data.last_checked_at ? new Date(data.last_checked_at) : null
+    dataSyncedAt.value = data.data_synced_at ? new Date(data.data_synced_at) : null
+    refreshing.value = !!data.refreshing
+    refreshPercent.value = data.refresh_percent ?? null
+    // Refetch the visible view ONLY when the data itself changed (a pull
+    // landed) — never on a no-change check (which only advances last_checked).
+    const dMs = dataSyncedAt.value ? dataSyncedAt.value.getTime() : null
+    if (dMs && prevDataSyncedMs && dMs > prevDataSyncedMs) {
+      emit('data-updated')
+    }
+    if (dMs) prevDataSyncedMs = dMs
+  } catch {
+    /* transient — keep last known values */
+  }
+}
 
 onMounted(() => {
-  timer = setInterval(() => { now.value = new Date() }, 15000)
+  pollDataStatus()
+  clockTimer = setInterval(() => { now.value = Date.now() }, 15000)
+  pollTimer = setInterval(pollDataStatus, 20000)
 })
 onUnmounted(() => {
-  clearInterval(timer)
-})
-
-const lastFetchedAt = computed(() => {
-  const timestamps = [
-    commercial.lastFetchedAt,
-    masterData.lastFetchedAt,
-    executive.lastFetchedAt,
-    competitorProducts.lastFetchedAt,
-  ].filter(Boolean)
-  if (!timestamps.length) return null
-  return new Date(Math.max(...timestamps.map(t => t.getTime())))
+  clearInterval(clockTimer)
+  clearInterval(pollTimer)
 })
 
 const syncLabel = computed(() => {
-  if (!lastFetchedAt.value) return 'Data synced'
-  const diffMs = now.value - lastFetchedAt.value
-  const diffMin = Math.floor(diffMs / 60000)
+  if (!lastCheckedAt.value) return 'Data synced'
+  const diffMin = Math.floor((now.value - lastCheckedAt.value.getTime()) / 60000)
   if (diffMin < 1) return 'Synced just now'
   if (diffMin === 1) return 'Synced 1 min ago'
-  return `Synced ${diffMin} mins ago`
+  if (diffMin < 60) return `Synced ${diffMin} mins ago`
+  const h = Math.floor(diffMin / 60)
+  return h === 1 ? 'Synced 1 hr ago' : `Synced ${h} hrs ago`
+})
+
+const syncTitle = computed(() => {
+  if (refreshing.value) return 'Refreshing data from BigQuery…'
+  const parts = []
+  if (lastCheckedAt.value) parts.push(`Last checked: ${lastCheckedAt.value.toLocaleString()}`)
+  if (dataSyncedAt.value) parts.push(`Data last changed: ${dataSyncedAt.value.toLocaleString()}`)
+  return parts.length ? parts.join(' · ') : 'Data sync status'
 })
 
 const initials = computed(() => {

@@ -16,7 +16,7 @@
     <Transition name="dropdown">
       <div
         v-if="open"
-        class="absolute z-30 mt-1 left-0 bg-white rounded-lg shadow-lg border border-grey-200 py-1 min-w-[220px]"
+        class="absolute z-30 mt-1 left-0 bg-white rounded-xl shadow-dropdown ring-1 ring-grey-200/70 py-1 min-w-[220px]"
       >
         <div class="px-3 py-1 text-micro font-semibold text-grey-400 uppercase tracking-wide">Presets</div>
         <button
@@ -69,8 +69,6 @@ const filters = useFiltersStore()
 
 const PRESETS = [
   { name: 'All Categories', filters: {} },
-  { name: 'Top Tier Only', filters: { globalTier: ['T1'] } },
-  { name: 'Needs Action', filters: { actionType: ['Needs Mapping', 'Needs Price Update', 'Review AI Match'] } },
 ]
 
 const LS_KEY = 'bf_saved_views'
@@ -84,17 +82,54 @@ function persistViews() {
   try { localStorage.setItem(LS_KEY, JSON.stringify(savedViews.value)) } catch {}
 }
 
-function applyView(view) {
-  filters.clearAll()
-  for (const [key, value] of Object.entries(view.filters || {})) {
-    filters.setFilter(key, value)
+// Filter state fields captured in a saved view (state shape: camelCase + arrays/flags).
+const SNAP_KEYS = [
+  'mainCategory', 'subCategory', 'globalTier', 'subcatTier', 'actionType',
+  'brand', 'competitor', 'fpNames', 'includePrivateLabel', 'priceFallback',
+]
+
+// API-param key → state key, for normalizing views saved in the older (broken)
+// activeFilters shape so they still apply correctly.
+const API_TO_STATE = {
+  main_category: 'mainCategory', sub_category: 'subCategory', global_tier: 'globalTier',
+  subcat_tier: 'subcatTier', action_type: 'actionType', brand: 'brand',
+  competitor: 'competitor', fp_names: 'fpNames',
+}
+
+function snapshot() {
+  const s = {}
+  for (const k of SNAP_KEYS) {
+    const v = filters[k]
+    s[k] = Array.isArray(v) ? [...v] : v
   }
+  return s
+}
+
+// Accept either the current state shape or the legacy API-param shape.
+function normalize(f = {}) {
+  const out = {}
+  for (const [k, v] of Object.entries(f)) {
+    if (k === 'exclude_private_label') { out.includePrivateLabel = !v; continue }
+    if (k === 'price_fallback') { out.priceFallback = !!v; continue }
+    if (k in API_TO_STATE) {
+      out[API_TO_STATE[k]] = Array.isArray(v)
+        ? v
+        : String(v).split(',').map(s => s.trim()).filter(Boolean)
+      continue
+    }
+    out[k] = v  // already state-shape (presets + new saves)
+  }
+  return out
+}
+
+function applyView(view) {
+  filters.applySnapshot(normalize(view.filters))
 }
 
 function saveCurrentView() {
   const name = window.prompt('Name this view:')
   if (!name?.trim()) return
-  savedViews.value.push({ name: name.trim(), filters: { ...filters.activeFilters } })
+  savedViews.value.push({ name: name.trim(), filters: snapshot() })
   persistViews()
 }
 

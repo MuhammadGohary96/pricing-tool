@@ -1,36 +1,96 @@
 <template>
   <PageShell :loading="store.loading" :error="store.error" @retry="store.fetchAll()">
+    <!-- Tailored skeleton matching the real stacked layout -->
+    <template #skeleton>
+      <div class="flex flex-col gap-4">
+        <div class="flex items-end justify-between gap-8 pt-1">
+          <div class="flex flex-col gap-2">
+            <div class="skeleton-shimmer h-6 w-72 rounded-lg"></div>
+            <div class="skeleton-shimmer h-3.5 w-96 max-w-full rounded"></div>
+          </div>
+          <div class="hidden sm:flex gap-6">
+            <div v-for="i in 3" :key="i" class="flex flex-col gap-2 items-end">
+              <div class="skeleton-shimmer h-7 w-16 rounded"></div>
+              <div class="skeleton-shimmer h-2.5 w-20 rounded"></div>
+            </div>
+          </div>
+        </div>
+        <div class="skeleton-shimmer h-10 rounded-xl"></div>
+        <div class="bg-white rounded-2xl shadow-panel p-4">
+          <div class="skeleton-shimmer h-7 w-56 rounded mb-3"></div>
+          <div class="skeleton-shimmer h-[300px] rounded-lg"></div>
+        </div>
+        <div class="bg-white rounded-2xl shadow-panel p-4">
+          <div class="skeleton-shimmer h-7 w-64 rounded mb-3"></div>
+          <div class="skeleton-shimmer h-[340px] rounded-lg"></div>
+        </div>
+      </div>
+    </template>
+
     <div class="flex flex-col gap-4">
-      <DefinitionsPanel :sections="definitions" storage-key="defs-commercial" />
-      <FilterBar :loading="store.loading" hide-competitor />
+      <!-- ─── Command header: identity + scope ── -->
+      <section class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden animate-fade-in-up">
+        <div class="px-6 lg:px-7 pt-6 pb-5 border-b border-grey-100">
+          <h1 class="text-[1.75rem] leading-none font-semibold text-grey-900 tracking-tight">Commercial workspace</h1>
+          <p class="text-body text-grey-500 mt-2 max-w-[60ch]">Track the price index by subcategory and product, and act on the gaps that move revenue.</p>
+        </div>
+        <dl class="grid grid-cols-3 gap-px bg-grey-100">
+          <div class="bg-white p-5 lg:p-6 flex flex-col gap-1.5">
+            <dt class="text-caption text-grey-500 font-medium">Subcategories</dt>
+            <dd class="font-mono text-[26px] leading-none font-bold text-grey-900 tabular-nums"><AnimatedNumber :value="subcatCount" /></dd>
+          </div>
+          <div class="bg-white p-5 lg:p-6 flex flex-col gap-1.5">
+            <dt class="text-caption text-grey-500 font-medium">Products tracked</dt>
+            <dd class="font-mono text-[26px] leading-none font-bold text-grey-900 tabular-nums"><AnimatedNumber :value="productCount" /></dd>
+          </div>
+          <div class="bg-white p-5 lg:p-6 flex flex-col gap-1.5">
+            <dt class="text-caption text-grey-500 font-medium">Competitors</dt>
+            <dd class="font-mono text-[26px] leading-none font-bold text-grey-900 tabular-nums"><AnimatedNumber :value="competitorCount" /></dd>
+          </div>
+        </dl>
+      </section>
 
-      <!-- Drill-down breadcrumb (shows when subcategory is selected via table row click) -->
-      <DrilldownBreadcrumb
-        v-if="filters.subCategory.length === 1"
-        :subcategory="filters.subCategory[0]"
-        @clear="filters.setFilter('subCategory', [])"
-      />
+      <DefinitionsPanel :sections="definitions" storage-key="defs-commercial" class="animate-fade-in-up stagger-1" />
+      <FilterBar :loading="store.loading" hide-competitor class="animate-fade-in-up stagger-2" />
 
-      <!-- Competitor visibility toggle -->
+      <!-- Competitor visibility pills (left-aligned) -->
       <CompetitorToggle
         v-if="allCompetitors.length > 0"
         :competitors="allCompetitors"
         v-model="selectedCompetitors"
         :default-limit="5"
+        class="animate-fade-in-up stagger-2"
       />
+
+      <!-- Drill-down context -->
+      <Transition name="filter" mode="out-in">
+        <DrilldownBreadcrumb
+          v-if="filters.subCategory.length === 1"
+          :subcategory="filters.subCategory[0]"
+          @clear="filters.setFilter('subCategory', [])"
+          class="animate-fade-in-up"
+        />
+      </Transition>
+
+      <!-- PI legend — both-tails-bad key for the PI-colored tables below -->
+      <div class="flex justify-end animate-fade-in-up stagger-3">
+        <PILegend />
+      </div>
 
       <!-- Blended PI Table -->
       <BlendedPITable
+        class="animate-fade-in-up stagger-3"
         :data="store.blendedPI"
         :competitors="store.blendedCompetitors"
         :selected-competitors="selectedCompetitors"
+        :busy="store.refreshingBlended"
         style="max-height: 420px;"
         @select="onSubcategorySelect"
         @select-product="onSelectProduct"
       />
 
       <!-- Pivoted Product Table -->
-      <div class="flex-1 overflow-hidden product-panel">
+      <div class="flex-1 overflow-hidden product-panel animate-fade-in-up stagger-4">
         <ProductPivotTable
           :data="store.pivotedProducts"
           :total="store.pivotedTotal"
@@ -39,6 +99,7 @@
           :competitors="filteredPivotCompetitors"
           :needs-action-only="store.needsActionOnly"
           :compact-mode="compactMode"
+          :busy="store.refreshingPivot"
           class="h-full"
           @page="onPageChange"
           @toggle-needs-action="onToggleNeedsAction"
@@ -59,8 +120,11 @@ import FilterBar from '../components/layout/FilterBar.vue'
 import BlendedPITable from '../components/commercial/BlendedPITable.vue'
 import ProductPivotTable from '../components/commercial/ProductPivotTable.vue'
 import CompetitorToggle from '../components/commercial/CompetitorToggle.vue'
+import DrilldownBreadcrumb from '../components/commercial/DrilldownBreadcrumb.vue'
 import PageShell from '../components/shared/PageShell.vue'
 import DefinitionsPanel from '../components/shared/DefinitionsPanel.vue'
+import PILegend from '../components/shared/PILegend.vue'
+import AnimatedNumber from '../components/shared/AnimatedNumber.vue'
 import { Scale, Target, CheckCircle, AlertTriangle, SlidersHorizontal, Table2, PencilLine, Palette } from 'lucide-vue-next'
 import { useUrlSync } from '../composables/useUrlSync'
 
@@ -80,6 +144,11 @@ const filteredPivotCompetitors = computed(() => {
   return store.pivotedCompetitors.filter(c => selectedCompetitors.value.includes(c))
 })
 
+// At-a-glance summary — derived from data already in the store (no extra API calls)
+const subcatCount = computed(() => store.pivotedSubcatCount)
+const productCount = computed(() => store.pivotedTotal)
+const competitorCount = computed(() => allCompetitors.value.length)
+
 onMounted(async () => {
   if (route.query.search) store.search = route.query.search
   if (route.query.main_category) filters.setFilter('mainCategory', [route.query.main_category])
@@ -97,7 +166,9 @@ watchDebounced(
     filters.actionType,
     filters.brand,
     filters.competitor,
+    filters.fpNames,
     filters.includePrivateLabel,
+    filters.priceFallback,
   ],
   async () => {
     store.currentPage = 1
@@ -131,9 +202,9 @@ const definitions = [
   {
     title: 'Key Metrics',
     items: [
-      { term: 'Blended PI', description: 'Weighted Price Index = Competitor price ÷ BF price, weighted by daily quantity. PI > 1 = BF cheaper (green), PI < 1 = BF more expensive (red).', icon: Scale },
-      { term: 'Worst PI', description: 'The highest PI a product has across all competitors — identifies where BF is most overpriced vs any single competitor.', icon: AlertTriangle },
-      { term: 'Eligible Products', description: 'Products in the top 80% of revenue within their subcategory — worth tracking competitively.', icon: Target },
+      { term: 'Blended PI', description: 'Weighted Price Index = BF price ÷ Competitor price, weighted by daily quantity. PI < 1 = BF cheaper, PI > 1 = BF more expensive.', icon: Scale },
+      { term: 'Worst PI', description: 'The highest PI a product has across all competitors. Identifies where BF is most overpriced vs any single competitor.', icon: AlertTriangle },
+      { term: 'Eligible Products', description: 'Products in the top 80% of revenue within their subcategory, worth tracking competitively.', icon: Target },
       { term: 'Used Products', description: 'Eligible products matched to a competitor with a recently updated price. These feed the Blended PI.', icon: CheckCircle },
     ],
   },
@@ -143,7 +214,7 @@ const definitions = [
       { term: 'Filter', description: 'Use dropdowns to narrow by category, subcategory, tier, or brand. Press Escape to clear all.', icon: SlidersHorizontal },
       { term: 'Blended PI Table', description: 'Click a row to filter to that subcategory. Dots show individual product PIs; click to jump to the product.', icon: Table2 },
       { term: 'Edit Price', description: 'Click any BF Price cell to edit the now price inline. Saves to Catalog API if you have write access.', icon: PencilLine },
-      { term: 'Color Coding', description: 'Red = BF overpriced (PI < 0.95), Green = BF cheaper (PI > 1.05), Yellow = near parity. Worst PI column shows your biggest competitive gap.', icon: Palette },
+      { term: 'Color Coding', description: 'Cells are shaded by PI: PI < 0.95, near parity (0.95–1.05), and PI > 1.05. Lower PI = BF cheaper, higher PI = BF more expensive. Worst PI column shows your biggest competitive gap.', icon: Palette },
     ],
   },
 ]
@@ -151,7 +222,7 @@ const definitions = [
 
 <style scoped>
 .product-panel {
-  min-height: 400px;
-  height: calc(100vh - 480px);
+  min-height: 420px;
+  height: calc(100vh - 560px);
 }
 </style>

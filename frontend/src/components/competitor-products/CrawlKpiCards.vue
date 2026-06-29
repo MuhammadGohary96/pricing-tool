@@ -13,7 +13,7 @@
       :value="kpis?.mapped_bf ?? 0"
       format="number"
       :icon="GitCompareArrows"
-      icon-bg="bg-green-50"
+      icon-bg="bg-brand-50"
       :stagger-index="1"
     />
     <KpiCard
@@ -21,7 +21,7 @@
       :value="kpis?.mapped_competitor ?? 0"
       format="number"
       :icon="Link"
-      icon-bg="bg-amber-50"
+      icon-bg="bg-grey-100"
       :stagger-index="2"
     />
     <KpiCard
@@ -37,7 +37,7 @@
       :value="kpis?.fresh ?? 0"
       format="number"
       :icon="CalendarClock"
-      icon-bg="bg-blue-50"
+      icon-bg="bg-green-50"
       :stagger-index="4"
     />
   </div>

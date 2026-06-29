@@ -1,17 +1,21 @@
 <template>
-  <div class="bg-white rounded-lg shadow-card overflow-hidden flex flex-col">
-    <div class="px-4 py-3 border-b border-grey-100 flex items-center justify-between">
-      <div class="flex items-center gap-1.5">
-        <span class="text-subheading font-bold text-grey-900">Blended PI by Subcategory</span>
-        <HelpTooltip text="Weighted price index = Competitor price ÷ BF price for eligible products. PI > 1 = BF cheaper, PI < 1 = BF more expensive." />
+  <!-- Secondary/overview surface: flat (no drop shadow) so the elevated Product Detail panel reads as primary -->
+  <div class="bg-white rounded-xl ring-1 ring-grey-200/80 overflow-hidden flex flex-col">
+    <div class="px-4 py-3 border-b border-grey-100 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-1.5 min-w-0">
+        <h2 class="text-subheading font-bold text-grey-900 tracking-tightish whitespace-nowrap">Blended PI by subcategory</h2>
+        <HelpTooltip text="Quantity-weighted price index. Formula: Σ(sale_PI × avg_daily_quantity) ÷ Σ(avg_daily_quantity), filtered to used_product=TRUE (eligible + has price + recently updated). sale_PI = BF price ÷ Competitor price → PI > 1 = BF more expensive, PI < 1 = BF cheaper." />
       </div>
-      <div class="flex items-center gap-2">
-        <span class="text-micro px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary font-medium">Click row to filter</span>
-        <span class="text-micro px-2 py-0.5 rounded-full bg-grey-100 text-grey-600 font-medium">Click dot for product</span>
+      <div class="flex items-center gap-3 shrink-0">
+        <span class="hidden sm:inline text-micro text-grey-400">Click a row to filter · a dot to jump to a product</span>
         <ExportButton :fetcher="exportData" filename="blended_pi.csv" class="shrink-0" />
       </div>
     </div>
-    <div class="overflow-auto flex-1 min-h-0">
+    <!-- Refreshing indicator (in-place refetch on filter change) -->
+    <div v-if="busy" class="h-[2px] bg-brand-lightest overflow-hidden shrink-0" role="status" aria-label="Updating results">
+      <div class="h-full w-full bg-brand-primary animate-indeterminate"></div>
+    </div>
+    <div class="overflow-auto flex-1 min-h-0" :class="busy ? 'opacity-60 transition-opacity duration-200' : 'transition-opacity duration-200'">
       <table class="w-full">
         <thead class="sticky top-0 bg-grey-50 z-10">
           <tr>
@@ -30,14 +34,14 @@
                 {{ col.label }}
                 <span
                   v-if="col.dynamicLabel && selectedCompetitor"
-                  class="px-1.5 py-px rounded-full font-bold"
-                  style="font-size: 9px; background:#EDE9FE;color:#5B21B6"
+                  class="px-1.5 py-px rounded-full font-bold text-[9px] bg-brand-lightest text-brand-primary"
                 >{{ selectedCompetitor }}</span>
-                <span
+                <component
                   v-if="col.sortable !== false"
-                  class="text-[10px] transition-colors"
+                  :is="sortKey === col.key ? (sortDir === 'asc' ? ArrowUp : ArrowDown) : ChevronsUpDown"
+                  class="w-3 h-3 transition-colors"
                   :class="sortKey === col.key ? 'text-brand-primary' : 'text-grey-300'"
-                >{{ sortKey === col.key ? (sortDir === 'asc' ? '↑' : '↓') : '↕' }}</span>
+                />
               </span>
             </th>
             <!-- Per-competitor PI columns -->
@@ -50,7 +54,7 @@
             >
               <span class="inline-flex flex-col items-center gap-0.5">
                 <CompetitorLogo :name="comp" />
-                <span>{{ comp }}<span v-if="selectedCompetitor === comp" class="text-[10px] ml-0.5">●</span></span>
+                <span class="inline-flex items-center gap-0.5">{{ comp }}<Check v-if="selectedCompetitor === comp" class="w-3 h-3" /></span>
               </span>
             </th>
             <!-- Remaining fixed columns -->
@@ -66,11 +70,12 @@
             >
               <span class="inline-flex items-center gap-1">
                 {{ col.label }}
-                <span
+                <component
                   v-if="col.sortable !== false"
-                  class="text-[10px] transition-colors"
+                  :is="sortKey === col.key ? (sortDir === 'asc' ? ArrowUp : ArrowDown) : ChevronsUpDown"
+                  class="w-3 h-3 transition-colors"
                   :class="sortKey === col.key ? 'text-brand-primary' : 'text-grey-300'"
-                >{{ sortKey === col.key ? (sortDir === 'asc' ? '↑' : '↓') : '↕' }}</span>
+                />
               </span>
             </th>
           </tr>
@@ -104,8 +109,7 @@
               v-for="comp in visibleCompetitors"
               :key="'val-' + comp"
               class="px-2 py-1.5 text-center font-mono text-body font-bold whitespace-nowrap"
-              :class="compPiClass(row.competitor_blended_pis?.[comp])"
-              :style="selectedCompetitor === comp ? 'background: rgba(79,70,229,0.04)' : ''"
+              :class="[compPiClass(row.competitor_blended_pis?.[comp]), selectedCompetitor === comp ? 'bg-brand-50' : '']"
             ><span v-if="row.competitor_blended_pis?.[comp] != null" class="text-[10px] mr-0.5 opacity-70">{{ piArrow(row.competitor_blended_pis[comp]) }}</span>{{ row.competitor_blended_pis?.[comp]?.toFixed(2) ?? '—' }}</td>
             <!-- Trailing columns -->
             <td class="px-3 py-1.5 text-body text-grey-700 text-center font-mono">{{ row.total_product_count }}</td>
@@ -126,19 +130,19 @@
     </div>
     <!-- Pagination -->
     <div class="px-4 py-2 border-t border-grey-100 flex items-center justify-between bg-grey-50 shrink-0">
-      <span class="text-caption text-grey-500">
-        Showing {{ ((page - 1) * pageSize + 1) }}–{{ Math.min(page * pageSize, totalRows) }} of {{ totalRows }} subcategories
+      <span class="text-caption text-grey-500 tabular-nums">
+        Showing <span class="font-medium text-grey-700">{{ ((page - 1) * pageSize + 1) }}-{{ Math.min(page * pageSize, totalRows) }}</span> of {{ totalRows }} subcategories
       </span>
       <div v-if="totalPages > 1" class="flex items-center gap-1">
         <button
           :disabled="page <= 1"
-          class="text-caption px-2 py-1 rounded-lg border border-grey-200 bg-white hover:bg-grey-100 disabled:opacity-40 transition-colors"
+          class="inline-flex items-center gap-1 text-caption pl-2 pr-2.5 py-1 rounded-lg border border-grey-200 bg-white hover:bg-grey-100 disabled:opacity-40 disabled:hover:bg-white transition-colors"
           @click="page--"
-        >← Prev</button>
+        ><ChevronLeft class="w-3.5 h-3.5" /> Prev</button>
         <button
           v-for="pg in pageNumbers"
           :key="pg"
-          class="text-caption w-7 py-1 rounded-lg border transition-colors"
+          class="text-caption w-7 py-1 rounded-lg border tabular-nums transition-colors"
           :class="pg === page
             ? 'bg-brand-primary text-white border-brand-primary font-bold'
             : 'border-grey-200 bg-white hover:bg-grey-100 text-grey-700'"
@@ -146,9 +150,9 @@
         >{{ pg }}</button>
         <button
           :disabled="page >= totalPages"
-          class="text-caption px-2 py-1 rounded-lg border border-grey-200 bg-white hover:bg-grey-100 disabled:opacity-40 transition-colors"
+          class="inline-flex items-center gap-1 text-caption pl-2.5 pr-2 py-1 rounded-lg border border-grey-200 bg-white hover:bg-grey-100 disabled:opacity-40 disabled:hover:bg-white transition-colors"
           @click="page++"
-        >Next →</button>
+        >Next <ChevronRight class="w-3.5 h-3.5" /></button>
       </div>
     </div>
   </div>
@@ -160,12 +164,14 @@ import PIStripPlot from '../shared/PIStripPlot.vue'
 import HelpTooltip from '../shared/HelpTooltip.vue'
 import ExportButton from '../shared/ExportButton.vue'
 import CompetitorLogo from '../shared/CompetitorLogo.vue'
+import { ChevronLeft, ChevronRight, ArrowUp, ArrowDown, ChevronsUpDown, Check } from 'lucide-vue-next'
 import { piTextClass, piArrow } from '../../utils/piColor'
 
 const props = defineProps({
   data: { type: Array, default: () => [] },
   competitors: { type: Array, default: () => [] },
   selectedCompetitors: { type: Array, default: () => [] },
+  busy: { type: Boolean, default: false },
 })
 
 defineEmits(['select', 'select-product'])

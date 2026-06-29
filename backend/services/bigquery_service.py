@@ -22,9 +22,11 @@ Multi-competitor: one row per product × competitor (from dim_competitors regist
 Use competitor filter or aggregate with nunique() for product counts.
 """
 
+import math
 from datetime import datetime
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 
 from backend.config import settings as app_settings
@@ -49,14 +51,14 @@ COLUMN_MAP = {
     "competitor_last_updated_day": "competitor_price_updated_at",
 }
 
-BQ_QUERY = """
+FPS_QUERY = """
 SELECT
     product_id,
     product_name_en,
-    brand_name,
-    main_category_name,
     commercial_category_name,
+    main_category_name,
     sub_category_name,
+    brand_name,
     CAST(avg_daily_revenue          AS FLOAT64) AS avg_daily_revenue,
     CAST(avg_daily_quantity         AS FLOAT64) AS avg_daily_quantity,
     CAST(combined_score_global      AS FLOAT64) AS combined_score_global,
@@ -64,25 +66,34 @@ SELECT
     CAST(norm_quantity_global       AS FLOAT64) AS norm_quantity_global,
     global_tier,
     subcat_tier,
-    eligible_product,
-    CAST(breadfast_sale_price       AS FLOAT64) AS breadfast_sale_price,
+    CAST(cumulative_revenue_share   AS FLOAT64) AS cumulative_revenue_share,
+    fp_id,
+    fp_name,
+    CAST(bf_regular_price           AS FLOAT64) AS bf_regular_price,
     competitor_id,
     competitor_name,
+    competitor_product_id,
+    competitor_product_name,
+    CAST(sale_PI                    AS FLOAT64) AS sale_PI,
     CAST(competitor_sale_price      AS FLOAT64) AS competitor_sale_price,
     CAST(min_competitor_sale_price  AS FLOAT64) AS min_competitor_sale_price,
     CAST(max_competitor_sale_price  AS FLOAT64) AS max_competitor_sale_price,
-    CAST(sale_PI                    AS FLOAT64) AS sale_PI,
-    has_PI,
-    updated,
-    CAST(similarity_score           AS FLOAT64) AS similarity_score,
-    match_potential,
-    used_product,
-    action_type,
-    classification,
+    CAST(breadfast_sale_price       AS FLOAT64) AS breadfast_sale_price,
+    is_recent_breadfast,
+    is_recent_competitor,
     breadfast_last_updated_day,
     competitor_last_updated_day,
-    competitor_product_name,
-    match_potential_product_name
+    prices_recently_updated,
+    is_mapped,
+    eligible_product,
+    has_PI,
+    used_product,
+    updated,
+    match_potential,
+    CAST(similarity_score           AS FLOAT64) AS similarity_score,
+    match_potential_product_name,
+    action_type,
+    classification
 FROM `{project}.{dataset}.{table}`
 """
 
@@ -138,28 +149,59 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         self._table = table
         self._location = location
 
-        if self._startup_status:
-            self._startup_status["stage"] = "Loading products from BigQuery..."
+        # Extract progress callback if provided
+        progress_callback = None
+        if self._startup_status and "progress_callback" in self._startup_status:
+            progress_callback = self._startup_status["progress_callback"]
+
+        # Helper to report progress
+        def _report(stage: str, progress: int, total: int):
+            if progress_callback:
+                progress_callback(stage, progress, total)
+            if self._startup_status:
+                self._startup_status["stage"] = stage
+                self._startup_status["progress"] = progress
+                self._startup_status["total"] = total
+
+        # Stage 1: Load from BigQuery (80% of work)
+        _report("Loading products from BigQuery...", 0, 100)
         self._df = self._load_from_bigquery()
         print(
-            f"[BigQuery] Loaded {len(self._df)} products across "
-            f"{self._df['sub_category_name'].nunique()} subcategories"
+            f"[BigQuery] Loaded {len(self._df)} rows (FP grain) across "
+            f"{self._df['sub_category_name'].nunique()} subcategories, "
+            f"{self._df['fp_name'].nunique() if 'fp_name' in self._df.columns else 0} FPs"
         )
+
+        # Stage 2: Pre-aggregate to GLOBAL view (15% of work)
+        _report("Aggregating GLOBAL view...", 80, 100)
+        self._global_df = self._aggregate_to_global(self._df)
+        print(f"[BigQuery] Pre-aggregated GLOBAL view: {len(self._global_df)} rows")
 
         # Initialize price columns as null — enriched later via user token
         if "now_price" not in self._df.columns:
             self._df["now_price"] = None
         if "now_sale_price" not in self._df.columns:
             self._df["now_sale_price"] = None
+        if "now_price" not in self._global_df.columns:
+            self._global_df["now_price"] = None
+        if "now_sale_price" not in self._global_df.columns:
+            self._global_df["now_sale_price"] = None
 
-        # Load competitor products analysis table
-        if self._startup_status:
-            self._startup_status["stage"] = "Loading competitor products..."
+        # Stage 3: Load competitor products analysis table (5% of work)
+        _report("Loading competitor products...", 95, 100)
         self._competitor_df = self._load_competitor_products()
+
+        _report("Ready", 100, 100)
 
     def _load_from_bigquery(self) -> pd.DataFrame:
         import time
-        query = BQ_QUERY.format(
+
+        # Extract progress callback if provided
+        progress_callback = None
+        if self._startup_status and "progress_callback" in self._startup_status:
+            progress_callback = self._startup_status["progress_callback"]
+
+        query = FPS_QUERY.format(
             project=self._project,
             dataset=self._dataset,
             table=self._table,
@@ -168,60 +210,131 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         t0 = time.time()
         job = self._client.query(query)
         print(f"[BigQuery] Job submitted ({job.job_id}), waiting for BQ execution...")
-        rows = job.result()  # wait for query to finish — returns RowIterator
+
+        # Report progress via callback or startup_status
+        def _report_progress(stage: str, progress: int, total: int):
+            if progress_callback:
+                progress_callback(stage, progress, total)
+            if self._startup_status:
+                self._startup_status["total"] = total
+                self._startup_status["progress"] = progress
+                self._startup_status["stage"] = stage
+
+        # Download via the BigQuery Storage Read API (multi-stream gRPC + Arrow
+        # IPC). This replaces the old row-by-row dict() loop, which was the
+        # dominant cold-load cost. Falls back to the REST iterator if the
+        # Storage API is unavailable (e.g. missing bigquery.readsessions IAM).
+        rows = job.result()  # Wait for query completion, returns RowIterator
+        total_rows = rows.total_rows or 0
         t1 = time.time()
-        print(f"[BigQuery] Query executed in {t1 - t0:.1f}s — building DataFrame from rows...")
-        df = pd.DataFrame([dict(row) for row in rows])
-        print(f"[BigQuery] Built DataFrame ({len(df)} rows) in {time.time() - t1:.1f}s (total {time.time() - t0:.1f}s)")
+
+        print(f"[BigQuery] Query executed in {t1 - t0:.1f}s")
+        print(f"[BigQuery] Downloading {total_rows:,} rows via Storage Read API (Arrow)...")
+        _report_progress(f"Downloading {total_rows:,} rows via Storage API...", 0, total_rows)
+
+        # Stream Arrow RecordBatches so progress ticks during the multi-minute
+        # pull (a single to_arrow() call gives no feedback until it completes).
+        # Uses the Storage Read API when the client is available; otherwise the
+        # iterable transparently falls back to the REST pages (still batched).
+        import pyarrow as pa
+
+        bqs_client = None
+        try:
+            from google.cloud import bigquery_storage
+            bqs_client = bigquery_storage.BigQueryReadClient()
+        except Exception as exc:
+            print(f"[BigQuery] Storage client unavailable ({exc}); using REST iterator")
+
+        try:
+            batches = []
+            seen = 0
+            for batch in rows.to_arrow_iterable(bqstorage_client=bqs_client):
+                batches.append(batch)
+                seen += batch.num_rows
+                _report_progress(
+                    f"Downloading {seen:,} / {total_rows:,} rows...", seen, total_rows or seen
+                )
+            arrow_tbl = pa.Table.from_batches(batches) if batches else rows.to_arrow()
+            del batches
+        except Exception as exc:
+            print(f"[BigQuery] Streaming download failed ({exc}); falling back to bulk to_arrow()")
+            _report_progress("Falling back to bulk download...", 0, total_rows)
+            arrow_tbl = rows.to_arrow()
+
+        # date_as_object=False → DATE columns become datetime64[ns] (the
+        # vectorized derivations below depend on this).
+        df = arrow_tbl.to_pandas(date_as_object=False)
+        del arrow_tbl
+        print(
+            f"[BigQuery] Downloaded {len(df):,} rows in {time.time() - t1:.1f}s "
+            f"(total {time.time() - t0:.1f}s)"
+        )
+
+        _report_progress(f"Loaded {len(df):,} rows, processing...", len(df), max(len(df), 1))
+
+        # Drop unused columns to save memory
+        DROP_COLS = [
+            "norm_revenue_subcat", "norm_quantity_subcat",
+            "score_subcat_100rev", "score_subcat_70rev",
+            "score_subcat_50rev", "score_subcat_30rev",
+            "rank_by_revenue", "rank_by_quantity", "product_key",
+        ]
+        df = df.drop(columns=[c for c in DROP_COLS if c in df.columns])
 
         # Rename columns to match internal names
         df = df.rename(columns=COLUMN_MAP)
 
-        # Cast BQ NUMERIC (decimal.Decimal) columns to float64
+        # Safety-net numeric cast. The SQL already wraps these in CAST(... AS
+        # FLOAT64), so they arrive as Arrow double → float64; this only catches
+        # any column that slips through as object/decimal.
         numeric_cols = [
             "total_revenue", "avg_daily_quantity", "weighted_score",
             "norm_revenue", "norm_quantity", "sale_PI",
-            "bf_sale_price", "competitor_sale_price", "competitor_regular_price",
+            "bf_sale_price", "bf_regular_price", "competitor_sale_price",
             "min_competitor_sale_price", "max_competitor_sale_price",
             "similarity_score", "cumulative_revenue_share",
         ]
         for col in numeric_cols:
-            if col in df.columns:
+            if col in df.columns and df[col].dtype == object:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
         # Cast booleans (BQ may return NaN for nullable bools)
-        for col in ["eligible_product", "has_PI", "updated", "match_potential", "used_product"]:
+        for col in ["eligible_product", "has_PI", "updated", "match_potential", "used_product",
+                    "is_recent_breadfast", "is_recent_competitor", "prices_recently_updated", "is_mapped"]:
             if col in df.columns:
                 df[col] = df[col].fillna(False).astype(bool)
 
-        # Cast product_id to string
+        # Cast string columns (keep as plain strings to avoid categorical dtype bugs)
         df["product_id"] = df["product_id"].astype(str)
+        if "fp_id" in df.columns:
+            df["fp_id"] = df["fp_id"].astype(str)
+        if "fp_name" in df.columns:
+            df["fp_name"] = df["fp_name"].astype(str)
 
-        # Derive pi_deviation
-        df["pi_deviation"] = df["sale_PI"].apply(
-            lambda x: round(x - 1, 4) if pd.notna(x) else None
-        )
+        # Derive pi_deviation (vectorized; NaN stays NaN)
+        df["pi_deviation"] = (df["sale_PI"] - 1).round(4)
 
-        # Derive days_since_update
-        now = datetime.now().date()
-        df["days_since_update"] = df["competitor_price_updated_at"].apply(
-            lambda x: (now - x).days if pd.notna(x) else None
-        )
-
-        # Convert date columns to ISO strings for JSON serialization
+        # Ensure date columns are datetime64 (Arrow date32 → datetime64[ns])
         for col in ["bf_price_updated_at", "competitor_price_updated_at"]:
             if col in df.columns:
-                df[col] = df[col].apply(
-                    lambda x: x.isoformat() if pd.notna(x) else None
-                )
+                df[col] = pd.to_datetime(df[col], errors="coerce")
+
+        # Derive days_since_update (vectorized)
+        now_ts = pd.Timestamp(datetime.now().date())
+        if "competitor_price_updated_at" in df.columns:
+            days = (now_ts - df["competitor_price_updated_at"]).dt.days
+            # Keep None (not NaN) for missing dates to match prior behavior
+            df["days_since_update"] = days.astype("object").where(days.notna(), None)
+
+        # Convert date columns to ISO strings for JSON serialization (vectorized)
+        for col in ["bf_price_updated_at", "competitor_price_updated_at"]:
+            if col in df.columns:
+                iso = df[col].dt.strftime("%Y-%m-%d")
+                df[col] = iso.where(df[col].notna(), None)
 
         # Fill bf_regular_price if missing (not in BQ table)
         if "bf_regular_price" not in df.columns:
             df["bf_regular_price"] = df["bf_sale_price"]
-
-        # Fill competitor_regular_price if missing
-        if "competitor_regular_price" not in df.columns:
-            df["competitor_regular_price"] = df["competitor_sale_price"]
 
         return df.reset_index(drop=True)
 
@@ -245,15 +358,17 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         product_df = df.drop_duplicates("product_id")[[c for c in base_cols if c in df.columns]].copy()
 
         for comp in competitors:
-            comp_df = df[df["competitor_name"] == comp][
-                ["product_id", "competitor_sale_price", "sale_PI", "action_type", "days_since_update"]
-            ].drop_duplicates("product_id")
+            comp_cols = ["product_id", "competitor_sale_price", "sale_PI", "action_type", "days_since_update"]
+            if "classification" in df.columns:
+                comp_cols.append("classification")
+            comp_df = df[df["competitor_name"] == comp][comp_cols].drop_duplicates("product_id")
             product_df = product_df.merge(
                 comp_df.rename(columns={
                     "competitor_sale_price": f"{comp}_price",
                     "sale_PI": f"{comp}_pi",
                     "action_type": f"{comp}_action",
                     "days_since_update": f"{comp}_days_stale",
+                    "classification": f"{comp}_classification",
                 }),
                 on="product_id", how="left",
             )
@@ -308,6 +423,10 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             product_df = product_df.sort_values("weighted_score", ascending=False, na_position="last")
 
         total = len(product_df)
+        # Distinct subcategories in the same product scope as total_count — so the
+        # "Subcategories" KPI counts ALL tracked subcats, not just those with a
+        # blended PI (the blended-PI table drops subcats with no used products).
+        subcategory_count = int(product_df["sub_category_name"].nunique()) if "sub_category_name" in product_df.columns else 0
         page_df = product_df.iloc[(page - 1) * page_size: page * page_size]
 
         def _s(val):
@@ -346,43 +465,256 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 pi_key = f"{comp}_pi"
                 action_key = f"{comp}_action"
                 days_key = f"{comp}_days_stale"
+                class_key = f"{comp}_classification"
                 item[price_key] = _s(float(row[price_key])) if pd.notna(row.get(price_key)) else None
                 item[pi_key] = _s(float(row[pi_key])) if pd.notna(row.get(pi_key)) else None
                 item[action_key] = row.get(action_key)
                 item[days_key] = int(row[days_key]) if pd.notna(row.get(days_key)) else None
+                item[class_key] = row.get(class_key) if pd.notna(row.get(class_key)) else None
             items.append(item)
 
-        return {"items": items, "total_count": total, "competitors": competitors}
+        return {"items": items, "total_count": total, "competitors": competitors,
+                "subcategory_count": subcategory_count}
 
-    def enrich_with_catalog_prices(self, token: str, progress_status: dict = None):
-        """Fetch live prices from Breadfast Catalog API using the user's token."""
-        from backend.config import settings
-        from backend.services.catalog_client import fetch_prices_by_ids
+    def _load_product_rows(self, product_id) -> Optional[pd.DataFrame]:
+        """All fp-grain rows for one product. pandas path reads `_df`; the
+        DuckDB service overrides this to query the `fp_grain` Parquet view."""
+        df = self._df
+        if df is None:
+            return None
+        return df[df["product_id"].astype(str) == str(product_id)]
 
-        # Only fetch for our BQ products (numeric IDs)
-        numeric_ids = [
-            int(pid) for pid in self._df["product_id"].unique()
-            if isinstance(pid, str) and pid.isdigit()
-        ]
+    def get_product_fp_matrix(self, product_id, filters: dict | None = None, price_fallback: bool = False) -> dict:
+        """One product's full FP × competitor price matrix from the (product, fp,
+        competitor)-grain frame. Each cell carries the competitor's modal price
+        at that FP and its sale_PI (bf_fp / competitor_fp — same convention as
+        the aggregated `sale_PI`, so cells stay consistent with the pivot table).
 
-        prices = fetch_prices_by_ids(
-            settings.BF_CATALOG_URL, token, numeric_ids,
-            progress_status=progress_status,
-        )
+        Cell states: priced (fresh) · stale (>7d / not recent) · no_price
+        (mapped, never observed at this FP) · not_mapped (no competitor link).
 
-        if not prices:
-            return 0
+        Honors the dashboard's active filters (fp_names / competitor shape the
+        rows & columns; category / brand / tier scope the product itself).
 
-        self._df["now_price"] = self._df["product_id"].apply(
-            lambda pid: prices.get(int(pid), {}).get("now_price") if pid.isdigit() else None
-        )
-        self._df["now_sale_price"] = self._df["product_id"].apply(
-            lambda pid: prices.get(int(pid), {}).get("now_sale_price") if pid.isdigit() else None
-        )
+        The (product, fp, competitor)-grain rows are fetched via
+        `_load_product_rows` so DuckDB-backed deployments (where `_df` is not
+        loaded on the serving path) can override the source.
+        """
+        sub = self._load_product_rows(product_id)
+        if sub is None or sub.empty:
+            return {"found": False}
 
-        matched = self._df["now_price"].notna().sum()
-        print(f"[Catalog] Enriched {matched} of {len(self._df)} products with accurate prices")
-        return int(matched)
+        # Apply the active dashboard filters to the product's rows. Each filter
+        # maps to an fp-grain column; values are comma-separated (matches the
+        # pivot/blended-PI filter semantics).
+        if filters:
+            _FILTER_COLS = {
+                "fp_names": "fp_name",
+                "competitor": "competitor_name",
+                "brand": "brand_name",
+                "main_category": "commercial_category_name",
+                "sub_category": "sub_category_name",
+                "global_tier": "global_tier",
+                "subcat_tier": "subcat_tier",
+            }
+            for key, col in _FILTER_COLS.items():
+                raw = filters.get(key)
+                if not raw or col not in sub.columns:
+                    continue
+                values = [v.strip() for v in str(raw).split(",") if v.strip()]
+                if values:
+                    sub = sub[sub[col].isin(values)]
+            if filters.get("exclude_private_label") and "brand_name" in sub.columns:
+                sub = sub[~sub["brand_name"].str.lower().str.contains("breadfast", na=False)]
+            if sub.empty:
+                return {"found": False}
+
+        def _modal(series):
+            """Most-frequent positive value; tie-break on the smallest (matches
+            the modal-price logic in `_aggregate_to_global` / the DuckDB CTE)."""
+            s = series.dropna()
+            s = s[s > 0]
+            if s.empty:
+                return None
+            counts = s.value_counts()
+            top = counts.max()
+            return float(min(counts[counts == top].index))
+
+        def _s(v):
+            if v is None:
+                return None
+            if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                return None
+            return v
+
+        first = sub.iloc[0]
+        # Product-level BF prices (modal of fresh BF rows, fall back to all)
+        bf_recent = sub[sub.get("is_recent_breadfast", False) == True]  # noqa: E712
+        bf_sale = _modal(bf_recent["bf_sale_price"]) if not bf_recent.empty else None
+        if bf_sale is None:
+            bf_sale = _modal(sub["bf_sale_price"])
+
+        competitors = sorted(c for c in sub["competitor_name"].dropna().unique())
+        fp_names = sorted(f for f in sub["fp_name"].dropna().unique())
+
+        _PRIO = {"Needs Mapping": 3, "Review Match": 2, "Needs Price Update": 1, "Complete": 0}
+        _REV = {3: "Needs Mapping", 2: "Review Match", 1: "Needs Price Update", 0: "Complete"}
+
+        # Per-competitor pair metadata + derived column action
+        comp_meta = {}
+        for comp in competitors:
+            cdf = sub[sub["competitor_name"] == comp]
+            is_mapped = bool(cdf.get("is_mapped", pd.Series([False])).any())
+            sim_vals = cdf["similarity_score"].dropna() if "similarity_score" in cdf else pd.Series([], dtype=float)
+            sim = float(sim_vals.max()) if not sim_vals.empty else None
+            cpn = cdf["competitor_product_name"].dropna()
+            comp_product_name = str(cpn.iloc[0]) if not cpn.empty else None
+            priced = cdf[cdf["competitor_sale_price"] > 0]
+            fresh = priced[priced.get("is_recent_competitor", False) == True]  # noqa: E712
+            if not is_mapped:
+                action = "Needs Mapping" if (sim is None or sim < 0.85) else "Review Match"
+            elif priced.empty:
+                action = "Needs Price Update"
+            elif not fresh.empty:
+                action = "Complete"
+            else:
+                action = "Needs Price Update"
+            # FRESH-only modal — the single basis for both estimates and the Min/Max-PI
+            # chips. A pair with no fresh price anywhere has no fresh modal, so it never
+            # produces an estimate and drops out of the chip ranking (it cannot be
+            # judged on a stale price).
+            fresh_modal = _modal(fresh["competitor_sale_price"]) if not fresh.empty else None
+            # Cross-FP stale modal — only for a pair with NO fresh price anywhere. Used
+            # solely to fill the matrix (badged "outdated") when the estimate toggle is
+            # on; it never feeds the blend, used counts, or chips.
+            stale_only = fresh.empty and not priced.empty
+            stale_modal = _modal(priced["competitor_sale_price"]) if stale_only else None
+            stale_days_s = priced["days_since_update"].dropna() if "days_since_update" in priced else pd.Series([], dtype=float)
+            stale_days = int(stale_days_s.min()) if (stale_only and not stale_days_s.empty) else None
+            agg_pi = round(bf_sale / fresh_modal, 4) if (bf_sale and fresh_modal) else None
+            comp_meta[comp] = {
+                "competitor_name": comp,
+                "is_mapped": is_mapped,
+                "competitor_product_name": comp_product_name,
+                "similarity_score": _s(sim),
+                "action": action,
+                "agg_price": _s(fresh_modal),   # Min/Max chips read this (fresh-only)
+                "agg_pi": _s(agg_pi),
+                "fresh_modal": fresh_modal,
+                "stale_only": stale_only,
+                "stale_modal": _s(stale_modal),
+                "stale_days": stale_days,
+            }
+
+        # Build the matrix rows (one per FP)
+        rows = []
+        used_pis = []
+        priced_fresh = 0
+        estimated_cells = 0
+        outdated_cells = 0
+        for fp in fp_names:
+            fdf = sub[sub["fp_name"] == fp]
+            fp_bf_recent = fdf[fdf.get("is_recent_breadfast", False) == True]  # noqa: E712
+            fp_bf = _modal(fp_bf_recent["bf_sale_price"]) if not fp_bf_recent.empty else None
+            if fp_bf is None:
+                fp_bf = _modal(fdf["bf_sale_price"])
+            cells = []
+            for comp in competitors:
+                meta = comp_meta[comp]
+                cell = {"competitor_name": comp, "state": "not_mapped",
+                        "price": None, "pi": None, "days_since_update": None,
+                        "is_estimated": False, "is_outdated": False}
+                if not meta["is_mapped"]:
+                    cells.append(cell)
+                    continue
+                cfdf = fdf[fdf["competitor_name"] == comp]
+                priced = cfdf[cfdf["competitor_sale_price"] > 0]
+                fresh = priced[priced.get("is_recent_competitor", False) == True] if not priced.empty else priced  # noqa: E712
+                if not fresh.empty:
+                    # Observed FRESH price at this FP — trusted, always blended.
+                    price = _modal(fresh["competitor_sale_price"])
+                    days = fresh["days_since_update"].dropna()
+                    cell["price"] = _s(price)
+                    cell["days_since_update"] = int(days.min()) if not days.empty else None
+                    pi = (fp_bf / price) if (fp_bf and price) else None
+                    cell["pi"] = _s(round(pi, 4)) if pi is not None else None
+                    cell["state"] = "priced"
+                    priced_fresh += 1
+                    if pi is not None:
+                        used_pis.append(pi)
+                elif price_fallback and meta["fresh_modal"] and fp_bf:
+                    # ESTIMATED: no fresh price at this FP, but the pair IS fresh at
+                    # some FP → fill with its FRESH modal. Counts toward the blend.
+                    est = meta["fresh_modal"]
+                    cell["price"] = _s(est)
+                    cell["pi"] = _s(round(fp_bf / est, 4))
+                    cell["state"] = "estimated"
+                    cell["is_estimated"] = True
+                    estimated_cells += 1
+                    used_pis.append(fp_bf / est)
+                elif not priced.empty:
+                    # OUTDATED (observed): a competitor price is observed at THIS FP but
+                    # isn't fresh. Show the local stale modal, flagged outdated — never
+                    # blended. Always shown where actually observed, in either mode.
+                    price = _modal(priced["competitor_sale_price"])
+                    days = priced["days_since_update"].dropna()
+                    cell["price"] = _s(price)
+                    cell["days_since_update"] = int(days.min()) if not days.empty else None
+                    cell["pi"] = _s(round(fp_bf / price, 4)) if (fp_bf and price) else None
+                    cell["state"] = "outdated"
+                    cell["is_outdated"] = True
+                    outdated_cells += 1
+                elif price_fallback and meta["stale_only"] and meta["stale_modal"]:
+                    # OUTDATED (filled, toggle ON only): the pair has only stale prices
+                    # anywhere. In fill mode, surface the cross-FP stale modal so the
+                    # matrix isn't sparse — but badge it outdated and keep it OUT of the
+                    # blend, used count, and chips. With the toggle OFF this branch is
+                    # skipped, so unobserved FPs stay "no_price" (no stale fill).
+                    out = meta["stale_modal"]
+                    cell["price"] = _s(out)
+                    cell["pi"] = _s(round(fp_bf / out, 4)) if fp_bf else None
+                    cell["days_since_update"] = meta["stale_days"]
+                    cell["state"] = "outdated"
+                    cell["is_outdated"] = True
+                    outdated_cells += 1
+                else:
+                    cell["state"] = "no_price"
+                cells.append(cell)
+            rows.append({"fp_name": fp, "bf_sale_price": _s(fp_bf), "cells": cells})
+
+        blended = round(sum(used_pis) / len(used_pis), 4) if used_pis else None
+        overall_action = _REV[max((_PRIO.get(m["action"], 0) for m in comp_meta.values()), default=0)]
+
+        bf_updated = sub["bf_price_updated_at"].dropna()
+        return {
+            "found": True,
+            "product": {
+                "product_id": str(product_id),
+                "product_name": str(first["product_name"]),
+                "brand_name": str(first["brand_name"]),
+                "main_category_name": str(first.get("main_category_name", "")),
+                "sub_category_name": str(first.get("sub_category_name", "")),
+                "global_tier": _s(first.get("global_tier")),
+                "bf_sale_price": _s(bf_sale),
+                "bf_regular_price": _s(float(first["bf_regular_price"])) if pd.notna(first.get("bf_regular_price")) else None,
+                "bf_price_updated_at": str(bf_updated.max()) if not bf_updated.empty else None,
+            },
+            "competitors": [
+                {k: v for k, v in comp_meta[c].items()
+                 if k not in ("fresh_modal", "stale_only", "stale_modal", "stale_days")}
+                for c in competitors
+            ],
+
+            "rows": rows,
+            "summary": {
+                "blended_pi": blended,
+                "total_cells": len(competitors) * len(fp_names),
+                "priced_fresh_cells": priced_fresh,
+                "estimated_cells": estimated_cells,
+                "outdated_cells": outdated_cells,
+                "action": overall_action,
+            },
+        }
 
     # ─── Shared helpers ─────────────────────────────────────────
 
@@ -405,10 +737,203 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             return df[df[column].isin([v.strip() for v in value.split(",")])]
         return df[df[column] == value]
 
+    def _aggregate_to_global(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Collapse (product, fp, competitor) → (product, competitor).
+
+        Price aggregation rules:
+        - BF: Modal price from is_recent_breadfast=TRUE rows.
+        - Competitor: Modal of FRESH observations; fall back to modal of ALL
+          observations if no fresh; NULL if no observations at all.
+
+        action_type is RECOMPUTED from aggregated state (not carried from a single FP):
+          not mapped + no AI match  → Needs Mapping
+          not mapped + AI match     → Review AI Match
+          mapped + no obs anywhere  → Needs Price for FP
+          mapped + ≥1 fresh obs     → Complete
+          mapped + only stale obs   → Needs Price Update
+        """
+        # 1. Modal BF sale price — from recent BF rows only
+        bf_recent = df[df["is_recent_breadfast"] == True]
+        bf_modal = (
+            bf_recent.groupby("product_id")["bf_sale_price"]
+            .agg(lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else None)
+            .rename("bf_sale_price_modal")
+        )
+
+        # 2. Competitor price: rows with any VALID observation (price > 0).
+        # A competitor price of 0 is treated as no observation — it would make
+        # sale_PI = bf_price / 0 = inf and poison the blended PI.
+        comp_obs = df[df["competitor_sale_price"] > 0]
+        comp_fresh = comp_obs[comp_obs["is_recent_competitor"] == True]
+
+        # 2a. Modal price from fresh observations
+        comp_fresh_modal = (
+            comp_fresh.groupby(["product_id", "competitor_id"])["competitor_sale_price"]
+            .agg(lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else None)
+            .rename("comp_price_fresh_modal")
+        )
+
+        # 2b. Modal price from ALL observations (fallback for when no fresh)
+        comp_all_modal = (
+            comp_obs.groupby(["product_id", "competitor_id"])["competitor_sale_price"]
+            .agg(lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else None)
+            .rename("comp_price_all_modal")
+        )
+
+        # 2c. Flags: does (product, competitor) have any fresh / any observation
+        has_fresh_pairs = set(
+            map(tuple, comp_fresh[["product_id", "competitor_id"]].drop_duplicates().values)
+        )
+        has_obs_pairs = set(
+            map(tuple, comp_obs[["product_id", "competitor_id"]].drop_duplicates().values)
+        )
+
+        # 3. Product-level base fields (same across all FPs — dedup by product_id)
+        product_cols = [
+            "product_id", "product_name", "commercial_category_name",
+            "main_category_name", "sub_category_name", "brand_name",
+            "total_revenue", "avg_daily_quantity", "weighted_score",
+            "norm_revenue", "norm_quantity", "global_tier", "subcat_tier",
+            "cumulative_revenue_share", "eligible_product", "bf_regular_price",
+        ]
+        product_base = df.drop_duplicates("product_id")[[c for c in product_cols if c in df.columns]].copy()
+
+        # 4. Competitor-level base fields (product-level competitor link info)
+        # NOTE: action_type, has_PI, updated, is_recent_* are EXCLUDED — recomputed below
+        comp_cols_first = [
+            "product_id", "competitor_id", "competitor_name",
+            "competitor_product_id", "competitor_product_name",
+            "is_mapped", "match_potential", "similarity_score",
+            "match_potential_product_name", "classification",
+        ]
+        comp_base = df.drop_duplicates(["product_id", "competitor_id"])[
+            [c for c in comp_cols_first if c in df.columns]
+        ].copy()
+
+        # min/max competitor sale price across observed FPs (spread)
+        if "competitor_sale_price" in df.columns and not comp_obs.empty:
+            spread = comp_obs.groupby(["product_id", "competitor_id"])["competitor_sale_price"].agg(["min", "max"])
+            spread.columns = ["min_competitor_sale_price", "max_competitor_sale_price"]
+            comp_base = comp_base.merge(spread, on=["product_id", "competitor_id"], how="left")
+
+        # days_since_update: MIN (freshest) across observed FPs only
+        if "days_since_update" in df.columns and not comp_obs.empty:
+            days_agg = (
+                comp_obs.groupby(["product_id", "competitor_id"])["days_since_update"]
+                .min().rename("days_since_update")
+            )
+            comp_base = comp_base.merge(days_agg, on=["product_id", "competitor_id"], how="left")
+
+        # Date columns: MAX (most recent) across observed FPs only
+        for date_col in ["bf_price_updated_at", "competitor_price_updated_at"]:
+            if date_col in df.columns and not comp_obs.empty:
+                date_agg = (
+                    comp_obs.groupby(["product_id", "competitor_id"])[date_col]
+                    .max().rename(date_col)
+                )
+                # Drop any pre-existing column to avoid merge suffix conflicts
+                if date_col in comp_base.columns:
+                    comp_base = comp_base.drop(columns=[date_col])
+                comp_base = comp_base.merge(date_agg, on=["product_id", "competitor_id"], how="left")
+                # Convert NaN → None (Pydantic requires None, not NaN, for nullable strings)
+                comp_base[date_col] = comp_base[date_col].where(comp_base[date_col].notna(), None)
+
+        # 5. Merge everything
+        result = (
+            comp_base
+            .merge(product_base, on="product_id", how="left")
+            .merge(bf_modal, on="product_id", how="left")
+            .merge(comp_fresh_modal, on=["product_id", "competitor_id"], how="left")
+            .merge(comp_all_modal, on=["product_id", "competitor_id"], how="left")
+        )
+
+        # 6. Apply BF modal price
+        if "bf_sale_price_modal" in result.columns:
+            result["bf_sale_price"] = result["bf_sale_price_modal"]
+
+        # 7. Apply competitor price: prefer FRESH modal, fallback to ALL-OBS modal
+        result["competitor_sale_price"] = result["comp_price_fresh_modal"].fillna(
+            result["comp_price_all_modal"]
+        )
+
+        # 8. Compute aggregated freshness flags from the pair sets
+        pair_keys = list(zip(result["product_id"], result["competitor_id"]))
+        result["is_recent_competitor"] = [k in has_fresh_pairs for k in pair_keys]
+        result["has_PI"] = [k in has_obs_pairs for k in pair_keys]
+        result["is_recent_breadfast"] = result["bf_sale_price"].notna()
+        result["prices_recently_updated"] = (
+            result["is_recent_breadfast"] & result["is_recent_competitor"]
+        )
+        result["updated"] = result["prices_recently_updated"]
+
+        # 9. used_product = eligible AND has price AND fresh (matches SQL definition)
+        if "eligible_product" in result.columns:
+            result["used_product"] = (
+                result["eligible_product"].fillna(False).astype(bool)
+                & result["has_PI"]
+                & result["prices_recently_updated"]
+            )
+
+        # 10. Recalculate PI
+        result["sale_PI"] = result["bf_sale_price"] / result["competitor_sale_price"]
+
+        # 11. Recompute action_type from aggregated state
+        is_mapped = (
+            result["is_mapped"].fillna(False).astype(bool)
+            if "is_mapped" in result.columns
+            else pd.Series([False] * len(result), index=result.index)
+        )
+        has_price = result["competitor_sale_price"] > 0
+        is_fresh = result["is_recent_competitor"].fillna(False).astype(bool)
+        sim = (
+            pd.to_numeric(result["similarity_score"], errors="coerce")
+            if "similarity_score" in result.columns
+            else pd.Series([None] * len(result), index=result.index)
+        )
+        ai_match = sim.fillna(0) >= 0.85
+
+        conditions = [
+            ~is_mapped & ~ai_match,             # not mapped, no AI match
+            ~is_mapped & ai_match,              # not mapped, AI match available
+            is_mapped & ~has_price,             # mapped, no price observation anywhere
+            is_mapped & has_price & is_fresh,   # mapped, ≥1 fresh observation
+            is_mapped & has_price & ~is_fresh,  # mapped, only stale observations
+        ]
+        choices = [
+            "Needs Mapping",
+            "Review AI Match",
+            "Needs Price for FP",
+            "Complete",
+            "Needs Price Update",
+        ]
+        result["action_type"] = np.select(conditions, choices, default="Needs Mapping")
+
+        # 12. Drop intermediate columns
+        result = result.drop(
+            columns=["bf_sale_price_modal", "comp_price_fresh_modal", "comp_price_all_modal"],
+            errors="ignore",
+        )
+
+        return result.reset_index(drop=True)
+
     def _apply_filters(self, df: pd.DataFrame, filters: dict = None) -> pd.DataFrame:
+        # Ignore the passed df — choose source based on fp_names filter
+        fp_names = filters.get("fp_names") if filters else None
+
+        if fp_names:
+            # FP-scoped mode: filter raw df to selected FPs, then aggregate
+            names = [n.strip() for n in fp_names.split(",")]
+            scoped = self._df[self._df["fp_name"].isin(names)]
+            source = self._aggregate_to_global(scoped)
+        else:
+            # GLOBAL mode: use pre-computed aggregated df
+            source = self._global_df
+
         if not filters:
-            return df
-        filtered = df.copy()
+            return source
+
+        filtered = source.copy()
         if filters.get("main_category"):
             filtered = self._multi_match(filtered, "commercial_category_name", filters["main_category"])
         if filters.get("sub_category"):
@@ -434,7 +959,121 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
     def get_all_products(self, filters: dict = None) -> pd.DataFrame:
         return self._apply_filters(self._df, filters)
 
+    @staticmethod
+    def _shape_fp_competitor_pi(df: pd.DataFrame) -> dict:
+        """Shape a (fp_name, competitor_name, blended_pi, used_count,
+        eligible_count) frame into the API payload: a flat cell list with the
+        Area parsed from the FP name, plus the sorted competitor list. The
+        frontend pivots this into the matrix and the 'most exposed' ranking."""
+        import math
+
+        def _f(v):
+            if v is None:
+                return None
+            if isinstance(v, float) and math.isnan(v):
+                return None
+            return v
+
+        cells = []
+        competitors = set()
+        tot_used = 0
+        tot_est = 0
+        for _, r in df.iterrows():
+            fp = r["fp_name"]
+            comp = r["competitor_name"]
+            if not fp or not comp:
+                continue
+            competitors.add(comp)
+            pi = _f(r.get("blended_pi"))
+            used = int(_f(r.get("used_count")) or 0)
+            est = int(_f(r.get("estimated_count")) or 0)
+            elig = int(_f(r.get("eligible_count")) or 0)
+            tot_used += used
+            tot_est += est
+            # FP names are scoped "<Area> FP #<n>"; Area is the prefix.
+            area = str(fp).split(" FP #")[0].strip() or "Other"
+            cells.append({
+                "fp_name": fp,
+                "area": area,
+                "competitor_name": comp,
+                "blended_pi": round(float(pi), 4) if pi is not None else None,
+                "used_count": used,
+                "estimated_count": est,
+                "observed_count": used - est,
+                "eligible_count": elig,
+                "coverage_pct": round(used / elig * 100, 1) if elig else 0.0,
+                # Cell rests entirely on estimates (no fresh-priced product in it).
+                "is_estimated": est > 0 and (used - est) == 0,
+            })
+        return {
+            "competitors": sorted(competitors),
+            "cells": cells,
+            # Share of contributing products that are estimated (0 when fallback off).
+            "estimated_pct": round(tot_est / tot_used * 100, 1) if tot_used else 0.0,
+        }
+
+    def _fallback_modal_map(self) -> dict:
+        """(product_id, competitor_name) → estimate price: modal of the FRESH
+        competitor prices over all FPs. A pair with no fresh price anywhere has
+        no entry here, so it is never estimated (its stale price surfaces, flagged
+        outdated, only in the product FP-matrix). Mirrors the fresh-only modal CTE
+        in the DuckDB get_fp_competitor_pi fallback."""
+        fresh = self._df[(self._df["competitor_sale_price"] > 0)
+                         & (self._df.get("is_recent_competitor", False) == True)]  # noqa: E712
+
+        def _mode(s):
+            s = s.dropna()
+            if s.empty:
+                return None
+            vc = s.value_counts()
+            return float(min(vc[vc == vc.max()].index))
+
+        return fresh.groupby(["product_id", "competitor_name"])["competitor_sale_price"].apply(_mode).to_dict()
+
+    def get_fp_competitor_pi(self, filters: dict = None, price_fallback: bool = False) -> dict:
+        """Quantity-weighted blended PI per (fulfillment point × competitor).
+
+        Same blend as get_blended_pi_by_subcategory (Σ(sale_PI·qty)/Σ(qty) over
+        used rows), grouped by fp_name × competitor_name off the FP grain. When
+        price_fallback is on, mapped-but-not-fresh cells are filled with the
+        per-(product, competitor) modal price and counted as estimated.
+        """
+        df = self._apply_filters(self._df, filters)
+        if df is None or df.empty:
+            return {"competitors": [], "cells": []}
+        d = df[df["fp_name"].notna() & df["competitor_name"].notna()].copy()
+        d["used_eff"] = d["used_product"] == True  # noqa: E712
+        d["is_estimated"] = False
+        d["pi_eff"] = d["sale_PI"]
+        if price_fallback:
+            modal = self._fallback_modal_map()
+            d["modal_price"] = list(d.set_index(["product_id", "competitor_name"]).index.map(modal))
+            fill = (~d["used_eff"]) & (d.get("is_mapped") == True) & (d["eligible_product"] == True) \
+                & d["modal_price"].notna() & d["bf_sale_price"].notna()  # noqa: E712
+            d.loc[fill, "used_eff"] = True
+            d.loc[fill, "is_estimated"] = True
+            d.loc[fill, "pi_eff"] = d.loc[fill, "bf_sale_price"] / d.loc[fill, "modal_price"]
+        rows = []
+        for (fp, comp), g in d.groupby(["fp_name", "competitor_name"]):
+            elig = int(g.loc[g["eligible_product"] == True, "product_id"].nunique())
+            if elig == 0:
+                continue
+            u = g[g["used_eff"]]
+            qty = u["avg_daily_quantity"].sum()
+            pi = (u["pi_eff"] * u["avg_daily_quantity"]).sum() / qty if qty else None
+            rows.append({
+                "fp_name": fp,
+                "competitor_name": comp,
+                "blended_pi": pi if (pi is not None and not pd.isna(pi)) else None,
+                "used_count": int(u["product_id"].nunique()),
+                "estimated_count": int(u.loc[u["is_estimated"], "product_id"].nunique()),
+                "eligible_count": elig,
+            })
+        return self._shape_fp_competitor_pi(pd.DataFrame(rows))
+
     def get_blended_pi_by_subcategory(self, filters: dict = None) -> pd.DataFrame:
+        # Product-level aggregate — unaffected by the competitor price fallback
+        # (a purely FP-grain effect; see get_fp_competitor_pi / get_product_fp_matrix).
         df = self._apply_filters(self._df, filters)
         used = df[df["used_product"] == True]
         if used.empty:
@@ -520,6 +1159,47 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             lambda x: x if isinstance(x, dict) else {}
         )
         grouped["competitor_used_counts"] = grouped["sub_category_name"].map(comp_used).apply(
+            lambda x: x if isinstance(x, dict) else {}
+        )
+
+        # Per-competitor mapping coverage
+        # Total Active = ALL products in subcategory (SAME for all competitors)
+        # Mapped = products mapped to THIS specific competitor (DIFFERENT per competitor)
+
+        # Calculate total active products per subcategory (same for all competitors)
+        total_active_per_subcat = df.groupby("sub_category_name")["product_id"].nunique().to_dict()
+
+        # Get all (subcategory, competitor) combinations
+        all_combinations = df[["sub_category_name", "competitor_name"]].drop_duplicates()
+
+        # Calculate mapped products per (subcategory, competitor) - only where is_mapped=True
+        mapped_counts = df[df["is_mapped"] == True].groupby(
+            ["sub_category_name", "competitor_name"]
+        )["product_id"].nunique().reset_index(name="comp_mapped_count")
+
+        # Merge to include all combinations (even those with 0 mapped products)
+        comp_mapping = all_combinations.merge(
+            mapped_counts,
+            on=["sub_category_name", "competitor_name"],
+            how="left"
+        )
+
+        # Fill NaN (competitors with 0 mapped products) with 0
+        comp_mapping["comp_mapped_count"] = comp_mapping["comp_mapped_count"].fillna(0).astype(int)
+
+        # Add total active count (same for all competitors in a subcategory)
+        comp_mapping["comp_eligible_count"] = comp_mapping["sub_category_name"].map(total_active_per_subcat)
+
+        comp_eligible_cnts = comp_mapping.groupby("sub_category_name").apply(
+            lambda g: _build_comp_dict(g, "comp_eligible_count")
+        )
+        comp_mapped_cnts = comp_mapping.groupby("sub_category_name").apply(
+            lambda g: _build_comp_dict(g, "comp_mapped_count")
+        )
+        grouped["competitor_eligible_counts"] = grouped["sub_category_name"].map(comp_eligible_cnts).apply(
+            lambda x: x if isinstance(x, dict) else {}
+        )
+        grouped["competitor_mapped_counts"] = grouped["sub_category_name"].map(comp_mapped_cnts).apply(
             lambda x: x if isinstance(x, dict) else {}
         )
 
@@ -789,6 +1469,7 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         }
 
     def get_executive_dashboard(self, filters: dict = None) -> dict:
+        # Product-level aggregate — unaffected by the competitor price fallback.
         df = self._apply_filters(self._df, filters)
 
         # ─── KPIs ────────────────────────────────────────────────────
@@ -831,13 +1512,21 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         }
 
         # ─── Per-Competitor PI ────────────────────────────────────────
+        # Mapping Coverage = mapped (per competitor) / total active (same for all competitors)
+        # - total_active: ALL unique products in dataset (SAME for all competitors)
+        # - mapped_products: products with is_mapped=True for THIS competitor (DIFFERENT per competitor)
+        total_active_products = int(df["product_id"].nunique())
+        # Eligible (top-80% revenue head) count — denominator for Utilization (used/eligible)
+        eligible_active_products = int(df.drop_duplicates("product_id")["eligible_product"].fillna(False).astype(bool).sum())
+
         competitor_pi = []
         if "competitor_name" in df.columns:
             for comp, grp in df.groupby("competitor_name"):
                 if pd.isna(comp):
                     continue
                 used_grp = grp[grp["used_product"] == True]
-                mapped_cnt = int(grp[grp["sale_PI"].notna()]["product_id"].nunique())
+                # Mapped count: products with is_mapped=True for THIS competitor (different per competitor)
+                mapped_cnt = int(grp[grp["is_mapped"] == True]["product_id"].nunique())
                 bpi = None
                 if not used_grp.empty:
                     qty_sum = used_grp["avg_daily_quantity"].sum()
@@ -845,14 +1534,13 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                         bpi = round(
                             (used_grp["sale_PI"] * used_grp["avg_daily_quantity"]).sum() / qty_sum, 4
                         )
-                eligible_cnt = int(grp[grp["eligible_product"] == True]["product_id"].nunique())
                 used_cnt = int(grp[grp["used_product"] == True]["product_id"].nunique())
                 competitor_pi.append({
                     "competitor_name": str(comp),
                     "blended_pi": bpi,
                     "pi_deviation": round(bpi - 1, 4) if bpi is not None else None,
                     "mapped_products": mapped_cnt,
-                    "eligible_products": eligible_cnt,
+                    "eligible_products": eligible_active_products,  # eligible head → Utilization = used/eligible
                     "used_products": used_cnt,
                 })
             competitor_pi.sort(key=lambda x: (x["blended_pi"] or 0), reverse=True)
@@ -863,17 +1551,32 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             for comp, grp in df.groupby("competitor_name"):
                 if pd.isna(comp):
                     continue
-                grp_u = grp.drop_duplicates("product_id")
-                counts = grp_u["classification"].value_counts().to_dict()
-                mapped_not_pl = int(counts.get("Mapped - Not PL", 0))
-                mapped_pl = int(counts.get("Mapped - PL", 0))
-                pot_not_pl = int(counts.get("Not Mapped - Not PL - Potential Match", 0))
-                pot_pl = int(counts.get("Not Mapped - PL - Potential Match", 0))
-                no_pot_not_pl = int(counts.get("Not Mapped - Not PL - No Potential Match", 0))
-                no_pot_pl = int(counts.get("Not Mapped - PL - No Potential Match", 0))
-                total = mapped_not_pl + mapped_pl + pot_not_pl + pot_pl + no_pot_not_pl + no_pot_pl
+                # mapped/not-mapped split driven by is_mapped (same definition as
+                # Blended PI by competitor), NOT the classification string — the two
+                # disagree in the source data and is_mapped is the source of truth.
+                # PL/Not-PL from the classification token; not-mapped reasons counted
+                # only among is_mapped=False. So mapped_not_pl+mapped_pl == mapped_products
+                # and the donut is internally consistent and matches that table.
+                gu = grp.drop_duplicates("product_id")
+                cls = gu["classification"].fillna("")
+                is_m = gu["is_mapped"] == True
+                not_m = ~is_m
+                not_pl = cls.str.contains("Not PL", na=False)
+                mapped_not_pl = int((is_m & not_pl).sum())
+                mapped_pl = int((is_m & ~not_pl).sum())
+                pot_not_pl = int((not_m & (cls == "Not Mapped - Not PL - Potential Match")).sum())
+                pot_pl = int((not_m & (cls == "Not Mapped - PL - Potential Match")).sum())
+                no_pot_not_pl = int((not_m & (cls == "Not Mapped - Not PL - No Potential Match")).sum())
+                no_pot_pl = int((not_m & (cls == "Not Mapped - PL - No Potential Match")).sum())
+                no_match_not_pl = int((not_m & (cls == "Not Mapped - Not PL - No Match")).sum())
+                no_match_pl = int((not_m & (cls == "Not Mapped - PL - No Match")).sum())
+                total = (mapped_not_pl + mapped_pl + pot_not_pl + pot_pl
+                         + no_pot_not_pl + no_pot_pl + no_match_not_pl + no_match_pl)
                 mapped_total = mapped_not_pl + mapped_pl
                 potential_total = pot_not_pl + pot_pl
+                # No-Match (master-data decided unmappable) excluded from reach denominator
+                reachable = total - (no_match_not_pl + no_match_pl)
+                mapped_products = mapped_total  # = is_mapped count, by construction above
                 mapping_progress.append({
                     "competitor_name": str(comp),
                     "mapped_not_pl": mapped_not_pl,
@@ -882,9 +1585,12 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                     "potential_pl": pot_pl,
                     "no_potential_not_pl": no_pot_not_pl,
                     "no_potential_pl": no_pot_pl,
+                    "no_match_not_pl": no_match_not_pl,
+                    "no_match_pl": no_match_pl,
                     "total": total,
-                    "mapped_pct": round(mapped_total / total * 100, 1) if total > 0 else 0.0,
-                    "potential_reach_pct": round((mapped_total + potential_total) / total * 100, 1) if total > 0 else 0.0,
+                    "mapped_products": mapped_products,
+                    "mapped_pct": round(mapped_products / total * 100, 1) if total > 0 else 0.0,
+                    "potential_reach_pct": round((mapped_total + potential_total) / reachable * 100, 1) if reachable > 0 else 0.0,
                 })
             mapping_progress.sort(key=lambda x: x["mapped_pct"], reverse=True)
 
@@ -893,6 +1599,7 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             "mapped_not_pl": 0, "mapped_pl": 0,
             "not_mapped_not_pl_potential": 0, "not_mapped_not_pl_no_potential": 0,
             "not_mapped_pl_potential": 0, "not_mapped_pl_no_potential": 0,
+            "not_mapped_not_pl_no_match": 0, "not_mapped_pl_no_match": 0,
         }
         if "classification" in df.columns:
             counts = df["classification"].value_counts().to_dict()
@@ -903,6 +1610,8 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 "not_mapped_not_pl_no_potential": int(counts.get("Not Mapped - Not PL - No Potential Match", 0)),
                 "not_mapped_pl_potential": int(counts.get("Not Mapped - PL - Potential Match", 0)),
                 "not_mapped_pl_no_potential": int(counts.get("Not Mapped - PL - No Potential Match", 0)),
+                "not_mapped_not_pl_no_match": int(counts.get("Not Mapped - Not PL - No Match", 0)),
+                "not_mapped_pl_no_match": int(counts.get("Not Mapped - PL - No Match", 0)),
             }
 
         return {
@@ -974,6 +1683,10 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             "competitors": sorted([v for v in df["competitor_name"].unique().tolist() if v is not None]) if "competitor_name" in df.columns else [],
         }
 
+    def get_fp_options(self) -> list[str]:
+        """Return sorted list of distinct FP names from loaded data."""
+        return sorted(self._df["fp_name"].dropna().unique().tolist())
+
     # ─── Competitor Products tab ─────────────────────────────────
 
     def _load_competitor_products(self) -> pd.DataFrame:
@@ -987,7 +1700,16 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         t0 = time.time()
         job = self._client.query(query)
         rows = job.result()
-        df = pd.DataFrame([dict(row) for row in rows])
+        # Storage Read API (Arrow). date_as_object=True keeps DATE columns as
+        # datetime.date — downstream timeline grouping and .isoformat() depend
+        # on that exact dtype. Fall back to REST iterator if unavailable.
+        try:
+            arrow_tbl = rows.to_arrow(create_bqstorage_client=True)
+        except Exception as exc:
+            print(f"[BigQuery] Storage API unavailable ({exc}); using REST fallback")
+            arrow_tbl = rows.to_arrow()
+        df = arrow_tbl.to_pandas(date_as_object=True)
+        del arrow_tbl
         print(f"[BigQuery] Competitor products: {len(df)} rows in {time.time() - t0:.1f}s")
 
         if df.empty:
@@ -1003,20 +1725,37 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             if col in df.columns:
                 df[col] = df[col].fillna(False).astype(bool)
 
-        now = datetime.now().date()
+        df = self._derive_competitor_date_cols(df)
+        return df.reset_index(drop=True)
+
+    @staticmethod
+    def _derive_competitor_date_cols(df: pd.DataFrame) -> pd.DataFrame:
+        """Normalize the competitor date columns and (re)build the derived
+        `*_date` (datetime.date) + `days_since_crawl` columns.
+
+        Idempotent and Parquet-round-trip-safe: accepts the raw date columns as
+        datetime.date, datetime64, or ISO strings, and always leaves
+        `competitor_last_updated_day` / `bf_last_updated_day` as ISO strings with
+        matching `*_date` object columns (datetime.date) that downstream timeline
+        grouping and `.isoformat()` calls depend on. `days_since_crawl` is
+        recomputed relative to *today*, so it stays accurate across reloads.
+        """
+        now_ts = pd.Timestamp(datetime.now().date())
         for col in ["competitor_last_updated_day", "bf_last_updated_day"]:
             if col in df.columns:
-                df[f"{col}_date"] = df[col]  # keep raw date for timeline grouping
-                df[col] = df[col].apply(lambda x: x.isoformat() if pd.notna(x) else None)
+                parsed = pd.to_datetime(df[col], errors="coerce")
+                # datetime.date objects (object dtype) — matches the BQ-load dtype
+                df[f"{col}_date"] = parsed.dt.date.where(parsed.notna(), None)
+                iso = parsed.dt.strftime("%Y-%m-%d")
+                df[col] = iso.where(parsed.notna(), None)
 
         if "competitor_last_updated_day_date" in df.columns:
-            df["days_since_crawl"] = df["competitor_last_updated_day_date"].apply(
-                lambda x: (now - x).days if pd.notna(x) else None
-            )
+            cdt = pd.to_datetime(df["competitor_last_updated_day_date"], errors="coerce")
+            days = (now_ts - cdt).dt.days
+            df["days_since_crawl"] = days.astype("object").where(days.notna(), None)
         else:
             df["days_since_crawl"] = None
-
-        return df.reset_index(drop=True)
+        return df
 
     def _apply_competitor_filters(self, df: pd.DataFrame, filters: dict = None) -> pd.DataFrame:
         if not filters:

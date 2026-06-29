@@ -11,24 +11,24 @@
       <div
         v-for="toast in toasts"
         :key="toast.id"
-        class="pointer-events-auto flex items-start gap-3 px-4 py-3 rounded-lg shadow-lg text-white max-w-[300px]"
+        class="pointer-events-auto flex items-start gap-3 px-4 py-3 rounded-xl shadow-toast text-white max-w-[300px]"
         :style="{ background: typeColors[toast.type] }"
       >
-        <span class="flex-shrink-0 mt-0.5 opacity-90" v-html="typeIcons[toast.type]"></span>
+        <component :is="typeIcons[toast.type]" class="w-4 h-4 flex-shrink-0 mt-0.5 opacity-90" />
         <div class="flex-1 min-w-0">
-          <div class="font-semibold text-[12px] leading-snug">{{ toast.title }}</div>
-          <div v-if="toast.message" class="text-[11px] mt-0.5 opacity-80">{{ toast.message }}</div>
+          <div class="font-semibold text-caption leading-snug">{{ toast.title }}</div>
+          <div v-if="toast.message" class="text-micro mt-0.5 opacity-80">{{ toast.message }}</div>
           <button
             v-if="toast.action"
-            class="mt-1.5 text-[11px] font-bold underline opacity-90 hover:opacity-100 transition-opacity"
+            class="mt-1.5 text-micro font-bold underline opacity-90 hover:opacity-100 transition-opacity"
             @click="toast.action.fn(); remove(toast.id)"
           >{{ toast.action.label }}</button>
         </div>
         <button
           @click="remove(toast.id)"
-          class="flex-shrink-0 opacity-60 hover:opacity-100 transition-opacity text-[16px] leading-none"
+          class="flex-shrink-0 opacity-60 hover:opacity-100 transition-opacity"
           aria-label="Dismiss"
-        >&times;</button>
+        ><X class="w-4 h-4" /></button>
       </div>
     </TransitionGroup>
   </Teleport>
@@ -36,10 +36,12 @@
 
 <script setup>
 import { ref } from 'vue'
+import { CheckCircle2, XCircle, AlertTriangle, Info, X } from 'lucide-vue-next'
 
 const toasts = ref([])
 let nextId = 0
 
+// Semantic status hues (success/error/warning/info) — not the brand accent.
 const typeColors = {
   success: '#059669',
   error:   '#DC2626',
@@ -48,10 +50,10 @@ const typeColors = {
 }
 
 const typeIcons = {
-  success: '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
-  error:   '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
-  warning: '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>',
-  info:    '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
+  success: CheckCircle2,
+  error:   XCircle,
+  warning: AlertTriangle,
+  info:    Info,
 }
 
 function add(type, title, message = '', duration = 3000, action = null) {

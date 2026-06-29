@@ -14,7 +14,7 @@
     <Transition name="dropdown">
       <div
         v-if="open"
-        class="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-grey-200 z-50 min-w-[220px] max-w-[320px]"
+        class="absolute top-full left-0 mt-1 bg-white rounded-xl shadow-dropdown ring-1 ring-grey-200/70 border border-grey-200 z-50 min-w-[220px] max-w-[320px]"
       >
         <!-- Search input -->
         <div class="p-2 border-b border-grey-100">

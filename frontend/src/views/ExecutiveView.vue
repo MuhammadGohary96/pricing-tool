@@ -4,20 +4,20 @@
     <template #skeleton>
       <div class="flex flex-col gap-4 animate-fade-in-up">
         <div class="grid grid-cols-3 gap-3">
-          <div v-for="i in 3" :key="i" class="bg-white rounded-lg shadow-card px-4 py-3">
+          <div v-for="i in 3" :key="i" class="bg-white rounded-xl shadow-panel px-4 py-3">
             <div class="skeleton-shimmer h-3 w-24 rounded mb-2"></div>
             <div class="skeleton-shimmer h-8 w-20 rounded mb-1"></div>
             <div class="skeleton-shimmer h-2.5 w-32 rounded"></div>
           </div>
         </div>
-        <div class="bg-white rounded-lg shadow-card p-4">
+        <div class="bg-white rounded-2xl shadow-panel p-4">
           <div class="skeleton-shimmer h-[200px] rounded"></div>
         </div>
         <div class="flex gap-4">
-          <div class="w-1/2 bg-white rounded-lg shadow-card p-4">
+          <div class="w-1/2 bg-white rounded-2xl shadow-panel p-4">
             <div class="skeleton-shimmer h-[240px] rounded"></div>
           </div>
-          <div class="w-1/2 bg-white rounded-lg shadow-card p-4">
+          <div class="w-1/2 bg-white rounded-2xl shadow-panel p-4">
             <div class="skeleton-shimmer h-[240px] rounded"></div>
           </div>
         </div>
@@ -26,84 +26,76 @@
 
     <div class="flex flex-col gap-4">
 
-      <!-- Header row -->
-      <div class="flex items-center justify-between">
-        <div>
-          <h1 class="text-heading font-bold text-grey-900">Pricing Intelligence</h1>
-          <p class="text-caption text-grey-400">Executive Dashboard · {{ today }}</p>
+      <!-- ─── Command header: identity + the verdict leadership scans for ── -->
+      <section v-if="kpis" class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden animate-fade-in-up">
+        <!-- Title band -->
+        <div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-6 lg:px-7 pt-6 pb-5 border-b border-grey-100">
+          <div class="min-w-0">
+            <h1 class="text-[1.75rem] leading-none font-semibold text-grey-900 tracking-tight">Executive overview</h1>
+            <p class="text-body text-grey-500 mt-2">Where Breadfast stands against the market this week, at a glance.</p>
+          </div>
+          <span
+            v-if="store.lastFetchedAt"
+            :title="syncTitle"
+            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-grey-50 ring-1 ring-grey-200/70 text-caption font-medium text-grey-600 shrink-0"
+          >
+            <span class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" aria-hidden="true"></span>
+            {{ syncLabel }}
+          </span>
         </div>
-        <span v-if="store.lastFetchedAt" class="text-micro text-grey-400 flex items-center gap-1">
-          <Clock class="w-3 h-3" />
-          Updated {{ formatTime(store.lastFetchedAt) }}
-        </span>
-      </div>
+
+        <!-- Verdict + subordinate stats -->
+        <div class="grid lg:grid-cols-[1.4fr_1fr]">
+          <div class="p-6 lg:p-7 lg:border-r border-grey-100">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="text-caption font-semibold uppercase tracking-wide text-grey-500">Blended price index</span>
+            </div>
+            <span class="font-mono font-black leading-[0.82] tabular-nums inline-flex items-start gap-1" style="font-size:52px" :class="piTextClass(kpis.blended_pi)">
+              <span v-if="kpis.blended_pi != null" class="text-[0.42em] mt-1">{{ piArrow(kpis.blended_pi) }}</span>
+              {{ kpis.blended_pi != null ? kpis.blended_pi.toFixed(2) : '—' }}
+            </span>
+            <p class="text-body font-semibold mt-3.5 max-w-[44ch]" :class="piTextClass(kpis.blended_pi)">{{ piInterpretation }}</p>
+            <p class="text-caption text-grey-500 mt-1 max-w-[48ch]">Quantity-weighted Breadfast price ÷ competitor price, across every tracked competitor.</p>
+          </div>
+
+          <!-- Subordinate stats -->
+          <dl class="grid grid-cols-2 gap-px bg-grey-100">
+            <div class="bg-white p-5 lg:p-6 flex flex-col justify-center gap-1.5">
+              <dt class="text-caption text-grey-500 font-medium">Active products</dt>
+              <dd class="font-mono text-[26px] font-bold text-grey-900 tabular-nums leading-none"><AnimatedNumber :value="kpis.total_products" /></dd>
+              <dd class="text-micro text-grey-500">{{ kpis.eligible_products?.toLocaleString() }} eligible ({{ kpis.eligible_pct }}%)</dd>
+            </div>
+            <div class="bg-white p-5 lg:p-6 flex flex-col justify-center gap-1.5">
+              <dt class="text-caption text-grey-500 font-medium">Competitors tracked</dt>
+              <dd class="font-mono text-[26px] font-bold text-grey-900 tabular-nums leading-none"><AnimatedNumber :value="competitorCount" /></dd>
+              <dd class="text-micro text-grey-500">with live price data</dd>
+            </div>
+          </dl>
+        </div>
+      </section>
 
       <!-- Definitions -->
-      <DefinitionsPanel :sections="definitions" storage-key="defs-executive" />
+      <DefinitionsPanel :sections="definitions" storage-key="defs-executive" class="animate-fade-in-up stagger-1" />
 
       <!-- Filters -->
-      <FilterBar :loading="store.loading" />
+      <FilterBar :loading="store.loading" hide-competitor class="animate-fade-in-up stagger-2" />
 
-      <!-- ─── KPI Cards ─────────────────────────────────────────────── -->
-      <div v-if="kpis" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+      <!-- Competitor visibility pills (left-aligned), same as Commercial -->
+      <CompetitorToggle
+        v-if="allCompetitors.length > 0"
+        :competitors="allCompetitors"
+        v-model="selectedCompetitors"
+        :default-limit="5"
+        class="animate-fade-in-up stagger-2"
+      />
 
-        <!-- 1. Overall Blended PI (bespoke card) -->
-        <div
-          class="bg-white rounded-lg shadow-card px-4 py-3 flex flex-col gap-1 card-interactive animate-fade-in-up border-l-[3px] border-brand-primary relative overflow-hidden kpi-card-wrap"
-        >
-          <div class="kpi-accent-bar"></div>
-          <div class="flex items-center justify-between">
-            <span class="text-caption text-grey-500 font-semibold uppercase tracking-wide">Overall Blended PI</span>
-            <div class="w-8 h-8 rounded-full bg-brand-50 flex items-center justify-center">
-              <Gauge class="w-4 h-4 text-brand-primary" />
-            </div>
-          </div>
-          <div class="flex items-baseline gap-2">
-            <span class="text-kpi font-black" :class="piTextClass(kpis.blended_pi)">
-              {{ kpis.blended_pi != null ? kpis.blended_pi.toFixed(4) : '—' }}
-            </span>
-            <!-- WoW trend badge -->
-            <span
-              v-if="wowPI"
-              class="inline-flex items-center gap-0.5 text-micro font-bold px-1.5 py-0.5 rounded"
-              :class="wowPI.delta > 0 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'"
-            >
-              {{ wowPI.delta > 0 ? '▲' : '▼' }} {{ Math.abs(wowPI.delta * 100).toFixed(1) }}% WoW
-            </span>
-          </div>
-          <div class="text-caption" :class="piTextClass(kpis.blended_pi)">{{ piInterpretation }}</div>
-          <!-- PI Sparkline -->
-          <svg v-if="sparklinePath" width="120" height="28" class="mt-1 opacity-50">
-            <polyline :points="sparklinePath" fill="none" :stroke="piToHex(kpis.blended_pi)" stroke-width="1.5" stroke-linejoin="round" />
-          </svg>
-        </div>
-
-        <!-- 2. Active Products -->
-        <KpiCard
-          :value="kpis.total_products"
-          label="Active Products"
-          :subtitle="`${kpis.eligible_products?.toLocaleString()} eligible (${kpis.eligible_pct}%)`"
-          :icon="Package"
-          icon-bg="bg-grey-100 text-grey-600"
-          :stagger-index="1"
-          :highlight="true"
-          :trend="wowUsed"
-        />
-
-        <!-- 3. Competitors Tracked -->
-        <KpiCard
-          :value="competitorCount"
-          label="Competitors Tracked"
-          subtitle="with live price data"
-          :icon="Users"
-          icon-bg="bg-blue-50 text-blue-600"
-          :stagger-index="2"
-          :highlight="true"
-        />
+      <!-- PI legend — teaches "both tails bad" before the PI-colored tables below -->
+      <div class="flex justify-end animate-fade-in-up stagger-3">
+        <PILegend />
       </div>
 
       <!-- ─── Row 1: Competitor PI Table + Classification + Category PI ── -->
-      <div class="flex flex-col xl:flex-row gap-4">
+      <div class="flex flex-col xl:flex-row gap-4 animate-fade-in-up stagger-3">
         <div class="xl:w-[60%] min-w-0">
           <CompetitorPITable
             :data="enrichedCompetitorPI"
@@ -117,17 +109,17 @@
             @navigate="navigateToAction"
           />
           <!-- Category PI -->
-          <div v-if="store.categoryPerformance?.length" class="bg-white rounded-lg shadow-card overflow-hidden">
+          <div v-if="store.categoryPerformance?.length" class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden">
             <div class="px-4 py-3 border-b border-grey-100 flex items-center gap-2">
               <Layers class="w-4 h-4 text-brand-primary" />
-              <span class="text-subheading font-bold text-grey-900">Category PI</span>
+              <span class="text-subheading font-bold text-grey-900 tracking-tightish">Category PI</span>
               <span class="text-caption text-grey-400 ml-1">click to explore</span>
             </div>
             <div class="flex flex-wrap gap-2 px-4 py-3">
               <button
                 v-for="cat in store.categoryPerformance"
                 :key="cat.category_name"
-                class="flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all hover:shadow-card-hover"
+                class="flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all hover:shadow-panel-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-lightest"
                 :class="deviationBorderClass(cat.pi_deviation)"
                 @click="navigateToCategory(cat.category_name)"
               >
@@ -147,29 +139,42 @@
         </div>
       </div>
 
+      <!-- ─── Geographic exposure: blended PI by FP × competitor ── -->
+      <GeographicExposure
+        v-if="geoData"
+        :data="geoData"
+        class="animate-fade-in-up stagger-4"
+        @select-fp="onSelectFp"
+      />
+
       <!-- ─── Row 2: Mapping Progress (full width) ──────────────── -->
-      <MappingProgressChart :data="store.dashboard?.mapping_progress || []" />
+      <MappingProgressChart :data="store.dashboard?.mapping_progress || []" class="animate-fade-in-up stagger-4" />
 
     </div>
   </PageShell>
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { watchDebounced } from '@vueuse/core'
 import { useFiltersStore } from '../stores/filters'
 import { useExecutiveStore } from '../stores/executive'
+import { dataApi } from '../api/client'
 import KpiCard from '../components/layout/KpiCard.vue'
 import FilterBar from '../components/layout/FilterBar.vue'
+import CompetitorToggle from '../components/commercial/CompetitorToggle.vue'
 import CompetitorPITable from '../components/executive/CompetitorPITable.vue'
 import MappingProgressChart from '../components/executive/MappingProgressChart.vue'
 import ClassificationBreakdown from '../components/executive/ClassificationBreakdown.vue'
+import GeographicExposure from '../components/executive/GeographicExposure.vue'
 import PageShell from '../components/shared/PageShell.vue'
 import DefinitionsPanel from '../components/shared/DefinitionsPanel.vue'
-import { piTextClass, piToHex } from '../utils/piColor'
+import { piTextClass, piBgClass, piToHex, piTreatment, piArrow } from '../utils/piColor'
+import PILegend from '../components/shared/PILegend.vue'
+import AnimatedNumber from '../components/shared/AnimatedNumber.vue'
 import {
-  Gauge, Package, Users, Clock, Layers,
+  Gauge, Package, Users, Clock, Layers, ArrowUp, ArrowDown,
   Scale, AlertTriangle, Target, CheckCircle, BarChart2 as BarChart2Icon, PieChart,
 } from 'lucide-vue-next'
 
@@ -177,7 +182,62 @@ const router = useRouter()
 const filters = useFiltersStore()
 const store = useExecutiveStore()
 
-onMounted(() => store.fetchAll())
+// Header badge reflects the backend's last BigQuery sync, NOT the client fetch
+// time. Two distinct backend timestamps:
+//   data_synced_at  — when the data ITSELF was last pulled/changed (real freshness)
+//   last_checked_at — when freshness was last verified (advances even on a
+//                     no-change check, so it is NOT the same as a real sync)
+// The label uses data_synced_at so a mere re-check is never mislabeled as a sync;
+// the tooltip shows both. We re-poll so that if new data lands while the page is
+// open, data_synced_at advances and the badge updates instead of going stale.
+const dataSyncedAt = ref(null)
+const lastCheckedAt = ref(null)
+const now = ref(Date.now())
+let clockTimer = null
+let pollTimer = null
+
+async function refreshSyncTime() {
+  try {
+    const { data } = await dataApi.getStatus()
+    dataSyncedAt.value = data.data_synced_at ? new Date(data.data_synced_at) : null
+    lastCheckedAt.value = data.last_checked_at ? new Date(data.last_checked_at) : null
+  } catch { /* non-critical — badge falls back to a generic label */ }
+}
+
+function ago(ms) {
+  const diffMin = Math.floor((now.value - ms) / 60000)
+  if (diffMin < 1) return 'just now'
+  if (diffMin === 1) return '1 min ago'
+  if (diffMin < 60) return `${diffMin} mins ago`
+  const h = Math.floor(diffMin / 60)
+  if (h < 24) return h === 1 ? '1 hr ago' : `${h} hrs ago`
+  const days = Math.floor(h / 24)
+  return days === 1 ? '1 day ago' : `${days} days ago`
+}
+
+const syncLabel = computed(() =>
+  dataSyncedAt.value ? `Synced ${ago(dataSyncedAt.value.getTime())}` : 'Data synced'
+)
+
+const syncTitle = computed(() => {
+  const parts = []
+  if (dataSyncedAt.value) parts.push(`Data last synced from BigQuery: ${dataSyncedAt.value.toLocaleString()}`)
+  if (lastCheckedAt.value) parts.push(`Freshness last checked: ${lastCheckedAt.value.toLocaleString()}`)
+  return parts.length ? parts.join(' · ') : 'Data sync status'
+})
+
+onMounted(() => {
+  store.fetchAll()
+  refreshSyncTime()
+  // Advance the relative clock often so "X mins ago" stays accurate, but only
+  // re-poll the backend status every 10 minutes (it changes at most hourly).
+  clockTimer = setInterval(() => { now.value = Date.now() }, 60000)
+  pollTimer = setInterval(refreshSyncTime, 600000)
+})
+onUnmounted(() => {
+  if (clockTimer) { clearInterval(clockTimer); clockTimer = null }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+})
 
 watchDebounced(
   () => [
@@ -187,7 +247,9 @@ watchDebounced(
     filters.subcatTier,
     filters.brand,
     filters.competitor,
+    filters.fpNames,
     filters.includePrivateLabel,
+    filters.priceFallback,
   ],
   async () => {
     try {
@@ -199,8 +261,40 @@ watchDebounced(
   { debounce: 400, deep: true }
 )
 
+// Click an FP (summary or grid) → scope the whole Executive view to it.
+// filters.fpNames is watched above, so this refetches the dashboard + this panel.
+function onSelectFp(fp) {
+  filters.setFilter('fpNames', [fp])
+}
+
 const kpis = computed(() => store.dashboard?.kpis ?? null)
 const competitorCount = computed(() => store.dashboard?.competitor_pi?.length ?? 0)
+
+// ─── Competitor visibility (client-side, same UX as Commercial) ──
+// Empty selection = show all. The pills filter the Competitor PI table and the
+// Geographic-exposure grid client-side; they don't change the backend query.
+const selectedCompetitors = ref([])
+const allCompetitors = computed(() => {
+  const set = new Set()
+  for (const r of store.dashboard?.competitor_pi || []) if (r.competitor_name) set.add(r.competitor_name)
+  for (const c of store.fpCompetitorPi?.competitors || []) set.add(c)
+  return [...set].sort()
+})
+function compVisible(name) {
+  return selectedCompetitors.value.length === 0 || selectedCompetitors.value.includes(name)
+}
+
+// Geographic-exposure data with the competitor selection applied.
+const geoData = computed(() => {
+  const d = store.fpCompetitorPi
+  if (!d) return null
+  if (selectedCompetitors.value.length === 0) return d
+  return {
+    ...d,
+    competitors: (d.competitors || []).filter(compVisible),
+    cells: (d.cells || []).filter(c => compVisible(c.competitor_name)),
+  }
+})
 const today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
 
 // ─── Week-over-Week helpers ─────────────────────────────────────
@@ -257,10 +351,12 @@ const enrichedCompetitorPI = computed(() => {
   const pi = store.dashboard?.competitor_pi || []
   const progress = store.dashboard?.mapping_progress || []
   const progressMap = Object.fromEntries(progress.map(p => [p.competitor_name, p]))
-  return pi.map(row => ({
-    ...row,
-    _mapping: progressMap[row.competitor_name] || null,
-  }))
+  return pi
+    .filter(row => compVisible(row.competitor_name))
+    .map(row => ({
+      ...row,
+      _mapping: progressMap[row.competitor_name] || null,
+    }))
 })
 
 // ─── Navigation helpers ─────────────────────────────────────────
@@ -277,37 +373,35 @@ function navigateToCategory(categoryName) {
 }
 
 // ─── Formatting helpers ─────────────────────────────────────────
-function formatTime(date) {
-  if (!date) return ''
-  const d = date instanceof Date ? date : new Date(date)
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-}
-
 function formatDeviation(dev) {
   if (dev == null) return '—'
   const sign = dev > 0 ? '+' : ''
   return `${sign}${(dev * 100).toFixed(1)}%`
 }
 
+// pi_deviation = sale_PI - 1, so PI = 1 + dev. Drive deviation chrome straight
+// from piColor so it follows the "both tails bad" orientation: pricier (dev > 0)
+// = warm, cheaper (dev < 0) = cool, near-parity = green.
+function _piFromDev(dev) {
+  return dev == null ? null : 1 + dev
+}
+
 function deviationTextClass(dev) {
-  if (dev == null) return 'text-grey-400'
-  if (dev > 0.005) return 'text-green-700'
-  if (dev < -0.005) return 'text-red-700'
-  return 'text-grey-500'
+  return piTextClass(_piFromDev(dev))
 }
 
 function deviationBgClass(dev) {
-  if (dev == null) return 'bg-grey-50'
-  if (dev > 0.005) return 'bg-green-50'
-  if (dev < -0.005) return 'bg-red-50'
-  return 'bg-grey-50'
+  return piBgClass(_piFromDev(dev))
 }
 
 function deviationBorderClass(dev) {
-  if (dev == null) return 'border-grey-200 bg-grey-50'
-  if (dev > 0.005) return 'border-green-200 bg-green-50 hover:border-green-400'
-  if (dev < -0.005) return 'border-red-200 bg-red-50 hover:border-red-400'
-  return 'border-grey-200 bg-grey-50 hover:border-grey-300'
+  const border = {
+    cheaper: 'border-blue-200 bg-blue-50 hover:border-blue-400',
+    pricier: 'border-orange-200 bg-orange-50 hover:border-orange-400',
+    parity: 'border-green-200 bg-green-50 hover:border-green-400',
+    none: 'border-grey-200 bg-grey-50 hover:border-grey-300',
+  }
+  return border[piTreatment(_piFromDev(dev)).dir]
 }
 
 // ─── Definitions ────────────────────────────────────────────────
@@ -315,8 +409,8 @@ const definitions = [
   {
     title: 'Key Metrics',
     items: [
-      { term: 'Blended PI', description: 'Weighted Price Index = Competitor price / BF price, weighted by daily sales quantity. PI > 1 means BF is MORE EXPENSIVE. PI < 1 means BF is cheaper.', icon: Scale },
-      { term: 'Eligible Products', description: 'Products in the top 80% of revenue within their subcategory — worth tracking competitively.', icon: Target },
+      { term: 'Blended PI', description: 'Weighted Price Index = BF price ÷ Competitor price, weighted by daily sales quantity. PI > 1 means BF is more expensive. PI < 1 means BF is cheaper.', icon: Scale },
+      { term: 'Eligible Products', description: 'Products in the top 80% of revenue within their subcategory, worth tracking competitively.', icon: Target },
       { term: 'Used Products', description: 'Eligible products matched to a competitor with a recently updated price. These feed the Blended PI calculation.', icon: CheckCircle },
       { term: 'Mapped', description: 'Products successfully matched to a competitor equivalent. Not PL = non-private-label; PL = Breadfast own-brand.', icon: AlertTriangle },
     ],
@@ -332,17 +426,3 @@ const definitions = [
 ]
 </script>
 
-<style scoped>
-.kpi-accent-bar {
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 3px;
-  background: #a3007c;
-  border-radius: 8px 8px 0 0;
-  opacity: 0;
-  transition: opacity 0.2s;
-}
-.kpi-card-wrap:hover .kpi-accent-bar {
-  opacity: 1;
-}
-</style>

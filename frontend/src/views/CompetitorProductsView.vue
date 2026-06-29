@@ -1,10 +1,16 @@
 <template>
   <PageShell :loading="store.loading" :error="store.error" @retry="store.fetchAll()">
     <div class="flex flex-col gap-4">
+      <!-- ─── Command header ── -->
+      <section class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 px-6 lg:px-7 py-6 animate-fade-in-up">
+        <h1 class="text-[1.75rem] leading-none font-semibold text-grey-900 tracking-tight">Competitor catalog</h1>
+        <p class="text-body text-grey-500 mt-2 max-w-[62ch]">Crawl coverage, price freshness, and the mapping that connects Breadfast products to each competitor.</p>
+      </section>
+
       <DefinitionsPanel :sections="definitions" storage-key="defs-competitor-products" />
 
       <!-- Local Filters -->
-      <div class="bg-white rounded-lg shadow-card px-4 py-3 flex items-center gap-3 flex-wrap">
+      <div class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 px-4 py-3 flex items-center gap-3 flex-wrap">
         <!-- Multi-select: Competitors -->
         <div class="relative" ref="compDropdownRef">
           <button
@@ -15,7 +21,7 @@
             <span v-else class="truncate max-w-[160px]">{{ store.competitorFilter.length }} selected</span>
             <ChevronDown class="w-3.5 h-3.5 text-grey-400 ml-auto shrink-0" />
           </button>
-          <div v-if="compDropdownOpen" class="absolute z-20 mt-1 bg-white border border-grey-200 rounded-lg shadow-lg w-56 max-h-64 flex flex-col">
+          <div v-if="compDropdownOpen" class="absolute z-20 mt-1 bg-white border border-grey-200 rounded-xl shadow-dropdown ring-1 ring-grey-200/70 w-56 max-h-64 flex flex-col">
             <div class="overflow-y-auto flex-1 p-2 space-y-0.5">
               <label
                 v-for="c in store.filterOptions.competitors"
@@ -44,7 +50,7 @@
             <span v-else class="truncate max-w-[160px]">L1: {{ store.categoryL1Filter.length }} sel.</span>
             <ChevronDown class="w-3.5 h-3.5 text-grey-400 ml-auto shrink-0" />
           </button>
-          <div v-if="catDropdownOpen" class="absolute z-20 mt-1 bg-white border border-grey-200 rounded-lg shadow-lg w-56 max-h-64 flex flex-col">
+          <div v-if="catDropdownOpen" class="absolute z-20 mt-1 bg-white border border-grey-200 rounded-xl shadow-dropdown ring-1 ring-grey-200/70 w-56 max-h-64 flex flex-col">
             <div class="overflow-y-auto flex-1 p-2 space-y-0.5">
               <label
                 v-for="c in store.filterOptions.categories_l1"
@@ -72,7 +78,7 @@
             <span v-else class="truncate max-w-[160px]">L2: {{ store.categoryL2Filter.length }} sel.</span>
             <ChevronDown class="w-3.5 h-3.5 text-grey-400 ml-auto shrink-0" />
           </button>
-          <div v-if="catL2DropdownOpen" class="absolute z-20 mt-1 bg-white border border-grey-200 rounded-lg shadow-lg w-56 max-h-64 flex flex-col">
+          <div v-if="catL2DropdownOpen" class="absolute z-20 mt-1 bg-white border border-grey-200 rounded-xl shadow-dropdown ring-1 ring-grey-200/70 w-56 max-h-64 flex flex-col">
             <div class="overflow-y-auto flex-1 p-2 space-y-0.5">
               <label
                 v-for="c in store.filterOptions.categories_l2"
@@ -100,7 +106,7 @@
             <span v-else class="truncate max-w-[160px]">L3: {{ store.categoryL3Filter.length }} sel.</span>
             <ChevronDown class="w-3.5 h-3.5 text-grey-400 ml-auto shrink-0" />
           </button>
-          <div v-if="catL3DropdownOpen" class="absolute z-20 mt-1 bg-white border border-grey-200 rounded-lg shadow-lg w-56 max-h-64 flex flex-col">
+          <div v-if="catL3DropdownOpen" class="absolute z-20 mt-1 bg-white border border-grey-200 rounded-xl shadow-dropdown ring-1 ring-grey-200/70 w-56 max-h-64 flex flex-col">
             <div class="overflow-y-auto flex-1 p-2 space-y-0.5">
               <label
                 v-for="c in store.filterOptions.categories_l3"

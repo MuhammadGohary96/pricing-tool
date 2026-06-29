@@ -89,15 +89,24 @@ class MockPricingDataService(PricingDataServiceInterface):
         random.seed(seed)
         np.random.seed(seed)
         self._df = self._generate_products()
+        self._global_df = self._aggregate_to_global(self._df)
         self._trend_data = self._generate_trend_data()
         self._competitor_df = self._generate_competitor_products()
         unique_products = self._df["product_id"].nunique()
-        print(f"[MockData] Generated {len(self._df)} rows "
-              f"({unique_products} products × {len(MOCK_COMPETITORS)} competitors) across "
+        print(f"[MockData] Generated {len(self._df)} rows (FP grain) "
+              f"({unique_products} products × {len(MOCK_COMPETITORS)} competitors × 3 FPs) across "
               f"{self._df['sub_category_name'].nunique()} subcategories")
+        print(f"[MockData] Pre-aggregated GLOBAL view: {len(self._global_df)} rows")
         print(f"[MockData] Generated {len(self._competitor_df)} competitor product rows")
 
     def _generate_products(self) -> pd.DataFrame:
+        # ── Step 0: FP list for multi-FP data generation ───────────────────────
+        MOCK_FPS = [
+            {"fp_id": "FP001", "fp_name": "New Cairo FP #1"},
+            {"fp_id": "FP002", "fp_name": "Maadi FP #1"},
+            {"fp_id": "FP003", "fp_name": "Sheikh Zayed City FP #1"},
+        ]
+
         # ── Step 1: Generate product-level base data ──────────────────────────
         base_rows = []
         product_id_counter = 10001
@@ -143,13 +152,17 @@ class MockPricingDataService(PricingDataServiceInterface):
                     })
                     product_id_counter += 1
 
-        # ── Step 2: Cross-join with competitors, generate per-competitor data ──
+        # ── Step 2: Cross-join with competitors AND FPs, generate per-competitor data ──
         rows = []
         for base in base_rows:
-            for comp in MOCK_COMPETITORS:
-                row = {**base, **comp}
+            for fp in MOCK_FPS:
+                for comp in MOCK_COMPETITORS:
+                    row = {**base, **fp, **comp}
 
-                has_pi = base["eligible_product"] and random.random() < 0.55
+                    has_pi = base["eligible_product"] and random.random() < 0.55
+                    is_recent_bf = random.random() < 0.85
+                    is_recent_comp = random.random() < 0.75
+                    is_mapped = has_pi
 
                 if has_pi:
                     pi_value = round(max(0.70, min(1.50, float(np.random.normal(1.05, 0.12)))), 4)
@@ -188,23 +201,27 @@ class MockPricingDataService(PricingDataServiceInterface):
                 else:
                     action_type = "Complete"
 
-                row.update({
-                    "competitor_sale_price": comp_sale,
-                    "competitor_regular_price": comp_regular,
-                    "min_competitor_sale_price": min_comp,
-                    "max_competitor_sale_price": max_comp,
-                    "sale_PI": pi_value,
-                    "has_PI": has_pi,
-                    "competitor_price_updated_at": comp_updated.isoformat() if comp_updated else None,
-                    "updated": updated,
-                    "similarity_score": sim_score,
-                    "match_potential": match_pot,
-                    "used_product": used,
-                    "action_type": action_type,
-                    "competitor_product_name": competitor_product_name,
-                    "match_potential_product_name": match_potential_name,
-                })
-                rows.append(row)
+                    row.update({
+                        "competitor_sale_price": comp_sale,
+                        "min_competitor_sale_price": min_comp,
+                        "max_competitor_sale_price": max_comp,
+                        "sale_PI": pi_value,
+                        "has_PI": has_pi,
+                        "competitor_price_updated_at": comp_updated.isoformat() if comp_updated else None,
+                        "updated": updated,
+                        "similarity_score": sim_score,
+                        "match_potential": match_pot,
+                        "used_product": used,
+                        "action_type": action_type,
+                        "competitor_product_name": competitor_product_name,
+                        "match_potential_product_name": match_potential_name,
+                        "is_recent_breadfast": is_recent_bf,
+                        "is_recent_competitor": is_recent_comp,
+                        "prices_recently_updated": is_recent_bf and is_recent_comp,
+                        "is_mapped": is_mapped,
+                        "competitor_product_id": f"COMP-{comp['competitor_id']}-{product_id_counter}" if has_pi else None,
+                    })
+                    rows.append(row)
 
         df = pd.DataFrame(rows)
 
@@ -314,10 +331,194 @@ class MockPricingDataService(PricingDataServiceInterface):
             return df[df[column].isin([v.strip() for v in value.split(",")])]
         return df[df[column] == value]
 
+    def _aggregate_to_global(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Collapse (product, fp, competitor) → (product, competitor).
+
+        Price aggregation rules:
+        - BF: Modal price from is_recent_breadfast=TRUE rows.
+        - Competitor: Modal of FRESH observations; fall back to modal of ALL
+          observations if no fresh; NULL if no observations at all.
+
+        action_type is RECOMPUTED from aggregated state.
+        """
+        # 1. Modal BF sale price — from recent BF rows
+        bf_recent = df[df.get("is_recent_breadfast", pd.Series([False] * len(df))) == True]
+        if len(bf_recent) > 0:
+            bf_modal = (
+                bf_recent.groupby("product_id")["bf_sale_price"]
+                .agg(lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else None)
+                .rename("bf_sale_price_modal")
+            )
+        else:
+            bf_modal = pd.Series(dtype=float, name="bf_sale_price_modal")
+
+        # 2. Competitor prices: rows with any observation
+        if "competitor_sale_price" in df.columns:
+            comp_obs = df[df["competitor_sale_price"].notna()]
+        else:
+            comp_obs = df.iloc[0:0]
+        comp_fresh = comp_obs[comp_obs.get("is_recent_competitor", pd.Series([False] * len(comp_obs))) == True]
+
+        # 2a. Modal price from FRESH observations
+        if len(comp_fresh) > 0:
+            comp_fresh_modal = (
+                comp_fresh.groupby(["product_id", "competitor_id"])["competitor_sale_price"]
+                .agg(lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else None)
+                .rename("comp_price_fresh_modal")
+            )
+        else:
+            comp_fresh_modal = pd.Series(dtype=float, name="comp_price_fresh_modal")
+
+        # 2b. Modal price from ALL observations (fallback)
+        if len(comp_obs) > 0:
+            comp_all_modal = (
+                comp_obs.groupby(["product_id", "competitor_id"])["competitor_sale_price"]
+                .agg(lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else None)
+                .rename("comp_price_all_modal")
+            )
+        else:
+            comp_all_modal = pd.Series(dtype=float, name="comp_price_all_modal")
+
+        # 2c. Pair sets for freshness flags
+        has_fresh_pairs = set(
+            map(tuple, comp_fresh[["product_id", "competitor_id"]].drop_duplicates().values)
+        ) if len(comp_fresh) > 0 else set()
+        has_obs_pairs = set(
+            map(tuple, comp_obs[["product_id", "competitor_id"]].drop_duplicates().values)
+        ) if len(comp_obs) > 0 else set()
+
+        # 3. Product-level base fields
+        product_cols = [
+            "product_id", "product_name", "commercial_category_name",
+            "main_category_name", "sub_category_name", "brand_name",
+            "total_revenue", "avg_daily_quantity", "weighted_score",
+            "norm_revenue", "norm_quantity", "global_tier", "subcat_tier",
+            "eligible_product", "bf_regular_price",
+        ]
+        product_base = df.drop_duplicates("product_id")[[c for c in product_cols if c in df.columns]].copy()
+
+        # 4. Competitor-level base fields (recompute action_type, has_PI, updated, is_recent_*)
+        comp_cols_first = [
+            "product_id", "competitor_id", "competitor_name",
+            "competitor_product_id", "competitor_product_name",
+            "is_mapped", "match_potential", "similarity_score",
+            "match_potential_product_name",
+        ]
+        comp_base = df.drop_duplicates(["product_id", "competitor_id"])[
+            [c for c in comp_cols_first if c in df.columns]
+        ].copy()
+
+        # min/max competitor sale price spread across observed FPs
+        if "competitor_sale_price" in df.columns and len(comp_obs) > 0:
+            spread = comp_obs.groupby(["product_id", "competitor_id"])["competitor_sale_price"].agg(["min", "max"])
+            spread.columns = ["min_competitor_sale_price", "max_competitor_sale_price"]
+            comp_base = comp_base.merge(spread, on=["product_id", "competitor_id"], how="left")
+
+        # days_since_update: MIN (freshest) across observed FPs
+        if "days_since_update" in df.columns and len(comp_obs) > 0:
+            days_agg = (
+                comp_obs.groupby(["product_id", "competitor_id"])["days_since_update"]
+                .min().rename("days_since_update")
+            )
+            comp_base = comp_base.merge(days_agg, on=["product_id", "competitor_id"], how="left")
+
+        # 5. Merge
+        result = (
+            comp_base
+            .merge(product_base, on="product_id", how="left")
+            .merge(bf_modal, on="product_id", how="left")
+            .merge(comp_fresh_modal, on=["product_id", "competitor_id"], how="left")
+            .merge(comp_all_modal, on=["product_id", "competitor_id"], how="left")
+        )
+
+        # 6. Apply BF modal price
+        if "bf_sale_price_modal" in result.columns:
+            result["bf_sale_price"] = result["bf_sale_price_modal"]
+
+        # 7. Apply competitor price: prefer FRESH modal, fallback to ALL-OBS modal
+        if "comp_price_fresh_modal" in result.columns and "comp_price_all_modal" in result.columns:
+            result["competitor_sale_price"] = result["comp_price_fresh_modal"].fillna(
+                result["comp_price_all_modal"]
+            )
+
+        # 8. Aggregated freshness flags
+        pair_keys = list(zip(result["product_id"], result["competitor_id"]))
+        result["is_recent_competitor"] = [k in has_fresh_pairs for k in pair_keys]
+        result["has_PI"] = [k in has_obs_pairs for k in pair_keys]
+        result["is_recent_breadfast"] = result["bf_sale_price"].notna()
+        result["prices_recently_updated"] = (
+            result["is_recent_breadfast"] & result["is_recent_competitor"]
+        )
+        result["updated"] = result["prices_recently_updated"]
+
+        # 9. used_product = eligible AND has price AND fresh
+        if "eligible_product" in result.columns:
+            result["used_product"] = (
+                result["eligible_product"].fillna(False).astype(bool)
+                & result["has_PI"]
+                & result["prices_recently_updated"]
+            )
+
+        # 10. Recalculate PI
+        result["sale_PI"] = result["bf_sale_price"] / result["competitor_sale_price"]
+
+        # 11. Recompute action_type from aggregated state
+        is_mapped = (
+            result["is_mapped"].fillna(False).astype(bool)
+            if "is_mapped" in result.columns
+            else pd.Series([False] * len(result), index=result.index)
+        )
+        has_price = result["competitor_sale_price"].notna()
+        is_fresh = result["is_recent_competitor"].fillna(False).astype(bool) if hasattr(result["is_recent_competitor"], "fillna") else pd.Series(result["is_recent_competitor"], index=result.index).astype(bool)
+        sim = (
+            pd.to_numeric(result["similarity_score"], errors="coerce")
+            if "similarity_score" in result.columns
+            else pd.Series([None] * len(result), index=result.index)
+        )
+        ai_match = sim.fillna(0) >= 0.85
+
+        conditions = [
+            ~is_mapped & ~ai_match,
+            ~is_mapped & ai_match,
+            is_mapped & ~has_price,
+            is_mapped & has_price & is_fresh,
+            is_mapped & has_price & ~is_fresh,
+        ]
+        choices = [
+            "Needs Mapping",
+            "Review AI Match",
+            "Needs Price for FP",
+            "Complete",
+            "Needs Price Update",
+        ]
+        result["action_type"] = np.select(conditions, choices, default="Needs Mapping")
+
+        # 12. Drop intermediate columns
+        result = result.drop(
+            columns=["bf_sale_price_modal", "comp_price_fresh_modal", "comp_price_all_modal"],
+            errors="ignore",
+        )
+
+        return result.reset_index(drop=True)
+
     def _apply_filters(self, df: pd.DataFrame, filters: dict = None) -> pd.DataFrame:
+        # Ignore the passed df — choose source based on fp_names filter
+        fp_names = filters.get("fp_names") if filters else None
+
+        if fp_names:
+            # FP-scoped mode: filter raw df to selected FPs, then aggregate
+            names = [n.strip() for n in fp_names.split(",")]
+            scoped = self._df[self._df["fp_name"].isin(names)]
+            source = self._aggregate_to_global(scoped)
+        else:
+            # GLOBAL mode: use pre-computed aggregated df
+            source = self._global_df
+
         if not filters:
-            return df
-        filtered = df.copy()
+            return source
+
+        filtered = source.copy()
         if filters.get("main_category"):
             filtered = self._multi_match(filtered, "commercial_category_name", filters["main_category"])
         if filters.get("sub_category"):
@@ -421,6 +622,47 @@ class MockPricingDataService(PricingDataServiceInterface):
             lambda x: x if isinstance(x, dict) else {}
         )
         grouped["competitor_used_counts"] = grouped["sub_category_name"].map(comp_used).apply(
+            lambda x: x if isinstance(x, dict) else {}
+        )
+
+        # Per-competitor mapping coverage
+        # Total Active = ALL products in subcategory (SAME for all competitors)
+        # Mapped = products mapped to THIS specific competitor (DIFFERENT per competitor)
+
+        # Calculate total active products per subcategory (same for all competitors)
+        total_active_per_subcat = df.groupby("sub_category_name")["product_id"].nunique().to_dict()
+
+        # Get all (subcategory, competitor) combinations
+        all_combinations = df[["sub_category_name", "competitor_name"]].drop_duplicates()
+
+        # Calculate mapped products per (subcategory, competitor) - only where is_mapped=True
+        mapped_counts = df[df["is_mapped"] == True].groupby(
+            ["sub_category_name", "competitor_name"]
+        )["product_id"].nunique().reset_index(name="comp_mapped_count")
+
+        # Merge to include all combinations (even those with 0 mapped products)
+        comp_mapping = all_combinations.merge(
+            mapped_counts,
+            on=["sub_category_name", "competitor_name"],
+            how="left"
+        )
+
+        # Fill NaN (competitors with 0 mapped products) with 0
+        comp_mapping["comp_mapped_count"] = comp_mapping["comp_mapped_count"].fillna(0).astype(int)
+
+        # Add total active count (same for all competitors in a subcategory)
+        comp_mapping["comp_eligible_count"] = comp_mapping["sub_category_name"].map(total_active_per_subcat)
+
+        comp_eligible_cnts = comp_mapping.groupby("sub_category_name").apply(
+            lambda g: _build_comp_dict(g, "comp_eligible_count")
+        )
+        comp_mapped_cnts = comp_mapping.groupby("sub_category_name").apply(
+            lambda g: _build_comp_dict(g, "comp_mapped_count")
+        )
+        grouped["competitor_eligible_counts"] = grouped["sub_category_name"].map(comp_eligible_cnts).apply(
+            lambda x: x if isinstance(x, dict) else {}
+        )
+        grouped["competitor_mapped_counts"] = grouped["sub_category_name"].map(comp_mapped_cnts).apply(
             lambda x: x if isinstance(x, dict) else {}
         )
 
@@ -730,13 +972,17 @@ class MockPricingDataService(PricingDataServiceInterface):
             "needs_price_update": npu,
         }
 
+        # Mapping Coverage = mapped (per competitor) / total active (same for all competitors)
+        total_active_products = int(df["product_id"].nunique())
+
         competitor_pi = []
         if "competitor_name" in df.columns:
             for comp, grp in df.groupby("competitor_name"):
                 if pd.isna(comp):
                     continue
                 used_grp = grp[grp["used_product"] == True]
-                mapped_cnt = int(grp[grp["sale_PI"].notna()]["product_id"].nunique())
+                # Mapped count: products with is_mapped=True for THIS competitor
+                mapped_cnt = int(grp[grp["is_mapped"] == True]["product_id"].nunique())
                 bpi = None
                 if not used_grp.empty:
                     qty_sum = used_grp["avg_daily_quantity"].sum()
@@ -744,14 +990,13 @@ class MockPricingDataService(PricingDataServiceInterface):
                         bpi = round(
                             (used_grp["sale_PI"] * used_grp["avg_daily_quantity"]).sum() / qty_sum, 4
                         )
-                eligible_cnt = int(grp[grp["eligible_product"] == True]["product_id"].nunique())
                 used_cnt = int(grp[grp["used_product"] == True]["product_id"].nunique())
                 competitor_pi.append({
                     "competitor_name": str(comp),
                     "blended_pi": bpi,
                     "pi_deviation": round(bpi - 1, 4) if bpi is not None else None,
                     "mapped_products": mapped_cnt,
-                    "eligible_products": eligible_cnt,
+                    "eligible_products": total_active_products,  # Total active = same for all
                     "used_products": used_cnt,
                 })
             competitor_pi.sort(key=lambda x: (x["blended_pi"] or 0), reverse=True)
@@ -1021,6 +1266,10 @@ class MockPricingDataService(PricingDataServiceInterface):
             "action_types": ["Needs Mapping", "Review Match", "Needs Price Update", "Complete"],
             "brands": sorted([v for v in df["brand_name"].unique().tolist() if v is not None]),
         }
+
+    def get_fp_options(self) -> list[str]:
+        """Return sorted list of distinct FP names from loaded data."""
+        return sorted(self._df["fp_name"].dropna().unique().tolist())
 
     # ─── Competitor Products Tab ─────────────────────────────────
 

@@ -10,7 +10,11 @@ export const useFiltersStore = defineStore('filters', {
     actionType: [],
     brand: [],
     competitor: [],
+    fpNames: [],
     includePrivateLabel: true,
+    // Mode (not a scope filter): fill mapped-but-not-fresh prices with the
+    // product×competitor modal, flagged estimated. Default OFF.
+    priceFallback: false,
     categories: [],
     subcategories: [],
     globalTiers: [],
@@ -18,6 +22,7 @@ export const useFiltersStore = defineStore('filters', {
     actionTypes: [],
     brands: [],
     competitors: [],
+    fps: [],
   }),
 
   getters: {
@@ -30,7 +35,9 @@ export const useFiltersStore = defineStore('filters', {
       if (state.actionType.length) params.action_type = state.actionType.join(',')
       if (state.brand.length) params.brand = state.brand.join(',')
       if (state.competitor.length) params.competitor = state.competitor.join(',')
+      if (state.fpNames.length) params.fp_names = state.fpNames.join(',')
       if (!state.includePrivateLabel) params.exclude_private_label = true
+      if (state.priceFallback) params.price_fallback = true
       return params
     },
     hasActiveFilters(state) {
@@ -42,17 +49,20 @@ export const useFiltersStore = defineStore('filters', {
         state.actionType.length ||
         state.brand.length ||
         state.competitor.length ||
+        state.fpNames.length ||
         !state.includePrivateLabel
       )
     },
   },
 
   actions: {
-    async fetchFilterOptions() {
+    async fetchFilterOptions(force = false) {
       const CACHE_KEY = 'bf_filter_options'
       const CACHE_TTL = 15 * 60 * 1000 // 15 minutes
 
-      try {
+      // force=true bypasses the cache so newly-synced values (e.g. new FPs)
+      // show up immediately after a background BigQuery refresh.
+      if (!force) try {
         const cached = sessionStorage.getItem(CACHE_KEY)
         if (cached) {
           const { data, ts } = JSON.parse(cached)
@@ -63,6 +73,7 @@ export const useFiltersStore = defineStore('filters', {
             this.actionTypes = data.actionTypes
             this.brands = data.brands
             this.competitors = data.competitors
+            this.fps = data.fps || []
             await this.fetchSubcategories()
             return
           }
@@ -70,10 +81,11 @@ export const useFiltersStore = defineStore('filters', {
       } catch {}
 
       try {
-        const [catRes, tierRes, compRes] = await Promise.all([
+        const [catRes, tierRes, compRes, fpsRes] = await Promise.all([
           filtersApi.getCategories(),
           filtersApi.getTiers(),
           filtersApi.getCompetitors(),
+          filtersApi.getFPs(),
         ])
         this.categories = catRes.data.categories
         this.globalTiers = tierRes.data.global_tiers
@@ -81,6 +93,7 @@ export const useFiltersStore = defineStore('filters', {
         this.actionTypes = tierRes.data.action_types
         this.brands = tierRes.data.brands || []
         this.competitors = compRes.data.competitors || []
+        this.fps = fpsRes.data.fps || []
 
         try {
           sessionStorage.setItem(CACHE_KEY, JSON.stringify({
@@ -92,6 +105,7 @@ export const useFiltersStore = defineStore('filters', {
               actionTypes: this.actionTypes,
               brands: this.brands,
               competitors: this.competitors,
+              fps: this.fps,
             },
           }))
         } catch {}
@@ -128,7 +142,27 @@ export const useFiltersStore = defineStore('filters', {
       this.actionType = []
       this.brand = []
       this.competitor = []
+      this.fpNames = []
       this.includePrivateLabel = true
+      this.fetchSubcategories()
+    },
+
+    // Restore a full filter snapshot (state shape: camelCase arrays + flags).
+    // Scope filters absent from the snapshot reset to empty; the two flags reset
+    // to their defaults only when the snapshot explicitly carries them, so a
+    // partial preset (e.g. { globalTier: ['T1'] }) clears scopes without
+    // silently flipping privateLabel / priceFallback.
+    applySnapshot(snap = {}) {
+      this.mainCategory = Array.isArray(snap.mainCategory) ? [...snap.mainCategory] : []
+      this.subCategory = Array.isArray(snap.subCategory) ? [...snap.subCategory] : []
+      this.globalTier = Array.isArray(snap.globalTier) ? [...snap.globalTier] : []
+      this.subcatTier = Array.isArray(snap.subcatTier) ? [...snap.subcatTier] : []
+      this.actionType = Array.isArray(snap.actionType) ? [...snap.actionType] : []
+      this.brand = Array.isArray(snap.brand) ? [...snap.brand] : []
+      this.competitor = Array.isArray(snap.competitor) ? [...snap.competitor] : []
+      this.fpNames = Array.isArray(snap.fpNames) ? [...snap.fpNames] : []
+      this.includePrivateLabel = 'includePrivateLabel' in snap ? !!snap.includePrivateLabel : true
+      if ('priceFallback' in snap) this.priceFallback = !!snap.priceFallback
       this.fetchSubcategories()
     },
   },
