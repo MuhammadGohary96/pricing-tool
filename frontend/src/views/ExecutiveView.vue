@@ -36,10 +36,11 @@
           </div>
           <span
             v-if="store.lastFetchedAt"
-            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-grey-50 ring-1 ring-grey-200/70 text-caption font-medium text-grey-600 shrink-0 tabular-nums"
+            :title="syncTitle"
+            class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-grey-50 ring-1 ring-grey-200/70 text-caption font-medium text-grey-600 shrink-0"
           >
             <span class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" aria-hidden="true"></span>
-            Updated {{ formatTime(store.lastFetchedAt) }}
+            {{ syncLabel }}
           </span>
         </div>
 
@@ -77,7 +78,16 @@
       <DefinitionsPanel :sections="definitions" storage-key="defs-executive" class="animate-fade-in-up stagger-1" />
 
       <!-- Filters -->
-      <FilterBar :loading="store.loading" class="animate-fade-in-up stagger-2" />
+      <FilterBar :loading="store.loading" hide-competitor class="animate-fade-in-up stagger-2" />
+
+      <!-- Competitor visibility pills (left-aligned), same as Commercial -->
+      <CompetitorToggle
+        v-if="allCompetitors.length > 0"
+        :competitors="allCompetitors"
+        v-model="selectedCompetitors"
+        :default-limit="5"
+        class="animate-fade-in-up stagger-2"
+      />
 
       <!-- PI legend — teaches "both tails bad" before the PI-colored tables below -->
       <div class="flex justify-end animate-fade-in-up stagger-3">
@@ -131,8 +141,8 @@
 
       <!-- ─── Geographic exposure: blended PI by FP × competitor ── -->
       <GeographicExposure
-        v-if="store.fpCompetitorPi"
-        :data="store.fpCompetitorPi"
+        v-if="geoData"
+        :data="geoData"
         class="animate-fade-in-up stagger-4"
         @select-fp="onSelectFp"
       />
@@ -145,13 +155,15 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { watchDebounced } from '@vueuse/core'
 import { useFiltersStore } from '../stores/filters'
 import { useExecutiveStore } from '../stores/executive'
+import { dataApi } from '../api/client'
 import KpiCard from '../components/layout/KpiCard.vue'
 import FilterBar from '../components/layout/FilterBar.vue'
+import CompetitorToggle from '../components/commercial/CompetitorToggle.vue'
 import CompetitorPITable from '../components/executive/CompetitorPITable.vue'
 import MappingProgressChart from '../components/executive/MappingProgressChart.vue'
 import ClassificationBreakdown from '../components/executive/ClassificationBreakdown.vue'
@@ -170,7 +182,62 @@ const router = useRouter()
 const filters = useFiltersStore()
 const store = useExecutiveStore()
 
-onMounted(() => store.fetchAll())
+// Header badge reflects the backend's last BigQuery sync, NOT the client fetch
+// time. Two distinct backend timestamps:
+//   data_synced_at  — when the data ITSELF was last pulled/changed (real freshness)
+//   last_checked_at — when freshness was last verified (advances even on a
+//                     no-change check, so it is NOT the same as a real sync)
+// The label uses data_synced_at so a mere re-check is never mislabeled as a sync;
+// the tooltip shows both. We re-poll so that if new data lands while the page is
+// open, data_synced_at advances and the badge updates instead of going stale.
+const dataSyncedAt = ref(null)
+const lastCheckedAt = ref(null)
+const now = ref(Date.now())
+let clockTimer = null
+let pollTimer = null
+
+async function refreshSyncTime() {
+  try {
+    const { data } = await dataApi.getStatus()
+    dataSyncedAt.value = data.data_synced_at ? new Date(data.data_synced_at) : null
+    lastCheckedAt.value = data.last_checked_at ? new Date(data.last_checked_at) : null
+  } catch { /* non-critical — badge falls back to a generic label */ }
+}
+
+function ago(ms) {
+  const diffMin = Math.floor((now.value - ms) / 60000)
+  if (diffMin < 1) return 'just now'
+  if (diffMin === 1) return '1 min ago'
+  if (diffMin < 60) return `${diffMin} mins ago`
+  const h = Math.floor(diffMin / 60)
+  if (h < 24) return h === 1 ? '1 hr ago' : `${h} hrs ago`
+  const days = Math.floor(h / 24)
+  return days === 1 ? '1 day ago' : `${days} days ago`
+}
+
+const syncLabel = computed(() =>
+  dataSyncedAt.value ? `Synced ${ago(dataSyncedAt.value.getTime())}` : 'Data synced'
+)
+
+const syncTitle = computed(() => {
+  const parts = []
+  if (dataSyncedAt.value) parts.push(`Data last synced from BigQuery: ${dataSyncedAt.value.toLocaleString()}`)
+  if (lastCheckedAt.value) parts.push(`Freshness last checked: ${lastCheckedAt.value.toLocaleString()}`)
+  return parts.length ? parts.join(' · ') : 'Data sync status'
+})
+
+onMounted(() => {
+  store.fetchAll()
+  refreshSyncTime()
+  // Advance the relative clock often so "X mins ago" stays accurate, but only
+  // re-poll the backend status every 10 minutes (it changes at most hourly).
+  clockTimer = setInterval(() => { now.value = Date.now() }, 60000)
+  pollTimer = setInterval(refreshSyncTime, 600000)
+})
+onUnmounted(() => {
+  if (clockTimer) { clearInterval(clockTimer); clockTimer = null }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+})
 
 watchDebounced(
   () => [
@@ -202,6 +269,32 @@ function onSelectFp(fp) {
 
 const kpis = computed(() => store.dashboard?.kpis ?? null)
 const competitorCount = computed(() => store.dashboard?.competitor_pi?.length ?? 0)
+
+// ─── Competitor visibility (client-side, same UX as Commercial) ──
+// Empty selection = show all. The pills filter the Competitor PI table and the
+// Geographic-exposure grid client-side; they don't change the backend query.
+const selectedCompetitors = ref([])
+const allCompetitors = computed(() => {
+  const set = new Set()
+  for (const r of store.dashboard?.competitor_pi || []) if (r.competitor_name) set.add(r.competitor_name)
+  for (const c of store.fpCompetitorPi?.competitors || []) set.add(c)
+  return [...set].sort()
+})
+function compVisible(name) {
+  return selectedCompetitors.value.length === 0 || selectedCompetitors.value.includes(name)
+}
+
+// Geographic-exposure data with the competitor selection applied.
+const geoData = computed(() => {
+  const d = store.fpCompetitorPi
+  if (!d) return null
+  if (selectedCompetitors.value.length === 0) return d
+  return {
+    ...d,
+    competitors: (d.competitors || []).filter(compVisible),
+    cells: (d.cells || []).filter(c => compVisible(c.competitor_name)),
+  }
+})
 const today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
 
 // ─── Week-over-Week helpers ─────────────────────────────────────
@@ -258,10 +351,12 @@ const enrichedCompetitorPI = computed(() => {
   const pi = store.dashboard?.competitor_pi || []
   const progress = store.dashboard?.mapping_progress || []
   const progressMap = Object.fromEntries(progress.map(p => [p.competitor_name, p]))
-  return pi.map(row => ({
-    ...row,
-    _mapping: progressMap[row.competitor_name] || null,
-  }))
+  return pi
+    .filter(row => compVisible(row.competitor_name))
+    .map(row => ({
+      ...row,
+      _mapping: progressMap[row.competitor_name] || null,
+    }))
 })
 
 // ─── Navigation helpers ─────────────────────────────────────────
@@ -278,12 +373,6 @@ function navigateToCategory(categoryName) {
 }
 
 // ─── Formatting helpers ─────────────────────────────────────────
-function formatTime(date) {
-  if (!date) return ''
-  const d = date instanceof Date ? date : new Date(date)
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-}
-
 function formatDeviation(dev) {
   if (dev == null) return '—'
   const sign = dev > 0 ? '+' : ''

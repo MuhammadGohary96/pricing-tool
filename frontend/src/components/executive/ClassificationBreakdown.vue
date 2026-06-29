@@ -33,14 +33,15 @@
 
       <!-- Summary legend -->
       <div class="w-44 shrink-0 flex flex-col justify-center gap-2 pr-4">
-        <div v-for="item in legendItems" :key="item.label" class="flex items-center gap-2">
-          <div class="w-2.5 h-2.5 rounded-sm shrink-0" :style="{ background: item.color }"></div>
+        <div v-for="item in legendItems" :key="item.label" class="flex items-start gap-2">
+          <div class="w-2.5 h-2.5 rounded-sm shrink-0 mt-1" :style="{ background: item.color }"></div>
           <div class="min-w-0">
             <div class="text-micro text-grey-500 leading-tight">{{ item.label }}</div>
-            <div class="text-body font-bold text-grey-900">
+            <div class="text-body font-bold text-grey-900 leading-tight">
               {{ item.count.toLocaleString() }}
               <span class="text-micro font-normal text-grey-400">({{ item.pct }}%)</span>
             </div>
+            <div class="text-micro text-grey-500 leading-tight tabular-nums mt-0.5">{{ item.notPl.toLocaleString() }} non-PL · {{ item.pl.toLocaleString() }} PL</div>
           </div>
         </div>
       </div>
@@ -141,18 +142,30 @@ function pct(val) {
   return Math.round(val / total.value * 1000) / 10
 }
 
-const legendItems = computed(() => {
+// Each status tier split into its non-PL (competitor-comparable) and PL
+// (Breadfast own-brand) halves — surfaced in the legend and tooltip.
+const tierSplit = computed(() => {
   const v = d.value
-  const potential = (v.not_mapped_not_pl_potential || 0) + (v.not_mapped_pl_potential || 0)
-  const noPotential = (v.not_mapped_not_pl_no_potential || 0) + (v.not_mapped_pl_no_potential || 0)
-  const noMatch = (v.not_mapped_not_pl_no_match || 0) + (v.not_mapped_pl_no_match || 0)
-  const mapped = (v.mapped_not_pl || 0) + (v.mapped_pl || 0)
+  return {
+    'Mapped': { notPl: v.mapped_not_pl || 0, pl: v.mapped_pl || 0 },
+    'Potential match': { notPl: v.not_mapped_not_pl_potential || 0, pl: v.not_mapped_pl_potential || 0 },
+    'No likely match': { notPl: v.not_mapped_not_pl_no_potential || 0, pl: v.not_mapped_pl_no_potential || 0 },
+    'Confirmed no match': { notPl: v.not_mapped_not_pl_no_match || 0, pl: v.not_mapped_pl_no_match || 0 },
+  }
+})
+
+const legendItems = computed(() => {
+  const s = tierSplit.value
   return [
-    { label: 'Mapped', count: mapped, color: '#059669', pct: pct(mapped) },
-    { label: 'Potential match', count: potential, color: '#F59E0B', pct: pct(potential) },
-    { label: 'No likely match', count: noPotential, color: '#EF4444', pct: pct(noPotential) },
-    { label: 'Confirmed no match', count: noMatch, color: '#9CA3AF', pct: pct(noMatch) },
-  ]
+    { label: 'Mapped', color: '#059669' },
+    { label: 'Potential match', color: '#F59E0B' },
+    { label: 'No likely match', color: '#EF4444' },
+    { label: 'Confirmed no match', color: '#9CA3AF' },
+  ].map(t => {
+    const { notPl, pl } = s[t.label]
+    const count = notPl + pl
+    return { ...t, count, notPl, pl, pct: pct(count) }
+  })
 })
 
 const SEGMENT_DATA = computed(() => {
@@ -184,7 +197,11 @@ const chartOption = computed(() => {
       borderWidth: 0,
       textStyle: { color: '#fff', fontSize: 11, fontFamily: 'Geist, system-ui, sans-serif' },
       extraCssText: 'border-radius:10px;box-shadow:0 8px 24px rgba(40,16,48,0.18);padding:8px 10px;',
-      formatter: p => `${p.name}<br/><b>${p.value?.toLocaleString()}</b> (${((p.value / t) * 100).toFixed(1)}%)`,
+      formatter: p => {
+        const s = tierSplit.value[p.name]
+        const split = s ? `<br/><span style="opacity:.75">non-PL ${s.notPl.toLocaleString()} · PL ${s.pl.toLocaleString()}</span>` : ''
+        return `${p.name}<br/><b>${p.value?.toLocaleString()}</b> (${((p.value / t) * 100).toFixed(1)}%)${split}`
+      },
     },
     graphic: [
       {

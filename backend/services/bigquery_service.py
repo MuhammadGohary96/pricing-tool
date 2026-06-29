@@ -584,8 +584,9 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             # produces an estimate and drops out of the chip ranking (it cannot be
             # judged on a stale price).
             fresh_modal = _modal(fresh["competitor_sale_price"]) if not fresh.empty else None
-            # Stale modal — shown (flagged "outdated") ONLY for a pair with no fresh
-            # price anywhere; it is reference-only and never feeds any blend or chip.
+            # Cross-FP stale modal — only for a pair with NO fresh price anywhere. Used
+            # solely to fill the matrix (badged "outdated") when the estimate toggle is
+            # on; it never feeds the blend, used counts, or chips.
             stale_only = fresh.empty and not priced.empty
             stale_modal = _modal(priced["competitor_sale_price"]) if stale_only else None
             stale_days_s = priced["days_since_update"].dropna() if "days_since_update" in priced else pd.Series([], dtype=float)
@@ -651,25 +652,28 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                     cell["is_estimated"] = True
                     estimated_cells += 1
                     used_pis.append(fp_bf / est)
-                elif meta["stale_only"] and meta["stale_modal"]:
-                    # OUTDATED: the pair has NO fresh price anywhere — show the modal of
-                    # its stale prices for reference, flagged outdated, NEVER blended.
-                    out = meta["stale_modal"]
-                    cell["price"] = _s(out)
-                    cell["pi"] = _s(round(fp_bf / out, 4)) if fp_bf else None
-                    cell["days_since_update"] = meta["stale_days"]
-                    cell["state"] = "outdated"
-                    cell["is_outdated"] = True
-                    outdated_cells += 1
                 elif not priced.empty:
-                    # A stale observation exists at this FP for a pair that is fresh
-                    # elsewhere (estimate off / unavailable) — show it, flagged
-                    # outdated; never blended.
+                    # OUTDATED (observed): a competitor price is observed at THIS FP but
+                    # isn't fresh. Show the local stale modal, flagged outdated — never
+                    # blended. Always shown where actually observed, in either mode.
                     price = _modal(priced["competitor_sale_price"])
                     days = priced["days_since_update"].dropna()
                     cell["price"] = _s(price)
                     cell["days_since_update"] = int(days.min()) if not days.empty else None
                     cell["pi"] = _s(round(fp_bf / price, 4)) if (fp_bf and price) else None
+                    cell["state"] = "outdated"
+                    cell["is_outdated"] = True
+                    outdated_cells += 1
+                elif price_fallback and meta["stale_only"] and meta["stale_modal"]:
+                    # OUTDATED (filled, toggle ON only): the pair has only stale prices
+                    # anywhere. In fill mode, surface the cross-FP stale modal so the
+                    # matrix isn't sparse — but badge it outdated and keep it OUT of the
+                    # blend, used count, and chips. With the toggle OFF this branch is
+                    # skipped, so unobserved FPs stay "no_price" (no stale fill).
+                    out = meta["stale_modal"]
+                    cell["price"] = _s(out)
+                    cell["pi"] = _s(round(fp_bf / out, 4)) if fp_bf else None
+                    cell["days_since_update"] = meta["stale_days"]
                     cell["state"] = "outdated"
                     cell["is_outdated"] = True
                     outdated_cells += 1
@@ -700,6 +704,7 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                  if k not in ("fresh_modal", "stale_only", "stale_modal", "stale_days")}
                 for c in competitors
             ],
+
             "rows": rows,
             "summary": {
                 "blended_pi": blended,

@@ -146,5 +146,24 @@ export const useFiltersStore = defineStore('filters', {
       this.includePrivateLabel = true
       this.fetchSubcategories()
     },
+
+    // Restore a full filter snapshot (state shape: camelCase arrays + flags).
+    // Scope filters absent from the snapshot reset to empty; the two flags reset
+    // to their defaults only when the snapshot explicitly carries them, so a
+    // partial preset (e.g. { globalTier: ['T1'] }) clears scopes without
+    // silently flipping privateLabel / priceFallback.
+    applySnapshot(snap = {}) {
+      this.mainCategory = Array.isArray(snap.mainCategory) ? [...snap.mainCategory] : []
+      this.subCategory = Array.isArray(snap.subCategory) ? [...snap.subCategory] : []
+      this.globalTier = Array.isArray(snap.globalTier) ? [...snap.globalTier] : []
+      this.subcatTier = Array.isArray(snap.subcatTier) ? [...snap.subcatTier] : []
+      this.actionType = Array.isArray(snap.actionType) ? [...snap.actionType] : []
+      this.brand = Array.isArray(snap.brand) ? [...snap.brand] : []
+      this.competitor = Array.isArray(snap.competitor) ? [...snap.competitor] : []
+      this.fpNames = Array.isArray(snap.fpNames) ? [...snap.fpNames] : []
+      this.includePrivateLabel = 'includePrivateLabel' in snap ? !!snap.includePrivateLabel : true
+      if ('priceFallback' in snap) this.priceFallback = !!snap.priceFallback
+      this.fetchSubcategories()
+    },
   },
 })

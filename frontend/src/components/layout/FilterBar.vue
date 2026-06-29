@@ -38,13 +38,6 @@
       />
 
       <MultiSelect
-        :model-value="filters.actionType"
-        :options="filters.actionTypes"
-        label="Actions"
-        @update:model-value="filters.setFilter('actionType', $event)"
-      />
-
-      <MultiSelect
         :model-value="filters.brand"
         :options="filters.brands"
         label="Brands"
@@ -145,10 +138,6 @@
           {{ tier }}
           <button class="hover:text-brand-dark" @click="removeChip('globalTier', tier)"><X class="w-3 h-3" /></button>
         </span>
-        <span v-for="action in filters.actionType" :key="'act-' + action" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
-          {{ action }}
-          <button class="hover:text-brand-dark" @click="removeChip('actionType', action)"><X class="w-3 h-3" /></button>
-        </span>
         <span v-for="b in filters.brand" :key="'brand-' + b" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
           {{ b }}
           <button class="hover:text-brand-dark" @click="removeChip('brand', b)"><X class="w-3 h-3" /></button>
@@ -189,7 +178,7 @@ const linkCopied = ref(false)
 const expanded = ref(false)
 
 const activeCount = computed(() =>
-  [filters.mainCategory, filters.subCategory, filters.globalTier, filters.actionType, filters.brand, filters.competitor, filters.fpNames]
+  [filters.mainCategory, filters.subCategory, filters.globalTier, filters.brand, filters.competitor, filters.fpNames]
     .reduce((n, a) => n + a.length, 0) + (!filters.includePrivateLabel ? 1 : 0)
 )
 
