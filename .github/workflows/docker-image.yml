@@ -55,5 +55,5 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: |
-            VITE_GOOGLE_CLIENT_ID=${{ secrets.VITE_GOOGLE_CLIENT_ID }}
+          # No build args / secrets needed: the frontend reads GOOGLE_CLIENT_ID
+          # from the backend at runtime (/api/config), set by the deploy env.

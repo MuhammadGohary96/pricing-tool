@@ -282,7 +282,7 @@ app.add_middleware(
 async def startup_guard(request: Request, call_next):
     """Return 503 for data endpoints while startup is in progress."""
     path = request.url.path
-    if not request.app.state.startup_status["ready"] and path.startswith("/api/") and path not in ("/api/startup-status", "/api/reload", "/api/data-status", "/api/background-status"):
+    if not request.app.state.startup_status["ready"] and path.startswith("/api/") and path not in ("/api/startup-status", "/api/config", "/api/reload", "/api/data-status", "/api/background-status"):
         return JSONResponse(
             status_code=503,
             content=request.app.state.startup_status,
@@ -299,6 +299,15 @@ def get_startup_status(request: Request):
     status = dict(request.app.state.startup_status)
     status["enrichment"] = request.app.state.enrichment_status
     return status
+
+
+@app.get("/api/config")
+def get_config():
+    """Public runtime config for the SPA. The frontend reads GOOGLE_CLIENT_ID
+    from here at load time, so it's driven by the server env the production
+    engineer sets — no build-time bake, no CI secret. The OAuth client id is
+    public by design (it ships in the OAuth flow either way)."""
+    return {"google_client_id": settings.GOOGLE_CLIENT_ID}
 
 
 @app.get("/api/background-status")

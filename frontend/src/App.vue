@@ -209,6 +209,8 @@ async function resync() {
 
 onMounted(async () => {
   window.addEventListener('keydown', handleKeydown)
+  // Load the runtime OAuth client id from the server before anything else.
+  await auth.fetchConfig()
   if (auth.isAuthenticated) {
     await startFlow()
   }

@@ -21,11 +21,15 @@ Set these via your secret manager / environment — do **not** bake them into th
 
 `BF_CATALOG_TOKEN` / `BF_CATALOG_URL` are **removed** — the app no longer fetches or writes live Catalog prices (now-prices come from BigQuery), and a static token must never be a way past auth.
 
-## Frontend build-time variable
+## Frontend config (no separate variable needed)
 
-| Variable | Required | Notes |
-|---|---|---|
-| `VITE_GOOGLE_CLIENT_ID` | **yes** | Same client id as the backend's `GOOGLE_CLIENT_ID`. **Baked in at image build time** (Vite inlines env), so it's passed as a Docker `--build-arg` / the `VITE_GOOGLE_CLIENT_ID` Actions secret — not a runtime env var. Rebuild the image to change it. |
+The SPA fetches the Google client id from the backend at runtime (`GET /api/config`,
+public), so **setting `GOOGLE_CLIENT_ID` in the server env configures both API auth
+and frontend sign-in** — one value, no build-time bake, no CI secret. Build the image
+once; configure it per environment via env vars.
+
+`VITE_GOOGLE_CLIENT_ID` remains only an **optional** build-time fallback for running
+the frontend without a backend (pure `npm run dev`); leave it unset in production.
 
 The single image serves the built SPA at `/` and the API at `/api` from the **same origin**, so no reverse proxy or `/api` rewrite is needed. (If you ever serve the frontend separately, you'd proxy `/api/*` to the backend instead.)
 
@@ -59,8 +63,9 @@ builds and pushes to **GHCR** on every push to `main` and on `v*` tags:
 - `ghcr.io/muhammadgohary96/pricing-tool:latest` (main)
 - `ghcr.io/muhammadgohary96/pricing-tool:<version>` (on `vX.Y.Z` tags) and `:sha-<commit>`
 
-**CI prerequisite:** add a repo Actions secret **`VITE_GOOGLE_CLIENT_ID`** (baked into
-the frontend at build). `GITHUB_TOKEN` handles GHCR auth automatically.
+**CI needs no extra secrets** — `GITHUB_TOKEN` handles GHCR auth, and the frontend's
+Google client id is supplied at runtime via `GOOGLE_CLIENT_ID` (see below), not baked
+into the image.
 
 ### Run the container
 

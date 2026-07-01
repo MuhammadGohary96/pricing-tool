@@ -1,21 +1,35 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
-
 export const useAuthStore = defineStore('auth', () => {
   const accessToken = ref(sessionStorage.getItem('bf_access_token') || null)
   const user = ref(JSON.parse(sessionStorage.getItem('bf_user') || 'null'))
   const error = ref(null)
 
+  // Google OAuth client id is fetched from the backend at runtime (/api/config),
+  // so the production engineer only sets GOOGLE_CLIENT_ID in the server env — it
+  // drives both API auth and this sign-in, with no build-time bake or CI secret.
+  // Falls back to a build-time VITE_GOOGLE_CLIENT_ID for pure-frontend dev.
+  const clientId = ref(import.meta.env.VITE_GOOGLE_CLIENT_ID || '')
+
   const isAuthenticated = computed(() => !!user.value)
-  const isDevMode = computed(() => !GOOGLE_CLIENT_ID)
+  const isDevMode = computed(() => !clientId.value)
 
   let tokenClient = null
 
+  async function fetchConfig() {
+    try {
+      const res = await fetch('/api/config')
+      if (res.ok) {
+        const data = await res.json()
+        if (data.google_client_id) clientId.value = data.google_client_id
+      }
+    } catch { /* keep the build-time fallback */ }
+  }
+
   function initGoogleAuth() {
-    if (!GOOGLE_CLIENT_ID) {
-      error.value = 'VITE_GOOGLE_CLIENT_ID is not set. Add it to frontend/.env'
+    if (!clientId.value) {
+      error.value = 'Google sign-in is not configured (GOOGLE_CLIENT_ID is unset on the server).'
       return false
     }
     if (!window.google?.accounts?.oauth2) {
@@ -23,7 +37,7 @@ export const useAuthStore = defineStore('auth', () => {
       return false
     }
     tokenClient = window.google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID,
+      client_id: clientId.value,
       scope: 'email profile',
       callback: handleTokenResponse,
       error_callback: (err) => {
@@ -33,8 +47,10 @@ export const useAuthStore = defineStore('auth', () => {
     return true
   }
 
-  function login() {
+  async function login() {
     error.value = null
+    // Ensure the runtime client id is loaded before starting the OAuth flow.
+    if (!clientId.value) await fetchConfig()
     if (!tokenClient) {
       if (!initGoogleAuth()) return
     }
@@ -128,6 +144,7 @@ export const useAuthStore = defineStore('auth', () => {
     error,
     isAuthenticated,
     isDevMode,
+    fetchConfig,
     initGoogleAuth,
     login,
     devLogin,

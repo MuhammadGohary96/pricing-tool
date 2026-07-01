@@ -4,7 +4,9 @@
 FROM node:22-bookworm-slim AS frontend
 WORKDIR /app/frontend
 
-# Vite inlines env at build time, so the Google client id is a build arg.
+# Optional build-time fallback only. In production the frontend reads the Google
+# client id from the backend at runtime (/api/config, driven by GOOGLE_CLIENT_ID),
+# so this normally stays empty — no secret needed to build the image.
 ARG VITE_GOOGLE_CLIENT_ID=""
 ENV VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}
 
