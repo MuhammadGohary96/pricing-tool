@@ -21,13 +21,13 @@ Set these via your secret manager / environment — do **not** bake them into th
 
 `BF_CATALOG_TOKEN` / `BF_CATALOG_URL` are **removed** — the app no longer fetches or writes live Catalog prices (now-prices come from BigQuery), and a static token must never be a way past auth.
 
-## Required environment variables (frontend)
+## Frontend build-time variable
 
 | Variable | Required | Notes |
 |---|---|---|
-| `VITE_GOOGLE_CLIENT_ID` | **yes** | Same client id as the backend's `GOOGLE_CLIENT_ID`. Set at build time. |
+| `VITE_GOOGLE_CLIENT_ID` | **yes** | Same client id as the backend's `GOOGLE_CLIENT_ID`. **Baked in at image build time** (Vite inlines env), so it's passed as a Docker `--build-arg` / the `VITE_GOOGLE_CLIENT_ID` Actions secret — not a runtime env var. Rebuild the image to change it. |
 
-The frontend calls the API at the relative path `/api`, so serve it behind a reverse proxy that routes `/api/*` to the backend (same origin), or add a rewrite.
+The single image serves the built SPA at `/` and the API at `/api` from the **same origin**, so no reverse proxy or `/api` rewrite is needed. (If you ever serve the frontend separately, you'd proxy `/api/*` to the backend instead.)
 
 ## Authentication
 
@@ -50,12 +50,44 @@ First boot with no Parquet cache pulls from BigQuery (a few minutes); subsequent
 
 The smart refresh checks the latest `modified` time across **both** source tables (pricing **and** competitor) and pulls only when **either** changed — so a competitor-only update is no longer missed. The "Synced X ago" badge reflects that combined timestamp.
 
-## Build
+## Docker image (recommended)
+
+The app ships as a **single image** (multi-stage `Dockerfile`): the Vite SPA is
+built and served by FastAPI alongside the API. CI (`.github/workflows/docker-image.yml`)
+builds and pushes to **GHCR** on every push to `main` and on `v*` tags:
+
+- `ghcr.io/muhammadgohary96/pricing-tool:latest` (main)
+- `ghcr.io/muhammadgohary96/pricing-tool:<version>` (on `vX.Y.Z` tags) and `:sha-<commit>`
+
+**CI prerequisite:** add a repo Actions secret **`VITE_GOOGLE_CLIENT_ID`** (baked into
+the frontend at build). `GITHUB_TOKEN` handles GHCR auth automatically.
+
+### Run the container
 
 ```bash
-# frontend
-cd frontend && npm ci && npm run build      # outputs dist/
+docker run -p 8000:8000 \
+  --env-file .env \                                   # backend env (DATA_SOURCE, BQ_*, GOOGLE_CLIENT_ID, CORS_ORIGINS…)
+  -v /srv/pricing-cache:/app/cache \                  # persistent Parquet cache (survives restarts)
+  -v /secrets/bq-sa.json:/keys/bq-sa.json:ro \        # BigQuery service-account key
+  -e GOOGLE_APPLICATION_CREDENTIALS=/keys/bq-sa.json \
+  ghcr.io/muhammadgohary96/pricing-tool:latest
+```
 
-# backend
+App is then at `http://<host>:8000` (SPA + API). The container already runs a
+**single uvicorn worker** — don't override the command to add workers (see Run
+topology above). Mount the cache volume so the first-boot BigQuery pull isn't
+repeated on every restart.
+
+### Build locally
+
+```bash
+docker build --build-arg VITE_GOOGLE_CLIENT_ID=<client-id> -t pricing-tool .
+```
+
+## Manual (no Docker)
+
+```bash
+cd frontend && npm ci && npm run build      # outputs frontend/dist (FastAPI serves it)
 pip install -r backend/requirements.txt
+uvicorn backend.main:app --host 0.0.0.0 --port 8000   # one worker
 ```
