@@ -1,0 +1,47 @@
+# VCS / tooling
+.git
+.github
+.gitignore
+.agents
+.claude
+.impeccable
+skills-lock.json
+
+# Secrets & local env (never bake into the image)
+.env
+*.env
+!.env.sample
+*-key.json
+*-sa.json
+service-account*.json
+
+# Python
+__pycache__
+**/__pycache__
+*.pyc
+.venv
+venv
+*.pkl
+
+# Node / build output (frontend is built inside the image)
+node_modules
+**/node_modules
+frontend/dist
+
+# Runtime cache (mounted as a volume in production)
+cache
+
+# Docs / scratch / data not needed at runtime
+docs
+scripts
+product-pricing-detail-modal
+*.pptx
+*.xlsx
+*.md
+!PRODUCTION.md
+
+# OS / editor cruft
+.DS_Store
+.idea
+.vscode
+.~lock.*#

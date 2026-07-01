@@ -25,7 +25,7 @@ _cache_lock = Lock()
 _CACHE_TTL = 300  # 5 minutes
 
 # Paths that don't require authentication
-PUBLIC_PATHS = {"/api/startup-status", "/docs", "/openapi.json"}
+PUBLIC_PATHS = {"/api/startup-status", "/api/config", "/docs", "/openapi.json"}
 
 
 def _is_public(path: str) -> bool:

@@ -1,10 +1,12 @@
 import math
+import os
 import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from pathlib import Path
 
@@ -280,7 +282,7 @@ app.add_middleware(
 async def startup_guard(request: Request, call_next):
     """Return 503 for data endpoints while startup is in progress."""
     path = request.url.path
-    if not request.app.state.startup_status["ready"] and path.startswith("/api/") and path not in ("/api/startup-status", "/api/reload", "/api/data-status", "/api/background-status"):
+    if not request.app.state.startup_status["ready"] and path.startswith("/api/") and path not in ("/api/startup-status", "/api/config", "/api/reload", "/api/data-status", "/api/background-status"):
         return JSONResponse(
             status_code=503,
             content=request.app.state.startup_status,
@@ -297,6 +299,15 @@ def get_startup_status(request: Request):
     status = dict(request.app.state.startup_status)
     status["enrichment"] = request.app.state.enrichment_status
     return status
+
+
+@app.get("/api/config")
+def get_config():
+    """Public runtime config for the SPA. The frontend reads GOOGLE_CLIENT_ID
+    from here at load time, so it's driven by the server env the production
+    engineer sets — no build-time bake, no CI secret. The OAuth client id is
+    public by design (it ships in the OAuth flow either way)."""
+    return {"google_client_id": settings.GOOGLE_CLIENT_ID}
 
 
 @app.get("/api/background-status")
@@ -407,3 +418,32 @@ app.include_router(commercial.router)
 app.include_router(master_data.router)
 app.include_router(executive.router)
 app.include_router(competitor_products.router)
+
+
+# ── Serve the built frontend (single-image deploy) ─────────────────────────
+# When a Vite build is present (the Docker image copies it here), FastAPI serves
+# the SPA at "/" and the API stays at "/api". Registered AFTER the routers so
+# "/api/*" always wins; skipped entirely in local dev (no dist → `npm run dev`
+# + Vite proxy handles the frontend). SPA uses history routing, so unknown
+# non-API paths fall back to index.html.
+_DIST_DIR = Path(os.environ.get("FRONTEND_DIST", Path(__file__).resolve().parent.parent / "frontend" / "dist"))
+
+if (_DIST_DIR / "index.html").is_file():
+    _INDEX = _DIST_DIR / "index.html"
+    if (_DIST_DIR / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=_DIST_DIR / "assets"), name="assets")
+
+    @app.get("/{full_path:path}")
+    def _serve_spa(full_path: str):
+        # Known /api/* routes matched above; an UNKNOWN /api path is a real 404,
+        # not the SPA shell.
+        if full_path.startswith("api/") or full_path == "api":
+            return JSONResponse(status_code=404, content={"error": "Not found"})
+        candidate = (_DIST_DIR / full_path)
+        if full_path and candidate.is_file() and _DIST_DIR in candidate.resolve().parents:
+            return FileResponse(candidate)
+        return FileResponse(_INDEX)  # SPA deep-link fallback (history routing)
+
+    logger.info(f"[Startup] Serving frontend from {_DIST_DIR}")
+else:
+    logger.info("[Startup] No frontend build found — API only (dev mode uses Vite)")
