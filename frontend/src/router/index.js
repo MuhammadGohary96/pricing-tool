@@ -23,6 +23,11 @@ const routes = [
     component: () => import('../views/CompetitorProductsView.vue'),
   },
   {
+    path: '/how-it-works',
+    name: 'HowItWorks',
+    component: () => import('../views/HowItWorksView.vue'),
+  },
+  {
     path: '/:pathMatch(.*)*',
     redirect: '/commercial',
   },
