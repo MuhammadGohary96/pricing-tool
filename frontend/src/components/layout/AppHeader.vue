@@ -3,7 +3,7 @@
     <!-- Logo -->
     <div class="flex items-center gap-2.5 text-white font-bold text-base tracking-tight shrink-0">
       <img src="/breadfast-logo.png" alt="Breadfast" class="h-7 shrink-0" />
-      Pricing Tool
+      Pricing Intelligence Tool
     </div>
 
     <!-- Tabs -->

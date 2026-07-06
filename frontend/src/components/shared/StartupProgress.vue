@@ -5,7 +5,7 @@
       <div class="flex items-center gap-3">
         <img src="/breadfast-icon.png" alt="Breadfast" class="w-10 h-10 rounded-lg shrink-0" />
         <div>
-          <div class="text-subheading font-bold text-grey-900 tracking-tightish">Breadfast Pricing Tool</div>
+          <div class="text-subheading font-bold text-grey-900 tracking-tightish">Breadfast Pricing Intelligence Tool</div>
           <div class="text-caption text-grey-500">Loading data...</div>
         </div>
       </div>
