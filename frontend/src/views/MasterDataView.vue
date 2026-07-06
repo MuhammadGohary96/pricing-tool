@@ -2,10 +2,12 @@
   <PageShell :loading="store.loading" :error="store.error" @retry="store.fetchAll()">
     <div class="flex flex-col gap-4">
       <!-- ─── Command header ── -->
-      <section class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 px-6 lg:px-7 py-6 animate-fade-in-up">
-        <h1 class="text-[1.75rem] leading-none font-semibold text-grey-900 tracking-tight">Master data</h1>
-        <p class="text-body text-grey-500 mt-2 max-w-[62ch]">Mapping and price-update actions, prioritized by revenue impact, with AI match review.</p>
-      </section>
+      <PageHeader
+        eyebrow="Actions & review"
+        title="Master"
+        accent="data"
+        subtitle="Mapping and price-update actions, prioritized by revenue impact, with AI match review."
+      />
 
       <DefinitionsPanel :sections="definitions" storage-key="defs-master-data" />
       <FilterBar :loading="store.loading" />
@@ -64,6 +66,7 @@ import MatchReviewPanel from '../components/master-data/MatchReviewPanel.vue'
 import StalenessHeatmap from '../components/master-data/StalenessHeatmap.vue'
 import { useUrlSync } from '../composables/useUrlSync'
 import PageShell from '../components/shared/PageShell.vue'
+import PageHeader from '../components/shared/PageHeader.vue'
 import DefinitionsPanel from '../components/shared/DefinitionsPanel.vue'
 import { useScrollReveal } from '../composables/useScrollReveal'
 import { Link, BrainCircuit, RefreshCw, CircleCheck, ListOrdered, Sparkles, CalendarClock } from 'lucide-vue-next'

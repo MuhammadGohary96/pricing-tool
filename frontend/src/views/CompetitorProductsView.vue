@@ -2,10 +2,12 @@
   <PageShell :loading="store.loading" :error="store.error" @retry="store.fetchAll()">
     <div class="flex flex-col gap-4">
       <!-- ─── Command header ── -->
-      <section class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 px-6 lg:px-7 py-6 animate-fade-in-up">
-        <h1 class="text-[1.75rem] leading-none font-semibold text-grey-900 tracking-tight">Competitor catalog</h1>
-        <p class="text-body text-grey-500 mt-2 max-w-[62ch]">Crawl coverage, price freshness, and the mapping that connects Breadfast products to each competitor.</p>
-      </section>
+      <PageHeader
+        eyebrow="Coverage & mapping"
+        title="Competitor"
+        accent="catalog"
+        subtitle="Crawl coverage, price freshness, and the mapping that connects Breadfast products to each competitor."
+      />
 
       <DefinitionsPanel :sections="definitions" storage-key="defs-competitor-products" />
 
@@ -250,6 +252,7 @@ import { computed, ref, onMounted, watch } from 'vue'
 import { watchDebounced } from '@vueuse/core'
 import { useCompetitorProductsStore } from '../stores/competitorProducts'
 import PageShell from '../components/shared/PageShell.vue'
+import PageHeader from '../components/shared/PageHeader.vue'
 import DefinitionsPanel from '../components/shared/DefinitionsPanel.vue'
 import CrawlKpiCards from '../components/competitor-products/CrawlKpiCards.vue'
 import CrawlTimeline from '../components/competitor-products/CrawlTimeline.vue'

@@ -29,26 +29,29 @@
 
     <div class="flex flex-col gap-4">
       <!-- ─── Command header: identity + scope ── -->
-      <section class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden animate-fade-in-up">
-        <div class="px-6 lg:px-7 pt-6 pb-5 border-b border-grey-100">
-          <h1 class="text-[1.75rem] leading-none font-semibold text-grey-900 tracking-tight">Commercial workspace</h1>
-          <p class="text-body text-grey-500 mt-2 max-w-[60ch]">Track the price index by subcategory and product, and act on the gaps that move revenue.</p>
-        </div>
-        <dl class="grid grid-cols-3 gap-px bg-grey-100">
-          <div class="bg-white p-5 lg:p-6 flex flex-col gap-1.5">
-            <dt class="text-caption text-grey-500 font-medium">Subcategories</dt>
-            <dd class="font-mono text-[26px] leading-none font-bold text-grey-900 tabular-nums"><AnimatedNumber :value="subcatCount" /></dd>
-          </div>
-          <div class="bg-white p-5 lg:p-6 flex flex-col gap-1.5">
-            <dt class="text-caption text-grey-500 font-medium">Products tracked</dt>
-            <dd class="font-mono text-[26px] leading-none font-bold text-grey-900 tabular-nums"><AnimatedNumber :value="productCount" /></dd>
-          </div>
-          <div class="bg-white p-5 lg:p-6 flex flex-col gap-1.5">
-            <dt class="text-caption text-grey-500 font-medium">Competitors</dt>
-            <dd class="font-mono text-[26px] leading-none font-bold text-grey-900 tabular-nums"><AnimatedNumber :value="competitorCount" /></dd>
-          </div>
-        </dl>
-      </section>
+      <PageHeader
+        eyebrow="Category workspace"
+        title="Commercial"
+        accent="workspace"
+        subtitle="Track the price index by subcategory and product, and act on the gaps that move revenue."
+      >
+        <template #stats>
+          <dl class="grid grid-cols-3 gap-px bg-grey-100">
+            <div class="bg-white p-5 lg:p-6 flex flex-col gap-1.5">
+              <dt class="text-caption text-grey-500 font-medium">Subcategories</dt>
+              <dd class="font-mono text-[26px] leading-none font-bold text-grey-900 tabular-nums"><AnimatedNumber :value="subcatCount" /></dd>
+            </div>
+            <div class="bg-white p-5 lg:p-6 flex flex-col gap-1.5">
+              <dt class="text-caption text-grey-500 font-medium">Products tracked</dt>
+              <dd class="font-mono text-[26px] leading-none font-bold text-grey-900 tabular-nums"><AnimatedNumber :value="productCount" /></dd>
+            </div>
+            <div class="bg-white p-5 lg:p-6 flex flex-col gap-1.5">
+              <dt class="text-caption text-grey-500 font-medium">Competitors</dt>
+              <dd class="font-mono text-[26px] leading-none font-bold text-grey-900 tabular-nums"><AnimatedNumber :value="competitorCount" /></dd>
+            </div>
+          </dl>
+        </template>
+      </PageHeader>
 
       <DefinitionsPanel :sections="definitions" storage-key="defs-commercial" class="animate-fade-in-up stagger-1" />
       <FilterBar :loading="store.loading" hide-competitor class="animate-fade-in-up stagger-2" />
@@ -122,6 +125,7 @@ import ProductPivotTable from '../components/commercial/ProductPivotTable.vue'
 import CompetitorToggle from '../components/commercial/CompetitorToggle.vue'
 import DrilldownBreadcrumb from '../components/commercial/DrilldownBreadcrumb.vue'
 import PageShell from '../components/shared/PageShell.vue'
+import PageHeader from '../components/shared/PageHeader.vue'
 import DefinitionsPanel from '../components/shared/DefinitionsPanel.vue'
 import PILegend from '../components/shared/PILegend.vue'
 import AnimatedNumber from '../components/shared/AnimatedNumber.vue'
