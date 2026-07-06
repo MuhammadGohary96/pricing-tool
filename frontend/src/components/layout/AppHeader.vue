@@ -3,11 +3,12 @@
     <!-- Logo -->
     <div class="flex items-center gap-2.5 text-white font-bold text-base tracking-tight shrink-0">
       <img src="/breadfast-logo.png" alt="Breadfast" class="h-7 shrink-0" />
-      Pricing Tool
+      Pricing Intelligence Tool
     </div>
 
     <!-- Tabs -->
     <nav class="flex items-center gap-1 ml-6">
+      <!-- Workspaces: the surfaces you act in -->
       <router-link
         v-for="tab in tabs"
         :key="tab.to"
@@ -20,6 +21,23 @@
         ]"
       >
         {{ tab.label }}
+      </router-link>
+
+      <!-- Divider: the guide is a different kind of destination than the workspaces -->
+      <span class="mx-2 h-5 w-px bg-white/15" aria-hidden="true"></span>
+
+      <!-- How it works — the reference behind every number, set apart with an icon + brand ring -->
+      <router-link
+        to="/how-it-works"
+        class="inline-flex items-center gap-1.5 pl-3 pr-3.5 py-2 rounded-lg text-body font-medium cursor-pointer transition-all duration-150 no-underline ring-1"
+        :class="[
+          $route.path === '/how-it-works'
+            ? 'text-white bg-brand-primary ring-brand-primary'
+            : 'text-white/75 ring-brand-light/30 hover:text-white hover:bg-white/10 hover:ring-brand-light/60'
+        ]"
+      >
+        <BookOpen class="w-4 h-4 shrink-0" :class="$route.path === '/how-it-works' ? 'text-white' : 'text-brand-light'" />
+        How it works
       </router-link>
     </nav>
 
@@ -75,7 +93,7 @@
 
 <script setup>
 import { computed, ref, onMounted, onUnmounted } from 'vue'
-import { Loader2, RefreshCw, LogOut } from 'lucide-vue-next'
+import { Loader2, RefreshCw, LogOut, BookOpen } from 'lucide-vue-next'
 import { useAuthStore } from '../../stores/auth'
 import { dataApi } from '../../api/client'
 
@@ -151,6 +169,8 @@ const initials = computed(() => {
     .slice(0, 2)
 })
 
+// Workspaces only — "How it works" is rendered separately in the nav as the
+// set-apart reference entry (icon + divider + brand ring), not a workspace tab.
 const tabs = [
   { label: 'Executive', to: '/executive' },
   { label: 'Commercial', to: '/commercial' },

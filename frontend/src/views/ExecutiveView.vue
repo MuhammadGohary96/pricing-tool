@@ -27,13 +27,14 @@
     <div class="flex flex-col gap-4">
 
       <!-- ─── Command header: identity + the verdict leadership scans for ── -->
-      <section v-if="kpis" class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden animate-fade-in-up">
-        <!-- Title band -->
-        <div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 px-6 lg:px-7 pt-6 pb-5 border-b border-grey-100">
-          <div class="min-w-0">
-            <h1 class="text-[1.75rem] leading-none font-semibold text-grey-900 tracking-tight">Executive overview</h1>
-            <p class="text-body text-grey-500 mt-2">Where Breadfast stands against the market this week, at a glance.</p>
-          </div>
+      <PageHeader
+        v-if="kpis"
+        eyebrow="Price intelligence"
+        title="Executive"
+        accent="overview"
+        subtitle="Where Breadfast stands against the market this week, at a glance."
+      >
+        <template #actions>
           <span
             v-if="store.lastFetchedAt"
             :title="syncTitle"
@@ -42,10 +43,11 @@
             <span class="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" aria-hidden="true"></span>
             {{ syncLabel }}
           </span>
-        </div>
+        </template>
 
-        <!-- Verdict + subordinate stats -->
-        <div class="grid lg:grid-cols-[1.4fr_1fr]">
+        <template #stats>
+          <!-- Verdict + subordinate stats -->
+          <div class="grid lg:grid-cols-[1.4fr_1fr]">
           <div class="p-6 lg:p-7 lg:border-r border-grey-100">
             <div class="flex items-center gap-2 mb-3">
               <span class="text-caption font-semibold uppercase tracking-wide text-grey-500">Blended price index</span>
@@ -72,7 +74,8 @@
             </div>
           </dl>
         </div>
-      </section>
+        </template>
+      </PageHeader>
 
       <!-- Definitions -->
       <DefinitionsPanel :sections="definitions" storage-key="defs-executive" class="animate-fade-in-up stagger-1" />
@@ -89,57 +92,59 @@
         class="animate-fade-in-up stagger-2"
       />
 
-      <!-- PI legend — teaches "both tails bad" before the PI-colored tables below -->
-      <div class="flex justify-end animate-fade-in-up stagger-3">
+      <!-- ═══ TIER 2 · Pricing position — the PI drill: competitor ▸ category ▸ location ═══ -->
+      <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mt-1 animate-fade-in-up stagger-3">
+        <div class="flex items-baseline gap-2.5 min-w-0">
+          <h2 class="text-caption font-semibold uppercase tracking-wide text-grey-500">Pricing position</h2>
+          <span class="text-micro text-grey-400 truncate">where we stand, by competitor, category, and location</span>
+        </div>
         <PILegend />
       </div>
 
-      <!-- ─── Row 1: Competitor PI Table + Classification + Category PI ── -->
-      <div class="flex flex-col xl:flex-row gap-4 animate-fade-in-up stagger-3">
-        <div class="xl:w-[60%] min-w-0">
+      <!-- By competitor: blended PI table + classification donut, paired -->
+      <div class="flex flex-col xl:flex-row gap-4 items-start animate-fade-in-up stagger-3">
+        <div class="w-full xl:w-[58%] min-w-0">
           <CompetitorPITable
             :data="enrichedCompetitorPI"
             @select-competitor="navigateToCompetitor"
           />
         </div>
-        <div class="xl:w-[40%] min-w-0 flex flex-col gap-4">
+        <div class="w-full xl:w-[42%] min-w-0">
           <ClassificationBreakdown
             :data="store.dashboard?.classification_breakdown"
             :mapping-progress="store.dashboard?.mapping_progress || []"
             @navigate="navigateToAction"
           />
-          <!-- Category PI -->
-          <div v-if="store.categoryPerformance?.length" class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden">
-            <div class="px-4 py-3 border-b border-grey-100 flex items-center gap-2">
-              <Layers class="w-4 h-4 text-brand-primary" />
-              <span class="text-subheading font-bold text-grey-900 tracking-tightish">Category PI</span>
-              <span class="text-caption text-grey-400 ml-1">click to explore</span>
-            </div>
-            <div class="flex flex-wrap gap-2 px-4 py-3">
-              <button
-                v-for="cat in store.categoryPerformance"
-                :key="cat.category_name"
-                class="flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all hover:shadow-panel-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-lightest"
-                :class="deviationBorderClass(cat.pi_deviation)"
-                @click="navigateToCategory(cat.category_name)"
-              >
-                <span class="text-body text-grey-800 font-medium">{{ cat.category_name }}</span>
-                <span class="font-mono text-body font-bold" :class="piTextClass(cat.blended_pi)">
-                  {{ cat.blended_pi?.toFixed(2) ?? '—' }}
-                </span>
-                <span
-                  class="inline-block px-1.5 py-0.5 rounded text-micro font-bold"
-                  :class="[deviationTextClass(cat.pi_deviation), deviationBgClass(cat.pi_deviation)]"
-                >
-                  {{ formatDeviation(cat.pi_deviation) }}
-                </span>
-              </button>
-            </div>
-          </div>
         </div>
       </div>
 
-      <!-- ─── Geographic exposure: blended PI by FP × competitor ── -->
+      <!-- By category: blended PI per category (full-width chip strip) -->
+      <div
+        v-if="store.categoryPerformance?.length"
+        class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden animate-fade-in-up stagger-4"
+      >
+        <div class="px-4 py-3 border-b border-grey-100 flex items-center gap-2">
+          <Layers class="w-4 h-4 text-brand-primary" />
+          <span class="text-subheading font-bold text-grey-900 tracking-tightish">Category PI</span>
+          <span class="text-caption text-grey-400 ml-1">click to explore</span>
+        </div>
+        <div class="flex flex-wrap gap-2 px-4 py-3">
+          <button
+            v-for="cat in store.categoryPerformance"
+            :key="cat.category_name"
+            class="flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all hover:shadow-panel-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-lightest"
+            :class="deviationBorderClass(cat.pi_deviation)"
+            @click="navigateToCategory(cat.category_name)"
+          >
+            <span class="text-body text-grey-800 font-medium">{{ cat.category_name }}</span>
+            <span class="font-mono text-body font-bold" :class="piTextClass(cat.blended_pi)">
+              {{ cat.blended_pi?.toFixed(2) ?? '—' }}
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <!-- By location: blended PI by FP × competitor (widest grain, full width) -->
       <GeographicExposure
         v-if="geoData"
         :data="geoData"
@@ -147,8 +152,12 @@
         @select-fp="onSelectFp"
       />
 
-      <!-- ─── Row 2: Mapping Progress (full width) ──────────────── -->
-      <MappingProgressChart :data="store.dashboard?.mapping_progress || []" class="animate-fade-in-up stagger-4" />
+      <!-- ═══ TIER 3 · Data coverage — how complete the mapping behind these numbers is ═══ -->
+      <div class="flex items-baseline gap-2.5 mt-3 animate-fade-in-up stagger-5">
+        <h2 class="text-caption font-semibold uppercase tracking-wide text-grey-500">Data coverage</h2>
+        <span class="text-micro text-grey-400">how much of the catalog is mapped, per competitor</span>
+      </div>
+      <MappingProgressChart :data="store.dashboard?.mapping_progress || []" class="animate-fade-in-up stagger-5" />
 
     </div>
   </PageShell>
@@ -169,8 +178,9 @@ import MappingProgressChart from '../components/executive/MappingProgressChart.v
 import ClassificationBreakdown from '../components/executive/ClassificationBreakdown.vue'
 import GeographicExposure from '../components/executive/GeographicExposure.vue'
 import PageShell from '../components/shared/PageShell.vue'
+import PageHeader from '../components/shared/PageHeader.vue'
 import DefinitionsPanel from '../components/shared/DefinitionsPanel.vue'
-import { piTextClass, piBgClass, piToHex, piTreatment, piArrow } from '../utils/piColor'
+import { piTextClass, piTreatment, piArrow } from '../utils/piColor'
 import PILegend from '../components/shared/PILegend.vue'
 import AnimatedNumber from '../components/shared/AnimatedNumber.vue'
 import {
@@ -373,25 +383,11 @@ function navigateToCategory(categoryName) {
 }
 
 // ─── Formatting helpers ─────────────────────────────────────────
-function formatDeviation(dev) {
-  if (dev == null) return '—'
-  const sign = dev > 0 ? '+' : ''
-  return `${sign}${(dev * 100).toFixed(1)}%`
-}
-
-// pi_deviation = sale_PI - 1, so PI = 1 + dev. Drive deviation chrome straight
-// from piColor so it follows the "both tails bad" orientation: pricier (dev > 0)
-// = warm, cheaper (dev < 0) = cool, near-parity = green.
+// pi_deviation = sale_PI - 1, so PI = 1 + dev. Drive the category chip's border
+// straight from piColor so it follows the "both tails bad" orientation: pricier
+// (dev > 0) = warm, cheaper (dev < 0) = cool, near-parity = green.
 function _piFromDev(dev) {
   return dev == null ? null : 1 + dev
-}
-
-function deviationTextClass(dev) {
-  return piTextClass(_piFromDev(dev))
-}
-
-function deviationBgClass(dev) {
-  return piBgClass(_piFromDev(dev))
 }
 
 function deviationBorderClass(dev) {
@@ -418,9 +414,10 @@ const definitions = [
   {
     title: 'Charts & Tables',
     items: [
-      { term: 'Competitor Table', description: 'Click any row to navigate to the Commercial view filtered for that competitor. Coverage bar shows mapped/eligible ratio per competitor.', icon: BarChart2Icon },
-      { term: 'Mapping Progress', description: 'Stacked bar showing product status per competitor. Diamond marker = Potential Reach if all potential matches were mapped.', icon: BarChart2Icon },
-      { term: 'Classification', description: 'Donut chart of product x competitor pairs by mapping status. Use competitor pills to filter. Click a segment to navigate.', icon: PieChart },
+      { term: 'Competitor PI', description: 'Blended PI per competitor, ranked. Click any row to open the Commercial view filtered for that competitor.', icon: BarChart2Icon },
+      { term: 'Category PI', description: 'Blended PI per category. Click a category to explore it in the Commercial view.', icon: Layers },
+      { term: 'Classification', description: 'Donut of product x competitor pairs by mapping status. Use the competitor pills to filter; click a segment to navigate.', icon: PieChart },
+      { term: 'Mapping Progress', description: 'Stacked bar of product status per competitor. Shows coverage now, plus the reachable headroom from potential matches.', icon: BarChart2Icon },
     ],
   },
 ]

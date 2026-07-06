@@ -263,7 +263,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Breadfast Pricing Tool API",
+    title="Breadfast Pricing Intelligence Tool API",
     version="0.1.0",
     lifespan=lifespan,
     default_response_class=SafeJSONResponse,
