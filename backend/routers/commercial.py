@@ -24,6 +24,7 @@ def _filters(
     action_type: Optional[str] = Query(None),
     brand: Optional[str] = Query(None),
     competitor: Optional[str] = Query(None),
+    vertical: Optional[str] = Query(None),
     exclude_private_label: Optional[bool] = Query(None),
     fp_names: Optional[str] = Query(None),
 ) -> dict:
@@ -42,6 +43,8 @@ def _filters(
         params["brand"] = brand
     if competitor:
         params["competitor"] = competitor
+    if vertical:
+        params["vertical"] = vertical
     if exclude_private_label:
         params["exclude_private_label"] = True
     if fp_names:
@@ -95,10 +98,16 @@ def _serialize_pi_points(raw_pis):
 
 
 @router.get("/blended-pi")
-def get_blended_pi(request: Request, filters: dict = Depends(_filters)):
+def get_blended_pi(
+    request: Request,
+    filters: dict = Depends(_filters),
+    group_by: str = Query("sub_category"),
+):
     # Product-level aggregate — unaffected by the competitor price fallback.
+    # group_by: 'sub_category' (default) | 'commercial_category' (rolled up).
     svc = request.app.state.data_service
-    df = svc.get_blended_pi_by_subcategory(filters)
+    gb = group_by if group_by in ("sub_category", "commercial_category") else "sub_category"
+    df = svc.get_blended_pi_by_subcategory(filters, group_by=gb)
     all_competitors = set()
     items = []
     for _, row in df.iterrows():
@@ -134,7 +143,9 @@ def get_blended_pi(request: Request, filters: dict = Depends(_filters)):
             comp_mapped = {}
 
         items.append(BlendedPIRow(
-            sub_category_name=row["sub_category_name"],
+            group_key=str(row.get("group_key", row.get("sub_category_name")) or ""),
+            sub_category_name=row.get("sub_category_name"),
+            commercial_category_name=row.get("commercial_category_name"),
             blended_pi=_safe(row.get("blended_pi")),
             pi_deviation=_safe(row.get("pi_deviation")),
             direction=row["direction"],
@@ -142,6 +153,7 @@ def get_blended_pi(request: Request, filters: dict = Depends(_filters)):
             total_revenue=float(row["total_revenue"]),
             total_product_count=int(row.get("total_product_count", 0)),
             eligible_product_count=int(row.get("eligible_product_count", 0)),
+            mapped_product_count=int(row.get("mapped_product_count", 0)),
             needs_action_count=int(row.get("needs_action_count", 0)),
             product_pis=product_pis,
             competitor_blended_pis=comp_bpi,

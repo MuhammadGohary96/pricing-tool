@@ -43,6 +43,11 @@ export function useUrlSync() {
       filters.priceFallback = true
       changed = true
     }
+    // Restore vertical (single-select: 'Beauty' | 'Supermarket')
+    if (query.vertical) {
+      filters.vertical = query.vertical
+      changed = true
+    }
     if (changed && query.category) {
       filters.fetchSubcategories()
     }
@@ -64,6 +69,9 @@ export function useUrlSync() {
     if (filters.priceFallback) {
       query.estimate = '1'
     }
+    if (filters.vertical) {
+      query.vertical = filters.vertical
+    }
 
     const currentQuery = { ...route.query }
     // Remove filter params from current query
@@ -72,6 +80,7 @@ export function useUrlSync() {
     }
     delete currentQuery.private_label
     delete currentQuery.estimate
+    delete currentQuery.vertical
 
     router.replace({ query: { ...currentQuery, ...query } })
   }
@@ -81,7 +90,7 @@ export function useUrlSync() {
 
   // Watch filter changes and sync to URL
   watch(
-    () => [...FILTER_KEYS.map(k => filters[k]), filters.includePrivateLabel, filters.priceFallback],
+    () => [...FILTER_KEYS.map(k => filters[k]), filters.includePrivateLabel, filters.priceFallback, filters.vertical],
     () => syncToUrl(),
     { deep: true }
   )

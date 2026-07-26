@@ -1,14 +1,29 @@
 <template>
   <!-- Secondary/overview surface: flat (no drop shadow) so the elevated Product Detail panel reads as primary -->
   <div class="bg-white rounded-xl ring-1 ring-grey-200/80 overflow-hidden flex flex-col">
-    <div class="px-4 py-3 border-b border-grey-100 flex items-center justify-between gap-3">
+    <div class="px-4 py-3 border-b border-grey-100 flex items-center justify-between gap-3 flex-wrap">
       <div class="flex items-center gap-1.5 min-w-0">
-        <h2 class="text-subheading font-bold text-grey-900 tracking-tightish whitespace-nowrap">Blended PI by subcategory</h2>
+        <h2 class="text-subheading font-bold text-grey-900 tracking-tightish whitespace-nowrap">{{ title }}</h2>
         <HelpTooltip text="Quantity-weighted price index. Formula: Σ(sale_PI × avg_daily_quantity) ÷ Σ(avg_daily_quantity), filtered to used_product=TRUE (eligible + has price + recently updated). sale_PI = BF price ÷ Competitor price → PI > 1 = BF more expensive, PI < 1 = BF cheaper." />
       </div>
       <div class="flex items-center gap-3 shrink-0">
+        <!-- Grain toggle: roll up to commercial category or drop to subcategory -->
+        <div class="inline-flex items-center rounded-lg border border-grey-200 overflow-hidden text-caption font-medium">
+          <button
+            type="button"
+            class="px-2.5 py-1 transition-colors"
+            :class="groupBy === 'sub_category' ? 'bg-brand-primary text-white' : 'bg-white text-grey-600 hover:bg-grey-50'"
+            @click="$emit('set-group-by', 'sub_category')"
+          >Subcategory</button>
+          <button
+            type="button"
+            class="px-2.5 py-1 border-l border-grey-200 transition-colors"
+            :class="groupBy === 'commercial_category' ? 'bg-brand-primary text-white' : 'bg-white text-grey-600 hover:bg-grey-50'"
+            @click="$emit('set-group-by', 'commercial_category')"
+          >Commercial category</button>
+        </div>
         <span class="hidden sm:inline text-micro text-grey-400">Click a row to filter · a dot to jump to a product</span>
-        <ExportButton :fetcher="exportData" filename="blended_pi.csv" class="shrink-0" />
+        <ExportButton :fetcher="exportData" label="Export Excel" filename="blended_pi.xlsx" class="shrink-0" />
       </div>
     </div>
     <!-- Refreshing indicator (in-place refetch on filter change) -->
@@ -83,11 +98,19 @@
         <tbody>
           <tr
             v-for="row in sortedData"
-            :key="row.sub_category_name"
+            :key="row.group_key"
             class="border-b border-grey-100 hover:bg-brand-50 cursor-pointer transition-colors"
-            @click="$emit('select', row.sub_category_name)"
+            @click="onRowClick(row)"
           >
-            <td class="px-3 py-1.5 text-body text-grey-900 text-center truncate" style="max-width: 180px" :title="row.sub_category_name">
+            <td
+              class="px-3 py-1.5 text-body text-center truncate"
+              :class="groupBy === 'commercial_category' ? 'text-grey-900' : 'text-grey-600'"
+              style="max-width: 180px"
+              :title="row.commercial_category_name || ''"
+            >
+              {{ row.commercial_category_name || '—' }}
+            </td>
+            <td v-if="groupBy === 'sub_category'" class="px-3 py-1.5 text-body text-grey-900 text-center truncate" style="max-width: 180px" :title="row.sub_category_name">
               {{ row.sub_category_name }}
             </td>
             <td class="px-3 py-1.5 text-center font-mono text-body font-bold" :class="piTextClass(rowMinPI(row))">
@@ -100,7 +123,7 @@
               <PIStripPlot
                 :points="stripPlotPoints(row)"
                 :blended-pi="stripPlotBlendedPi(row)"
-                :subcategory="row.sub_category_name"
+                :subcategory="row.sub_category_name || row.commercial_category_name"
                 @select-product="(payload) => $emit('select-product', payload)"
               />
             </td>
@@ -120,10 +143,14 @@
               <span class="text-brand-darkest">{{ rowUsed(row) }}</span>
             </td>
             <td class="px-3 py-1.5 text-body text-center font-mono">
-              <span v-if="rowActions(row) > 0" class="text-amber-600">{{ rowActions(row) }}</span>
-              <span v-else class="text-grey-300">0</span>
+              <span class="text-grey-800">{{ rowMapped(row) }}</span>
             </td>
-            <td class="px-3 py-1.5 text-body text-grey-700 text-center font-mono" :title="row.total_revenue != null ? row.total_revenue.toLocaleString() + ' EGP' : ''">{{ formatRevenue(row.total_revenue) }}</td>
+            <td class="px-3 py-1.5 text-body text-center font-mono">
+              <span :class="rowMappingPct(row) == null ? 'text-grey-300' : 'text-grey-700'">{{ rowMappingPct(row) != null ? rowMappingPct(row) + '%' : '—' }}</span>
+            </td>
+            <td class="px-3 py-1.5 text-body text-center font-mono">
+              <span :class="rowUtilizationPct(row) == null ? 'text-grey-300' : 'text-grey-700'">{{ rowUtilizationPct(row) != null ? rowUtilizationPct(row) + '%' : '—' }}</span>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -172,9 +199,22 @@ const props = defineProps({
   competitors: { type: Array, default: () => [] },
   selectedCompetitors: { type: Array, default: () => [] },
   busy: { type: Boolean, default: false },
+  // 'sub_category' (default) | 'commercial_category' — the row grain.
+  groupBy: { type: String, default: 'sub_category' },
 })
 
-defineEmits(['select', 'select-product'])
+const emit = defineEmits(['select', 'select-product', 'select-category', 'set-group-by'])
+
+const title = computed(() =>
+  props.groupBy === 'commercial_category' ? 'Blended PI by commercial category' : 'Blended PI by subcategory'
+)
+
+// Row click drills: subcategory → subcategory filter; commercial category →
+// commercial-category filter (handled by the parent view).
+function onRowClick(row) {
+  if (props.groupBy === 'commercial_category') emit('select-category', row.commercial_category_name)
+  else emit('select', row.sub_category_name)
+}
 
 watch(() => props.data, () => { page.value = 1 })
 
@@ -222,20 +262,26 @@ function stripPlotBlendedPi(row) {
   return row.blended_pi
 }
 
-// Columns split around competitor PI columns
-const fixedColumns = [
-  { key: 'sub_category_name', label: 'Subcategory' },
-  { key: 'min_pi', label: 'Min PI' },
-  { key: 'max_pi', label: 'Max PI' },
-  { key: 'product_pis', label: 'PI Distribution', sortable: false, dynamicLabel: true },
-]
+// Columns split around competitor PI columns. The Subcategory column only
+// exists in subcategory grain; the category roll-up drops it.
+const fixedColumns = computed(() => {
+  const cols = [{ key: 'commercial_category_name', label: 'Commercial category' }]
+  if (props.groupBy === 'sub_category') cols.push({ key: 'sub_category_name', label: 'Subcategory' })
+  cols.push(
+    { key: 'min_pi', label: 'Min PI' },
+    { key: 'max_pi', label: 'Max PI' },
+    { key: 'product_pis', label: 'PI Distribution', sortable: false, dynamicLabel: true },
+  )
+  return cols
+})
 
 const trailingColumns = [
   { key: 'total_product_count', label: 'Total' },
   { key: 'eligible_product_count', label: 'Eligible' },
   { key: 'used_product_count', label: 'Used' },
-  { key: 'needs_action_count', label: 'Actions' },
-  { key: 'total_revenue', label: 'Revenue' },
+  { key: 'mapped_product_count', label: 'Mapped' },
+  { key: 'mapping_pct', label: 'Map %' },
+  { key: 'utilization_pct', label: 'Util %' },
 ]
 
 const sortKey = ref('max_pi')
@@ -269,10 +315,21 @@ function rowUsed(row) {
   return row.used_product_count
 }
 
-function rowActions(row) {
+function rowMapped(row) {
   if (selectedCompetitor.value)
-    return row.competitor_needs_action_counts?.[selectedCompetitor.value] ?? 0
-  return row.needs_action_count
+    return row.competitor_mapped_counts?.[selectedCompetitor.value] ?? 0
+  return row.mapped_product_count ?? 0
+}
+
+// Mapping % = mapped / total tracked; Utilization % = used / eligible.
+function rowMappingPct(row) {
+  const total = row.total_product_count || 0
+  return total ? Math.round((rowMapped(row) / total) * 100) : null
+}
+
+function rowUtilizationPct(row) {
+  const eligible = row.eligible_product_count || 0
+  return eligible ? Math.round((rowUsed(row) / eligible) * 100) : null
 }
 
 const allSortedData = computed(() => {
@@ -286,6 +343,12 @@ const allSortedData = computed(() => {
     } else if (sortKey.value === 'max_pi') {
       va = rowMaxPI(a) ?? -Infinity
       vb = rowMaxPI(b) ?? -Infinity
+    } else if (sortKey.value === 'mapping_pct') {
+      va = rowMappingPct(a) ?? -Infinity
+      vb = rowMappingPct(b) ?? -Infinity
+    } else if (sortKey.value === 'utilization_pct') {
+      va = rowUtilizationPct(a) ?? -Infinity
+      vb = rowUtilizationPct(b) ?? -Infinity
     } else {
       va = a[sortKey.value] ?? -Infinity
       vb = b[sortKey.value] ?? -Infinity
@@ -316,25 +379,57 @@ function compPiClass(val) {
   return piTextClass(val)
 }
 
-function formatRevenue(val) {
-  if (val == null) return '--'
-  if (val >= 1000000) return `${(val / 1000000).toFixed(1)}M`
-  if (val >= 1000) return `${(val / 1000).toFixed(0)}K`
-  return val.toFixed(0)
-}
-
+// One worksheet per currently-visible competitor. Each row is a table row at
+// the active grain (commercial category, or + subcategory) with that
+// competitor's PI and coverage. Falls back to a single combined sheet if no
+// competitors are visible.
 function exportData() {
-  return allSortedData.value.map(row => {
-    const out = {
-      subcategory: row.sub_category_name,
-      min_pi: rowMinPI(row),
-      max_pi: rowMaxPI(row),
-      total_products: row.total_product_count,
-      eligible: row.eligible_product_count,
-      revenue: row.total_revenue,
+  const rows = allSortedData.value
+  const isSubcat = props.groupBy === 'sub_category'
+
+  const baseCols = (row) => {
+    const o = { 'Commercial category': row.commercial_category_name ?? '' }
+    if (isSubcat) o['Subcategory'] = row.sub_category_name ?? ''
+    return o
+  }
+
+  const comps = visibleCompetitors.value
+  if (!comps.length) {
+    return {
+      filename: 'blended_pi.xlsx',
+      sheets: [{
+        name: 'Blended PI',
+        rows: rows.map(row => ({
+          ...baseCols(row),
+          'Blended PI': row.blended_pi ?? null,
+          'Total': row.total_product_count,
+          'Eligible': row.eligible_product_count,
+        })),
+      }],
     }
-    for (const c of props.competitors) out[`${c}_pi`] = row.competitor_blended_pis?.[c] ?? null
-    return out
-  })
+  }
+
+  const sheets = comps.map(comp => ({
+    name: comp,
+    rows: rows.map(row => {
+      const pi = row.competitor_blended_pis?.[comp] ?? null
+      const used = row.competitor_used_counts?.[comp] ?? 0
+      const mapped = row.competitor_mapped_counts?.[comp] ?? 0
+      const total = row.total_product_count || 0
+      const eligible = row.eligible_product_count || 0
+      return {
+        ...baseCols(row),
+        'Blended PI': pi,
+        'Total': total,
+        'Eligible': eligible,
+        'Used': used,
+        'Mapped': mapped,
+        'Mapping %': total ? Math.round((mapped / total) * 100) : null,
+        'Utilization %': eligible ? Math.round((used / eligible) * 100) : null,
+      }
+    }),
+  }))
+
+  return { filename: 'blended_pi.xlsx', sheets }
 }
 </script>

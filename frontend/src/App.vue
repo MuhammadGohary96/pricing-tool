@@ -11,6 +11,15 @@
       :total="startupTotal"
     />
 
+    <!-- 2b. Filter option lists loading (blocks the app so the FilterBar is
+         populated on first paint — no empty-dropdown flash) -->
+    <StartupProgress
+      v-else-if="!filtersReady"
+      stage="Loading filters..."
+      :progress="0"
+      :total="0"
+    />
+
     <!-- 3. Catalog enrichment progress -->
     <StartupProgress
       v-else-if="enriching"
@@ -86,6 +95,9 @@ function handleKeydown(e) {
 
 // Startup state
 const backendReady = ref(false)
+// Filter option lists loaded — gates the app so the FilterBar is never empty
+// on first render. Set true once fetchFilterOptions resolves (or fails).
+const filtersReady = ref(false)
 const startupStage = ref('Connecting to server...')
 const startupProgress = ref(0)
 const startupTotal = ref(0)
@@ -182,6 +194,17 @@ async function startFlow() {
       })
     })
   }
+  // Backend ready (past the startup 503 guard) — load the filter option lists
+  // once, centrally, so every view (incl. Executive) has them on first render.
+  // fetchFilterOptions caches + swallows its own errors, and each view still
+  // calls it defensively (a cache hit), so a transient miss never blocks the app.
+  try {
+    await filters.fetchFilterOptions()
+  } finally {
+    // Always release the gate — a transient options failure must not strand
+    // the user on the loading screen (views refetch defensively anyway).
+    filtersReady.value = true
+  }
   // Backend ready — trigger catalog enrichment
   await triggerEnrichment()
 }
@@ -223,8 +246,8 @@ onUnmounted(() => {
 })
 
 // Set toast ref once dashboard is visible
-watch([backendReady, enriching], async ([ready, enr]) => {
-  if (ready && !enr) {
+watch([backendReady, filtersReady, enriching], async ([ready, fready, enr]) => {
+  if (ready && fready && !enr) {
     await nextTick()
     setToastRef(toastComponent.value)
   }

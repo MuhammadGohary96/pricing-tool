@@ -10,6 +10,7 @@ def _filters(
     global_tier: Optional[str] = Query(None),
     brand: Optional[str] = Query(None),
     competitor: Optional[str] = Query(None),
+    vertical: Optional[str] = Query(None),
     exclude_private_label: Optional[bool] = Query(None),
     fp_names: Optional[str] = Query(None),
 ) -> dict:
@@ -24,6 +25,8 @@ def _filters(
         params["brand"] = brand
     if competitor:
         params["competitor"] = competitor
+    if vertical:
+        params["vertical"] = vertical
     if exclude_private_label:
         params["exclude_private_label"] = True
     if fp_names:

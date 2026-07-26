@@ -12,6 +12,7 @@ def _filters(
     subcat_tier: Optional[str] = Query(None),
     action_type: Optional[str] = Query(None),
     brand: Optional[str] = Query(None),
+    vertical: Optional[str] = Query(None),
     exclude_private_label: Optional[bool] = Query(None),
 ) -> dict:
     params = {}
@@ -27,6 +28,8 @@ def _filters(
         params["action_type"] = action_type
     if brand:
         params["brand"] = brand
+    if vertical:
+        params["vertical"] = vertical
     if exclude_private_label:
         params["exclude_private_label"] = True
     return params

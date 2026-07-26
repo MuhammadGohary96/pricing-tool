@@ -29,7 +29,11 @@ class ProductPIPoint(BaseModel):
 
 
 class BlendedPIRow(BaseModel):
-    sub_category_name: str
+    # group_key = the value grouped on (subcategory name, or commercial category
+    # name in the rolled-up view). sub_category_name is null in category mode.
+    group_key: str
+    sub_category_name: Optional[str] = None
+    commercial_category_name: Optional[str] = None
     blended_pi: Optional[float] = None
     pi_deviation: Optional[float] = None
     direction: str
@@ -37,6 +41,7 @@ class BlendedPIRow(BaseModel):
     total_revenue: float
     total_product_count: int = 0
     eligible_product_count: int = 0
+    mapped_product_count: int = 0
     needs_action_count: int = 0
     product_pis: list[ProductPIPoint] = []
     competitor_blended_pis: dict[str, Optional[float]] = {}

@@ -14,6 +14,9 @@ export const useCommercialStore = defineStore('commercial', {
     pivotedSubcatCount: 0,
     pivotedCompetitors: [],
     blendedCompetitors: [],
+    // Blended-PI table grain: 'sub_category' (default) | 'commercial_category'.
+    // A view control, not a filter — changing it refetches immediately.
+    blendedGroupBy: 'sub_category',
     needsActionOnly: false,
     funnelMapping: [],
     funnelCoverage: [],
@@ -65,12 +68,20 @@ export const useCommercialStore = defineStore('commercial', {
     async fetchBlendedPI() {
       this.refreshingBlended = true
       try {
-        const res = await commercialApi.getBlendedPI(this._params())
+        const res = await commercialApi.getBlendedPI({ ...this._params(), group_by: this.blendedGroupBy })
         this.blendedPI = res.data.items || []
         this.blendedCompetitors = res.data.competitors || []
       } finally {
         this.refreshingBlended = false
       }
+    },
+
+    // Switch the blended-PI table grain and refetch just that table.
+    setBlendedGroupBy(mode) {
+      const next = mode === 'commercial_category' ? 'commercial_category' : 'sub_category'
+      if (next === this.blendedGroupBy) return
+      this.blendedGroupBy = next
+      this.fetchBlendedPI()
     },
 
     async fetchProducts() {
