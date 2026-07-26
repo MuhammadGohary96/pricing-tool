@@ -173,6 +173,13 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 filtered = self._multi_match(filtered, "brand_name", filters["brand"])
             if filters.get("competitor"):
                 filtered = self._multi_match(filtered, "competitor_name", filters["competitor"])
+            if filters.get("vertical"):
+                v = str(filters["vertical"]).strip().lower()
+                mc = filtered["main_category_name"].fillna("").str.lower()
+                if v == "beauty":
+                    filtered = filtered[mc == "fragrances & beauty"]
+                elif v == "supermarket":
+                    filtered = filtered[mc != "fragrances & beauty"]
             if filters.get("exclude_private_label"):
                 filtered = filtered[~filtered["brand_name"].str.lower().str.contains("breadfast", na=False)]
         return filtered
@@ -258,12 +265,24 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             params.extend(values)
 
         add_in_filter("fp_name", "fp_names")
-        add_in_filter("main_category_name", "main_category")
+        # NOTE: the app's "Categories" filter (`main_category`) carries
+        # commercial_category_name values (that's what get_filter_options serves
+        # and what the category roll-up groups on), so it must filter that column
+        # — not main_category_name — to match the dropdown and the category drill.
+        add_in_filter("commercial_category_name", "main_category")
         add_in_filter("sub_category_name", "sub_category")
         add_in_filter("global_tier", "global_tier")
         add_in_filter("brand_name", "brand")
         add_in_filter("competitor_name", "competitor")
         add_in_filter("action_type", "action_type")
+
+        # Vertical — derived from main_category_name: Beauty = 'Fragrances & Beauty',
+        # Supermarket = everything else. A single-select toggle ('' / All = no filter).
+        vertical = str(filters.get("vertical") or "").strip().lower()
+        if vertical == "beauty":
+            clauses.append("LOWER(main_category_name) = 'fragrances & beauty'")
+        elif vertical == "supermarket":
+            clauses.append("(main_category_name IS NULL OR LOWER(main_category_name) <> 'fragrances & beauty')")
 
         # Private-label exclusion (matches pandas behavior)
         if filters.get("exclude_private_label"):
@@ -422,16 +441,23 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
     # ------------------------------------------------------------------
     # OVERRIDDEN ENDPOINT 1/5 — get_blended_pi_by_subcategory
     # ------------------------------------------------------------------
-    def get_blended_pi_by_subcategory(self, filters: dict | None = None) -> pd.DataFrame:
+    def get_blended_pi_by_subcategory(self, filters: dict | None = None, group_by: str = "sub_category") -> pd.DataFrame:
         """DuckDB implementation: 300× faster than pandas on single-FP filter.
 
-        Returns one row per subcategory with:
-          - blended_pi (quantity-weighted Σ(sale_PI × qty) / Σ(qty) over used)
-          - per-competitor dicts: blended_pis, product_pis, used_counts,
-            eligible_counts, mapped_counts, needs_action_counts
-          - total revenue, total/eligible/needs_action product counts
+        group_by:
+          - 'sub_category' (default): one row per subcategory (commercial category
+            carried as a column).
+          - 'commercial_category': rolled up to one row per commercial category —
+            a true quantity-weighted recompute at that grain (not an average of
+            subcategory PIs).
+
+        Each row carries: group_key (the grouped value), blended_pi, per-competitor
+        dicts (blended_pis, product_pis, used/eligible/mapped/needs_action counts),
+        total revenue, and total/eligible/mapped/needs_action product counts.
         Product-level: unaffected by the competitor price fallback (FP-grain only).
         """
+        grp = "commercial_category_name" if group_by == "commercial_category" else "sub_category_name"
+
         where, params = self._build_where_clause(filters)
         base_cte = self._base_cte(where)
 
@@ -440,10 +466,12 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         # Lock serializes against concurrent requests on the single connection.
         materialize_sql = base_cte + " SELECT * FROM base"
 
+        # __GRP__ is substituted with the grouping column (avoids f-string/format
+        # clashing with the DuckDB struct literals `{...}` below).
         sql_subcat = """
         WITH used_agg AS (
             SELECT
-                sub_category_name,
+                __GRP__ AS group_key,
                 ROUND(
                     SUM(sale_PI * avg_daily_quantity) FILTER (WHERE used_product)
                     / NULLIF(SUM(avg_daily_quantity) FILTER (WHERE used_product), 0),
@@ -456,7 +484,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                     'weight': avg_daily_quantity
                 }) FILTER (WHERE used_product AND sale_PI IS NOT NULL) AS product_pis
             FROM base_tmp
-            GROUP BY sub_category_name
+            GROUP BY __GRP__
             HAVING COUNT(DISTINCT product_id) FILTER (WHERE used_product) > 0
         ),
         -- Revenue summed over DISTINCT used products (total_revenue is product-
@@ -465,45 +493,49 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         -- SUM(DISTINCT total_revenue) is WRONG — it collapses two different
         -- products that happen to share an identical revenue value.
         used_rev AS (
-            SELECT sub_category_name, ROUND(SUM(rev), 2) AS total_revenue
+            SELECT group_key, ROUND(SUM(rev), 2) AS total_revenue
             FROM (
-                SELECT sub_category_name, product_id, ANY_VALUE(total_revenue) AS rev
+                SELECT __GRP__ AS group_key, product_id, ANY_VALUE(total_revenue) AS rev
                 FROM base_tmp
                 WHERE used_product
-                GROUP BY sub_category_name, product_id
+                GROUP BY __GRP__, product_id
             )
-            GROUP BY sub_category_name
+            GROUP BY group_key
         ),
         full_counts AS (
             SELECT
-                sub_category_name,
+                __GRP__ AS group_key,
+                ANY_VALUE(commercial_category_name) AS commercial_category_name,
                 COUNT(DISTINCT product_id) AS total_product_count,
                 COUNT(DISTINCT product_id) FILTER (WHERE eligible_product) AS eligible_product_count,
+                COUNT(DISTINCT product_id) FILTER (WHERE is_mapped) AS mapped_product_count,
                 COUNT(DISTINCT product_id) FILTER (
                     WHERE eligible_product AND action_type != 'Complete'
                 ) AS needs_action_count
             FROM base_tmp
-            GROUP BY sub_category_name
+            GROUP BY __GRP__
         )
         SELECT
-            ua.sub_category_name,
+            ua.group_key,
+            fc.commercial_category_name,
             ua.blended_pi,
             CAST(ua.used_product_count AS INTEGER) AS used_product_count,
             COALESCE(ur.total_revenue, 0)::DOUBLE AS total_revenue,
             ua.product_pis,
             CAST(COALESCE(fc.total_product_count, 0)    AS INTEGER) AS total_product_count,
             CAST(COALESCE(fc.eligible_product_count, 0) AS INTEGER) AS eligible_product_count,
+            CAST(COALESCE(fc.mapped_product_count, 0)   AS INTEGER) AS mapped_product_count,
             CAST(COALESCE(fc.needs_action_count, 0)     AS INTEGER) AS needs_action_count
         FROM used_agg ua
-        LEFT JOIN used_rev ur USING (sub_category_name)
-        LEFT JOIN full_counts fc USING (sub_category_name)
+        LEFT JOIN used_rev ur USING (group_key)
+        LEFT JOIN full_counts fc USING (group_key)
         ORDER BY ua.blended_pi DESC NULLS LAST
-        """
+        """.replace("__GRP__", grp)
 
         sql_comp = """
         WITH comp_agg AS (
             SELECT
-                sub_category_name,
+                __GRP__ AS group_key,
                 competitor_name,
                 ROUND(
                     SUM(sale_PI * avg_daily_quantity) FILTER (WHERE used_product)
@@ -522,16 +554,16 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 }) FILTER (WHERE used_product AND sale_PI IS NOT NULL) AS comp_product_pis
             FROM base_tmp
             WHERE competitor_name IS NOT NULL
-            GROUP BY sub_category_name, competitor_name
+            GROUP BY __GRP__, competitor_name
         ),
         subcat_total_active AS (
-            SELECT sub_category_name,
+            SELECT __GRP__ AS group_key,
                    CAST(COUNT(DISTINCT product_id) AS INTEGER) AS total_active
             FROM base_tmp
-            GROUP BY sub_category_name
+            GROUP BY __GRP__
         )
         SELECT
-            ca.sub_category_name,
+            ca.group_key,
             ca.competitor_name,
             ca.comp_blended_pi,
             ca.comp_used_count,
@@ -540,8 +572,8 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             ca.comp_product_pis,
             sta.total_active AS comp_eligible_count
         FROM comp_agg ca
-        LEFT JOIN subcat_total_active sta USING (sub_category_name)
-        """
+        LEFT JOIN subcat_total_active sta USING (group_key)
+        """.replace("__GRP__", grp)
 
         with self._duckdb_lock:
             self._duckdb_conn.execute(
@@ -553,9 +585,11 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
 
         if df.empty:
             return pd.DataFrame(columns=[
-                "sub_category_name", "blended_pi", "used_product_count",
+                "group_key", "sub_category_name", "commercial_category_name",
+                "blended_pi", "used_product_count",
                 "total_revenue", "pi_deviation", "direction",
-                "total_product_count", "eligible_product_count", "needs_action_count",
+                "total_product_count", "eligible_product_count",
+                "mapped_product_count", "needs_action_count",
                 "product_pis",
                 "competitor_blended_pis", "competitor_product_pis",
                 "competitor_used_counts", "competitor_needs_action_counts",
@@ -571,7 +605,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             lambda x: list(x) if x is not None else []
         )
 
-        # Build per-competitor dicts keyed by sub_category_name
+        # Build per-competitor dicts keyed by group_key
         comp_blended: dict[str, dict] = {}
         comp_product_pis: dict[str, dict] = {}
         comp_used: dict[str, dict] = {}
@@ -600,33 +634,42 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             return float(v)
 
         for row in comp_df.itertuples(index=False):
-            sub = row.sub_category_name
+            key = row.group_key
             comp = row.competitor_name
-            comp_blended.setdefault(sub, {})[comp] = _safe_float(row.comp_blended_pi)
-            comp_product_pis.setdefault(sub, {})[comp] = _safe_list(row.comp_product_pis)
-            comp_used.setdefault(sub, {})[comp] = _safe_int(row.comp_used_count)
-            comp_action.setdefault(sub, {})[comp] = _safe_int(row.comp_needs_action)
-            comp_eligible.setdefault(sub, {})[comp] = _safe_int(row.comp_eligible_count)
-            comp_mapped.setdefault(sub, {})[comp] = _safe_int(row.comp_mapped_count)
+            comp_blended.setdefault(key, {})[comp] = _safe_float(row.comp_blended_pi)
+            comp_product_pis.setdefault(key, {})[comp] = _safe_list(row.comp_product_pis)
+            comp_used.setdefault(key, {})[comp] = _safe_int(row.comp_used_count)
+            comp_action.setdefault(key, {})[comp] = _safe_int(row.comp_needs_action)
+            comp_eligible.setdefault(key, {})[comp] = _safe_int(row.comp_eligible_count)
+            comp_mapped.setdefault(key, {})[comp] = _safe_int(row.comp_mapped_count)
 
-        df["competitor_blended_pis"] = df["sub_category_name"].map(comp_blended).apply(
+        df["competitor_blended_pis"] = df["group_key"].map(comp_blended).apply(
             lambda x: x if isinstance(x, dict) else {}
         )
-        df["competitor_product_pis"] = df["sub_category_name"].map(comp_product_pis).apply(
+        df["competitor_product_pis"] = df["group_key"].map(comp_product_pis).apply(
             lambda x: x if isinstance(x, dict) else {}
         )
-        df["competitor_used_counts"] = df["sub_category_name"].map(comp_used).apply(
+        df["competitor_used_counts"] = df["group_key"].map(comp_used).apply(
             lambda x: x if isinstance(x, dict) else {}
         )
-        df["competitor_needs_action_counts"] = df["sub_category_name"].map(comp_action).apply(
+        df["competitor_needs_action_counts"] = df["group_key"].map(comp_action).apply(
             lambda x: x if isinstance(x, dict) else {}
         )
-        df["competitor_eligible_counts"] = df["sub_category_name"].map(comp_eligible).apply(
+        df["competitor_eligible_counts"] = df["group_key"].map(comp_eligible).apply(
             lambda x: x if isinstance(x, dict) else {}
         )
-        df["competitor_mapped_counts"] = df["sub_category_name"].map(comp_mapped).apply(
+        df["competitor_mapped_counts"] = df["group_key"].map(comp_mapped).apply(
             lambda x: x if isinstance(x, dict) else {}
         )
+
+        # Identity columns per grain: subcategory mode keeps the subcategory name
+        # (commercial category is a carried column); category mode has no single
+        # subcategory, so the group_key IS the commercial category.
+        if group_by == "commercial_category":
+            df["commercial_category_name"] = df["group_key"]
+            df["sub_category_name"] = None
+        else:
+            df["sub_category_name"] = df["group_key"]
 
         return df.reset_index(drop=True)
 

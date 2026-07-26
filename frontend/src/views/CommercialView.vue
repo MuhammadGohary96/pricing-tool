@@ -87,9 +87,12 @@
         :competitors="store.blendedCompetitors"
         :selected-competitors="selectedCompetitors"
         :busy="store.refreshingBlended"
+        :group-by="store.blendedGroupBy"
         style="max-height: 420px;"
         @select="onSubcategorySelect"
+        @select-category="onCategorySelect"
         @select-product="onSelectProduct"
+        @set-group-by="store.setBlendedGroupBy"
       />
 
       <!-- Pivoted Product Table -->
@@ -171,6 +174,7 @@ watchDebounced(
     filters.brand,
     filters.competitor,
     filters.fpNames,
+    filters.vertical,
     filters.includePrivateLabel,
     filters.priceFallback,
   ],
@@ -187,6 +191,13 @@ watchDebounced(
 
 function onSubcategorySelect(subCategory) {
   filters.setFilter('subCategory', subCategory ? [subCategory] : [])
+}
+
+// Category roll-up drill: filter to that commercial category (the app's
+// "main_category" filter, which maps to commercial_category_name) and let the
+// cascade reset + reload subcategory options.
+function onCategorySelect(commercialCategory) {
+  filters.setFilter('mainCategory', commercialCategory ? [commercialCategory] : [])
 }
 
 function onSelectProduct({ productName, subcategory }) {

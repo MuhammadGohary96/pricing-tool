@@ -258,6 +258,7 @@ watchDebounced(
     filters.brand,
     filters.competitor,
     filters.fpNames,
+    filters.vertical,
     filters.includePrivateLabel,
     filters.priceFallback,
   ],

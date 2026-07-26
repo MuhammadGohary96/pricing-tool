@@ -10,7 +10,7 @@ class PricingDataServiceInterface(ABC):
         ...
 
     @abstractmethod
-    def get_blended_pi_by_subcategory(self, filters: dict = None) -> pd.DataFrame:
+    def get_blended_pi_by_subcategory(self, filters: dict = None, group_by: str = "sub_category") -> pd.DataFrame:
         ...
 
     @abstractmethod

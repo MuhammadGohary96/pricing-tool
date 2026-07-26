@@ -1071,7 +1071,9 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             })
         return self._shape_fp_competitor_pi(pd.DataFrame(rows))
 
-    def get_blended_pi_by_subcategory(self, filters: dict = None) -> pd.DataFrame:
+    def get_blended_pi_by_subcategory(self, filters: dict = None, group_by: str = "sub_category") -> pd.DataFrame:
+        # group_by is honored by the DuckDB serving path; this pandas fallback
+        # returns the subcategory grain regardless.
         # Product-level aggregate — unaffected by the competitor price fallback
         # (a purely FP-grain effect; see get_fp_competitor_pi / get_product_fp_matrix).
         df = self._apply_filters(self._df, filters)

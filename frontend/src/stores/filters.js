@@ -11,6 +11,9 @@ export const useFiltersStore = defineStore('filters', {
     brand: [],
     competitor: [],
     fpNames: [],
+    // Vertical — single-select toggle: '' (All) | 'Beauty' | 'Supermarket'.
+    // Beauty = main_category_name 'Fragrances & Beauty'; Supermarket = the rest.
+    vertical: '',
     includePrivateLabel: true,
     // Mode (not a scope filter): fill mapped-but-not-fresh prices with the
     // product×competitor modal, flagged estimated. Default OFF.
@@ -36,6 +39,7 @@ export const useFiltersStore = defineStore('filters', {
       if (state.brand.length) params.brand = state.brand.join(',')
       if (state.competitor.length) params.competitor = state.competitor.join(',')
       if (state.fpNames.length) params.fp_names = state.fpNames.join(',')
+      if (state.vertical) params.vertical = state.vertical
       if (!state.includePrivateLabel) params.exclude_private_label = true
       if (state.priceFallback) params.price_fallback = true
       return params
@@ -50,6 +54,7 @@ export const useFiltersStore = defineStore('filters', {
         state.brand.length ||
         state.competitor.length ||
         state.fpNames.length ||
+        !!state.vertical ||
         !state.includePrivateLabel
       )
     },
@@ -116,9 +121,12 @@ export const useFiltersStore = defineStore('filters', {
       }
     },
 
-    async fetchSubcategories() {
+    async fetchSubcategories(mainOverride) {
       try {
-        const main = this.mainCategory.length === 1 ? this.mainCategory[0] : null
+        // Override lets the FilterBar load subcategory options for a *staged*
+        // (not-yet-applied) category selection. Falls back to the committed one.
+        const committed = this.mainCategory.length === 1 ? this.mainCategory[0] : null
+        const main = mainOverride === undefined ? committed : mainOverride
         const res = await filtersApi.getSubcategories(main)
         this.subcategories = res.data.subcategories
       } catch (err) {
@@ -143,6 +151,7 @@ export const useFiltersStore = defineStore('filters', {
       this.brand = []
       this.competitor = []
       this.fpNames = []
+      this.vertical = ''
       this.includePrivateLabel = true
       this.fetchSubcategories()
     },
@@ -161,6 +170,7 @@ export const useFiltersStore = defineStore('filters', {
       this.brand = Array.isArray(snap.brand) ? [...snap.brand] : []
       this.competitor = Array.isArray(snap.competitor) ? [...snap.competitor] : []
       this.fpNames = Array.isArray(snap.fpNames) ? [...snap.fpNames] : []
+      this.vertical = typeof snap.vertical === 'string' ? snap.vertical : ''
       this.includePrivateLabel = 'includePrivateLabel' in snap ? !!snap.includePrivateLabel : true
       if ('priceFallback' in snap) this.priceFallback = !!snap.priceFallback
       this.fetchSubcategories()

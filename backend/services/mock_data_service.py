@@ -542,7 +542,7 @@ class MockPricingDataService(PricingDataServiceInterface):
     def get_all_products(self, filters: dict = None) -> pd.DataFrame:
         return self._apply_filters(self._df, filters)
 
-    def get_blended_pi_by_subcategory(self, filters: dict = None) -> pd.DataFrame:
+    def get_blended_pi_by_subcategory(self, filters: dict = None, group_by: str = "sub_category") -> pd.DataFrame:
         df = self._apply_filters(self._df, filters)
         used = df[df["used_product"] == True]
         if used.empty:

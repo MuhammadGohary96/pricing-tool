@@ -25,6 +25,7 @@ export const useExecutiveStore = defineStore('executive', {
       if (f.brand.length) p.brand = f.brand.join(',')
       if (f.competitor.length) p.competitor = f.competitor.join(',')
       if (f.fpNames.length) p.fp_names = f.fpNames.join(',')
+      if (f.vertical) p.vertical = f.vertical
       if (!f.includePrivateLabel) p.exclude_private_label = true
       if (f.priceFallback) p.price_fallback = true
       return p
