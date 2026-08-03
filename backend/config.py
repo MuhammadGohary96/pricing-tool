@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     DATA_SOURCE: str = "mock"
     BQ_PROJECT_ID: str = "bf-data-dev-qz06"
     BQ_DATASET: str = "dbt_gohary"
-    BQ_TABLE: str = "pricing_index_analysis"
+    BQ_TABLE: str = "competitor_price_monitoring_fps"
     BQ_COMPETITOR_TABLE: str = "competitor_products_analysis"
     BQ_LOCATION: str = "EU"
     GOOGLE_CLIENT_ID: str = ""

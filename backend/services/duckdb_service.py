@@ -70,7 +70,9 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             f"CREATE OR REPLACE VIEW fp_grain AS "
             f"SELECT * FROM read_parquet('{self._parquet_path}')"
         )
+        self._assert_gap_schema()
         self._materialize_global_base()
+        self._materialize_comp_catalogue()
         # Pre-warm in three stages:
         # 1. Page the entire Parquet file into OS cache (one large sequential read)
         # 2. Run a GLOBAL blended-pi query — warms DuckDB internals + tests SQL
@@ -91,9 +93,13 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
 
             # Find an FP with the most data and pre-warm against it
             t1 = time.time()
+            # row_type guard matters here: the competitor-only rows share a
+            # single NULL fp_name group that is larger than any real FP, so
+            # without it this picks NULL and the FP pre-warm silently degrades
+            # into a second GLOBAL query.
             top_fp_result = self._duckdb_conn.execute(
-                "SELECT fp_name FROM fp_grain GROUP BY fp_name "
-                "ORDER BY COUNT(*) DESC LIMIT 1"
+                "SELECT fp_name FROM fp_grain WHERE row_type = 'breadfast' "
+                "GROUP BY fp_name ORDER BY COUNT(*) DESC LIMIT 1"
             ).fetchone()
             if top_fp_result:
                 self.get_blended_pi_by_subcategory(filters={"fp_names": top_fp_result[0]})
@@ -105,6 +111,47 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         logger.info(
             f"[DuckDB] Ready — {row_count:,} rows, total pre-warm {time.time() - t0:.1f}s"
         )
+
+    def _assert_gap_schema(self) -> None:
+        """Fail loudly, and early, if the Parquet predates the gap-analysis layer.
+
+        Every aggregation path now gates on `row_type`. Without this check a
+        stale Parquet surfaces as a DuckDB binder error from deep inside a
+        query — or worse, only on the endpoints that happen to be hit first.
+        A restart alone does NOT pick up new columns (`_load_data` rehydrates
+        the existing Parquet), so the fix is always a forced refresh.
+        """
+        cols = {
+            r[0] for r in self._duckdb_conn.execute(
+                "SELECT column_name FROM (DESCRIBE SELECT * FROM fp_grain)"
+            ).fetchall()
+        }
+        missing = {"row_type", "brand_key", "is_shared_brand", "mapped_bf_sub_category"} - cols
+        if missing:
+            raise RuntimeError(
+                f"Parquet cache is missing the gap-analysis columns {sorted(missing)}. "
+                f"It predates the BigQuery gap layer. Delete {self._parquet_path} "
+                "(or POST /api/admin/refresh) to force a rebuild — a restart alone "
+                "rehydrates the same stale file."
+            )
+
+    def _materialize_comp_catalogue(self) -> None:
+        """Materialize the national competitor-only catalogue.
+
+        Deliberately NOT routed through `_BASE_CTE`: these rows carry
+        product_id = NULL, so its GROUP BY (product_id, competitor_id) would
+        collapse the whole catalogue into one row per competitor. They also need
+        no collapsing — the BigQuery layer already emits exactly one row per
+        (competitor, competitor product), national.
+        """
+        import time
+        t0 = time.time()
+        self._duckdb_conn.execute(
+            "CREATE OR REPLACE TABLE comp_catalogue AS "
+            "SELECT * FROM fp_grain WHERE row_type = 'competitor'"
+        )
+        (n,) = self._duckdb_conn.execute("SELECT COUNT(*) FROM comp_catalogue").fetchone()
+        logger.info(f"[DuckDB] Materialized comp_catalogue: {n:,} rows in {time.time() - t0:.1f}s")
 
     def _materialize_global_base(self) -> None:
         """Materialize the GLOBAL (unfiltered) aggregated base into a DuckDB
@@ -130,8 +177,12 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 f"CREATE OR REPLACE VIEW fp_grain AS "
                 f"SELECT * FROM read_parquet('{self._parquet_path}')"
             )
+            self._assert_gap_schema()
             self._materialize_global_base()
-            logger.info("[DuckDB] Refreshed Parquet + reopened view + rebuilt global_base")
+            self._materialize_comp_catalogue()
+            logger.info(
+                "[DuckDB] Refreshed Parquet + reopened view + rebuilt global_base + comp_catalogue"
+            )
 
     # ------------------------------------------------------------------
     # OVERRIDDEN — _apply_filters: the single aggregation path for EVERY
@@ -193,7 +244,8 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         `_df` isn't loaded on the DuckDB serving path)."""
         with self._duckdb_lock:
             return self._duckdb_conn.execute(
-                "SELECT * FROM fp_grain WHERE CAST(product_id AS VARCHAR) = ?",
+                "SELECT * FROM fp_grain "
+                "WHERE row_type = 'breadfast' AND CAST(product_id AS VARCHAR) = ?",
                 [str(product_id)],
             ).df()
 
@@ -300,7 +352,8 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
     _BASE_CTE = """
     WITH scoped AS (
         SELECT * FROM fp_grain
-        {where}
+        WHERE row_type = 'breadfast'
+        {and_where}
     ),
     -- BF modal price from fresh rows (smallest value among the most-frequent)
     bf_modal AS (
@@ -432,11 +485,29 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
     )
     """
 
+    @staticmethod
+    def _as_and(where: str) -> str:
+        """Turn a "WHERE a AND b" fragment into "AND a AND b" so it can be
+        appended to a clause that already opened with WHERE. Empty stays empty."""
+        w = (where or "").strip()
+        if not w:
+            return ""
+        if w.upper().startswith("WHERE "):
+            return "AND " + w[6:]
+        return "AND " + w
+
     def _base_cte(self, where: str) -> str:
         """_BASE_CTE with the WHERE clause injected. The product-level gate
         (`used_product`) is fixed to the observed definition — the competitor
-        price fallback is a purely FP-grain effect and never touches this path."""
-        return self._BASE_CTE.format(where=where)
+        price fallback is a purely FP-grain effect and never touches this path.
+
+        `scoped` is hard-gated to row_type='breadfast'. The competitor-only rows
+        added by the gap layer carry product_id = NULL, so without the gate they
+        would ALL collapse into a single row per competitor here and silently
+        corrupt every Executive / Commercial / Master-Data number. They are
+        served instead from the `comp_catalogue` table (_materialize_comp_catalogue).
+        """
+        return self._BASE_CTE.format(and_where=self._as_and(where))
 
     # ------------------------------------------------------------------
     # OVERRIDDEN ENDPOINT 1/5 — get_blended_pi_by_subcategory
@@ -687,7 +758,9 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             # Observed-only — unchanged from the original (the regression guard:
             # price_fallback=False must stay byte-identical to pre-feature output).
             sql = """
-            WITH scoped AS (SELECT * FROM fp_grain {where})
+            WITH scoped AS (
+                SELECT * FROM fp_grain WHERE row_type = 'breadfast' {and_where}
+            )
             SELECT
                 fp_name,
                 competitor_name,
@@ -704,7 +777,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             GROUP BY fp_name, competitor_name
             HAVING COUNT(DISTINCT product_id) FILTER (WHERE eligible_product) > 0
             ORDER BY fp_name, competitor_name
-            """.format(where=where)
+            """.format(and_where=self._as_and(where))
         else:
             # Fallback ON — fill mapped, non-fresh (product, fp, competitor) cells
             # with the per-(product, competitor) FRESH modal price computed over ALL
@@ -716,14 +789,17 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             # full grain (a price is a product-level property, independent of the FP
             # filter).
             sql = """
-            WITH scoped AS (SELECT * FROM fp_grain {where}),
+            WITH scoped AS (
+                SELECT * FROM fp_grain WHERE row_type = 'breadfast' {and_where}
+            ),
             modal AS (
                 SELECT product_id, competitor_name, competitor_sale_price AS modal_price FROM (
                     SELECT product_id, competitor_name, competitor_sale_price,
                            ROW_NUMBER() OVER (PARTITION BY product_id, competitor_name
                                ORDER BY COUNT(*) DESC, competitor_sale_price ASC) AS rn
                     FROM fp_grain
-                    WHERE competitor_sale_price > 0 AND is_recent_competitor = TRUE
+                    WHERE row_type = 'breadfast'
+                      AND competitor_sale_price > 0 AND is_recent_competitor = TRUE
                     GROUP BY product_id, competitor_name, competitor_sale_price
                 ) WHERE rn = 1
             ),
@@ -755,7 +831,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             GROUP BY fp_name, competitor_name
             HAVING COUNT(DISTINCT product_id) FILTER (WHERE eligible_product) > 0
             ORDER BY fp_name, competitor_name
-            """.format(where=where)
+            """.format(and_where=self._as_and(where))
         with self._duckdb_lock:
             df = self._duckdb_conn.execute(sql, params).df()
         return self._shape_fp_competitor_pi(df)

@@ -93,7 +93,45 @@ SELECT
     CAST(similarity_score           AS FLOAT64) AS similarity_score,
     match_potential_product_name,
     action_type,
-    classification
+    classification,
+
+    -- ── Gap-analysis layer (STEPS 15-20 of docs/FP_granularity_pricing.sql) ──
+    -- row_type discriminates the two grains in this table:
+    --   'breadfast'  → (product, fp, competitor); everything above is populated
+    --   'competitor' → national competitor-only catalogue; product_id / fp_id
+    --                  are NULL, so these rows MUST NOT reach _BASE_CTE (which
+    --                  collapses on (product_id, competitor_id)). The guard
+    --                  lives in duckdb_service._base_cte / get_fp_competitor_pi
+    --                  and in _aggregate_to_global below.
+    row_type,
+    -- scope flags (the tab's beauty / private-label toggles)
+    is_beauty,
+    is_private_label,
+    beauty_path_share,
+    -- brand overlap
+    brand_key,
+    is_shared_brand,
+    comp_brand_name,
+    -- gap family. is_mapped (above) stays the single match truth.
+    matched_comp_active_7d,
+    is_confirmed_no_match,
+    is_potential_match,
+    CAST(best_similarity_in_portfolio AS FLOAT64) AS best_similarity_in_portfolio,
+    -- competitor-side detail (NULL on 'breadfast' rows)
+    competitor_product_key,
+    category_level_1,
+    category_level_2,
+    category_level_3,
+    category_level_4,
+    -- competitor category → BF subcategory bridge. On 'breadfast' rows
+    -- mapped_bf_sub_category echoes the product's own subcategory, so a single
+    -- subcategory filter slices both sides of the gap analysis.
+    mapped_bf_sub_category,
+    mapped_bf_sub_categories_all,
+    CAST(mapped_pct_of_comp_category AS FLOAT64) AS mapped_pct_of_comp_category,
+    bridge_level,
+    -- data-quality flag: FALSE for Carrefour (no live v2 catalogue)
+    competitor_has_v2_catalogue
 FROM `{project}.{dataset}.{table}`
 """
 
@@ -293,23 +331,55 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             "bf_sale_price", "bf_regular_price", "competitor_sale_price",
             "min_competitor_sale_price", "max_competitor_sale_price",
             "similarity_score", "cumulative_revenue_share",
+            # gap layer
+            "best_similarity_in_portfolio", "mapped_pct_of_comp_category",
+            "beauty_path_share",
         ]
         for col in numeric_cols:
             if col in df.columns and df[col].dtype == object:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        # Cast booleans (BQ may return NaN for nullable bools)
+        # matched_comp_active_7d arrives as INT64 (0/1, NULL when the pair has no
+        # observation at all). Normalize to a plain bool: "no observation" and
+        # "observation but stale" both mean "not active", which is what every
+        # consumer asks of it.
+        if "matched_comp_active_7d" in df.columns:
+            df["matched_comp_active_7d"] = (
+                pd.to_numeric(df["matched_comp_active_7d"], errors="coerce").fillna(0) == 1
+            )
+
+        # Cast booleans (BQ may return NaN for nullable bools).
+        # Gap-layer flags are NULL on the row type they don't apply to
+        # (e.g. is_confirmed_no_match on competitor rows); False is the correct
+        # reading of "does not apply", and it matches the COALESCE(..., FALSE)
+        # the roll-up SQL uses.
         for col in ["eligible_product", "has_PI", "updated", "match_potential", "used_product",
-                    "is_recent_breadfast", "is_recent_competitor", "prices_recently_updated", "is_mapped"]:
+                    "is_recent_breadfast", "is_recent_competitor", "prices_recently_updated", "is_mapped",
+                    # gap layer
+                    "is_beauty", "is_private_label", "is_shared_brand",
+                    "is_confirmed_no_match", "is_potential_match",
+                    "competitor_has_v2_catalogue"]:
             if col in df.columns:
                 df[col] = df[col].fillna(False).astype(bool)
 
-        # Cast string columns (keep as plain strings to avoid categorical dtype bugs)
-        df["product_id"] = df["product_id"].astype(str)
-        if "fp_id" in df.columns:
-            df["fp_id"] = df["fp_id"].astype(str)
-        if "fp_name" in df.columns:
-            df["fp_name"] = df["fp_name"].astype(str)
+        # Cast string columns (keep as plain strings to avoid categorical dtype bugs).
+        # NULL-preserving: a bare .astype(str) turns missing values into the
+        # literal strings "nan"/"None", which are not NULL to anything
+        # downstream. That is harmless for 'breadfast' rows (never NULL here)
+        # but the gap layer's competitor-only rows are NULL in all three, and a
+        # stringified "None" fp_name would show up as an FP in the dropdown.
+        # Integer ids need the nullable Int64 hop first: BQ INT64 + NULLs arrives
+        # as float64, and str() on that yields "1180345.0".
+        for col in ("product_id", "fp_id", "fp_name"):
+            if col not in df.columns:
+                continue
+            s = df[col]
+            if pd.api.types.is_float_dtype(s) or pd.api.types.is_integer_dtype(s):
+                s = s.astype("Int64")
+            df[col] = pd.Series(
+                [None if pd.isna(v) else str(v) for v in s],
+                index=df.index, dtype=object,
+            )
 
         # Derive pi_deviation (vectorized; NaN stays NaN)
         df["pi_deviation"] = (df["sale_PI"] - 1).round(4)
@@ -753,6 +823,13 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
           mapped + ≥1 fresh obs     → Complete
           mapped + only stale obs   → Needs Price Update
         """
+        # Competitor-only rows (gap layer) are a different grain: national, with
+        # product_id = NULL. Collapsing on product_id would fold all of them into
+        # one row per competitor, so they never enter this path — they are served
+        # from the separate comp_catalogue materialization.
+        if "row_type" in df.columns:
+            df = df[df["row_type"] == "breadfast"]
+
         # 1. Modal BF sale price — from recent BF rows only
         bf_recent = df[df["is_recent_breadfast"] == True]
         bf_modal = (
