@@ -11,7 +11,10 @@
 --   has_PI    → fp-level: this FP has an actual price observation for the
 --               (product, competitor) pair, so sale_PI is computable.
 --
--- FP scope: active FPs matching "<Area> FP #<number>" and not in SLEEP.
+-- Competitor scope: the seven benchmarked competitors (Amazon, Amazon Now,
+-- Seoudi, Talabat, Noon Minutes, Rabbit, Carrefour).
+-- FP scope: active FPs matching "<Area> FP #<number>" or named "*Sahel*",
+-- and not in SLEEP.
 -- (product, fp) pairs are only emitted when:
 --   • Breadfast has a price record for the SKU in that FP, AND
 --   • the SKU was live in the app in that FP in the last 7 days.
@@ -23,9 +26,9 @@ CREATE OR REPLACE TABLE dbt_gohary.competitor_price_monitoring_fps AS (
 WITH
 -- ─────────────────────────────────────────────────────────────────────────────
 -- STEP 0a ▸ COMPETITOR REGISTRY
--- Competitors we benchmark against (everyone except Breadfast). competitor_key
--- is carried so we can join the daily comparison fact (which keys on
--- competitor_key, not competitor_id).
+-- The seven competitors we benchmark against. competitor_key is carried so we
+-- can join the daily comparison fact (which keys on competitor_key, not
+-- competitor_id).
 -- ─────────────────────────────────────────────────────────────────────────────
 competitor_registry AS (
     SELECT
@@ -33,20 +36,21 @@ competitor_registry AS (
         competitor_key,
         competitor_name
     FROM `followbreadfast.l03_marts.dim_competitors`
-    WHERE competitor_name != 'Breadfast'
+    WHERE competitor_name IN ('Amazon', 'Amazon Now', 'Seoudi', 'Talabat', 'Noon Minutes', 'Rabbit', 'Carrefour')
 ),
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- STEP 0b ▸ FP REGISTRY
--- Active FPs whose name ends with "FP #<number>" and are not currently sleeping.
+-- Active FPs whose name ends with "FP #<number>", plus the Sahel FPs (which do
+-- not follow that naming convention), and are not currently sleeping.
 -- ─────────────────────────────────────────────────────────────────────────────
 fp_registry AS (
     SELECT
         fp_id,
         fp_name
     FROM `followbreadfast.l03_marts.dim_fps`
-    WHERE REGEXP_CONTAINS(fp_name, r'FP #\d+$')
+    WHERE (REGEXP_CONTAINS(fp_name, r'FP #\d+$') OR lower(fp_name) LIKE '%sahel%')
         AND current_fp_now_status != 'SLEEP'
 ),
 
