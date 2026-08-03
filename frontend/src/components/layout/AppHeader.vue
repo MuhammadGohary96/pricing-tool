@@ -175,5 +175,6 @@ const tabs = [
   { label: 'Executive', to: '/executive' },
   { label: 'Commercial', to: '/commercial' },
   { label: 'Competitors', to: '/competitor-products' },
+  { label: 'Gap Analysis', to: '/gap-analysis' },
 ]
 </script>

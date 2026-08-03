@@ -84,6 +84,15 @@ export const competitorProductsApi = {
   exportCSV: (params) => api.get('/competitor-products/export', { params }),
 }
 
+export const gapApi = {
+  getFilters: () => api.get('/gap/filters'),
+  getKPIs: (params) => api.get('/gap/kpis', { params }),
+  getSubcategories: (params) => api.get('/gap/subcategories', { params }),
+  getBrands: (params) => api.get('/gap/brands', { params }),
+  getProducts: (params) => api.get('/gap/products', { params }),
+  exportRows: (params) => api.get('/gap/export', { params }),
+}
+
 export const executiveApi = {
   getSummary: () => api.get('/executive/summary'),
   getPITrend: () => api.get('/executive/pi-trend'),

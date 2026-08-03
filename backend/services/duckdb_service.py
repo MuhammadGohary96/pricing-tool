@@ -1575,7 +1575,12 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             comps = self._duckdb_conn.execute("""
                 SELECT competitor_name,
                        BOOL_OR(COALESCE(competitor_has_v2_catalogue, FALSE)) AS has_catalogue,
-                       COUNT(*) FILTER (WHERE row_type = 'competitor')       AS comp_only_rows
+                       COUNT(*) FILTER (WHERE row_type = 'competitor')       AS comp_only_rows,
+                       -- Drives the tab's default competitor. Picking by
+                       -- comp_only_rows instead would land on the competitor we
+                       -- have matched *least*, which reads as a broken tab.
+                       COUNT(DISTINCT product_id) FILTER (
+                           WHERE row_type = 'breadfast' AND is_mapped)       AS matched_products
                 FROM fp_grain
                 WHERE competitor_name IS NOT NULL
                 GROUP BY competitor_name
@@ -1595,6 +1600,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                     "name": r.competitor_name,
                     "has_catalogue": bool(r.has_catalogue),
                     "comp_only_rows": int(r.comp_only_rows),
+                    "matched_products": int(r.matched_products),
                 }
                 for r in comps.itertuples()
             ],
