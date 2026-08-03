@@ -30,7 +30,7 @@ inverted gen-1 convention. Never copy a PI number or a cheaper/expensive label f
 | | `'breadfast'` | `'competitor'` |
 |---|---|---|
 | grain | (product, fp, competitor) | (competitor, competitor product) |
-| rows | 2,912,511 | 72,779 |
+| rows | ~2,912,800 | 65,713 |
 | `product_id` / `fp_id` | populated | **NULL** — national |
 | serves | every existing tab, plus our side of the gap | "they carry, we don't" |
 
@@ -70,6 +70,40 @@ competitor_price_updated_at`. Write roll-up SQL against the **renamed** names.
 
 Roll-up SQL is **DuckDB**: `COUNT(*) FILTER (WHERE …)` not `COUNTIF`, `CASE WHEN` not
 `IF()`, `list_sort(list_distinct(list(x) FILTER (…)))` for the brand lists.
+
+---
+
+## 3b. Competitor catalogue dedup
+
+Competitor catalogues contain the same product many times over. `comp_products` collapses
+each **(competitor, normalized name, brand)** group to exactly one row:
+
+1. a matched copy wins (`is_matched_any DESC`),
+2. otherwise the most recently seen (`comp_last_seen DESC`),
+3. ties broken on `competitor_product_key` so the choice is stable between builds.
+
+Rows with an empty name are never collapsed — a missing name is not evidence of duplication.
+Bundles (`' + '` in the name) are dropped unless matched, since we don't carry bundles.
+
+This lives at the single definition of the catalogue **on purpose**, so it applies to
+everything downstream: the brand universe, the category bridge, the recommendation flags,
+the catalogue-health counts and the competitor-only output branch. If you ever need a
+non-deduped view, add a separate CTE — do not relax this one.
+
+Watch for a regression here: an `OR is_matched_any = 1` style short-circuit in the `QUALIFY`
+keeps *every* matched copy rather than one, and the symptom is subtle because the leaked rows
+all classify as `Matched Out Of Scope` (`comp_matched_any` has no `fp_registry` gate, so it
+flags products that `paired_comp_keys` does not exclude). That bug cost 8.5 % of the
+catalogue. Regression check:
+
+```sql
+SELECT COUNT(*) FROM (
+  SELECT competitor_name, LOWER(TRIM(product_name_en)) nn, brand_key, COUNT(*) n
+  FROM `bf-data-dev-qz06.dbt_gohary.competitor_price_monitoring_fps`
+  WHERE row_type = 'competitor'
+  GROUP BY 1,2,3 HAVING COUNT(*) > 1 AND nn <> ''
+)  -- must be 0
+```
 
 ---
 

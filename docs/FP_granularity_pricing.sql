@@ -717,8 +717,22 @@ comp_products_raw AS (
     WHERE cp.pricing_tool_version = 'v2'
     GROUP BY cp.competitor_id, cr.competitor_name, cp.competitor_product_key
 ),
--- Dedup identical names within (competitor, brand): a matched copy always
--- survives; an all-unmatched group keeps only its most recently seen key.
+-- Dedup identical names within (competitor, brand) down to EXACTLY ONE row:
+-- a matched copy wins, otherwise the most recently seen one. The dedup is
+-- applied here, at the single definition of the competitor catalogue, so it
+-- carries into everything downstream — the brand universe, the category
+-- bridge, the recommendation flags, the catalogue-health counts and the
+-- competitor-only output branch.
+--
+-- The earlier `OR is_matched_any = 1` short-circuit kept EVERY matched copy,
+-- not one. That leaked 6,159 duplicate rows (8.5% of the competitor
+-- catalogue) into the gap tab — 19 identical "Flower Hair Clip" rows for
+-- Amazon, 18 "Ice Cream" for Amazon Now. All of them were 'Matched Out Of
+-- Scope', which is the tell: comp_matched_any has no fp_registry gate, so it
+-- marks a product matched that paired_comp_keys (which is FP-gated, via
+-- competitor_mapping) does not exclude — so every copy fell through to the
+-- comp-only branch.
+--
 -- Bundle exclusion: unmatched products whose name joins two items with ' + '
 -- are dropped, because Breadfast bundles are out of scope on our side.
 comp_products AS (
@@ -740,11 +754,15 @@ comp_products AS (
     )
     WHERE ( is_matched_any = 1
             OR NOT REGEXP_CONTAINS(COALESCE(comp_product_name, ''), r'\s\+\s') )
+    -- An empty name is not evidence of duplication, so those rows are never
+    -- collapsed into each other.
     QUALIFY name_norm = ''
-         OR is_matched_any = 1
-         OR ( MAX(is_matched_any) OVER (PARTITION BY competitor_id, name_norm, brand_norm) = 0
-              AND ROW_NUMBER() OVER (PARTITION BY competitor_id, name_norm, brand_norm
-                                     ORDER BY comp_last_seen DESC, competitor_product_key) = 1 )
+         OR ROW_NUMBER() OVER (
+                PARTITION BY competitor_id, name_norm, brand_norm
+                ORDER BY is_matched_any DESC,        -- a matched copy wins
+                         comp_last_seen DESC,        -- else the freshest
+                         competitor_product_key      -- deterministic tiebreak
+            ) = 1
 ),
 -- Brand universe per competitor: products on the list (active or matched)
 comp_brand AS (

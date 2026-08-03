@@ -101,8 +101,16 @@ comp_products_raw AS (
     WHERE cp.pricing_tool_version = 'v2'
     GROUP BY cp.competitor_id, cr.competitor_name, cp.competitor_product_key
 ),
--- Dedup identical names within (competitor, brand): a matched copy always
--- survives; an all-unmatched group keeps only its most recently seen key.
+-- Dedup identical names within (competitor, brand) down to EXACTLY ONE row:
+-- a matched copy wins, otherwise the most recently seen one. Applied here, at
+-- the single definition of the competitor catalogue, so it carries into
+-- everything downstream (brand universe, category bridge, recommendation
+-- flags, catalogue-health counts, competitor-only branch).
+--
+-- REVISED 2026-08-03: the previous `OR is_matched_any = 1` short-circuit kept
+-- EVERY matched copy rather than one, leaking 6,159 duplicate rows (8.5% of
+-- the catalogue) into the gap tab.
+--
 -- Bundle exclusion: unmatched products whose name joins two items with ' + '
 -- are dropped, because Breadfast bundles are out of scope on our side.
 comp_products AS (
@@ -124,11 +132,14 @@ comp_products AS (
     )
     WHERE ( is_matched_any = 1
             OR NOT REGEXP_CONTAINS(COALESCE(comp_product_name, ''), r'\s\+\s') )
+    -- An empty name is not evidence of duplication.
     QUALIFY name_norm = ''
-         OR is_matched_any = 1
-         OR ( MAX(is_matched_any) OVER (PARTITION BY competitor_id, name_norm, brand_norm) = 0
-              AND ROW_NUMBER() OVER (PARTITION BY competitor_id, name_norm, brand_norm
-                                     ORDER BY comp_last_seen DESC, competitor_product_key) = 1 )
+         OR ROW_NUMBER() OVER (
+                PARTITION BY competitor_id, name_norm, brand_norm
+                ORDER BY is_matched_any DESC,        -- a matched copy wins
+                         comp_last_seen DESC,        -- else the freshest
+                         competitor_product_key      -- deterministic tiebreak
+            ) = 1
 ),
 -- Brand universe per competitor: products on the list (active or matched)
 comp_brand AS (

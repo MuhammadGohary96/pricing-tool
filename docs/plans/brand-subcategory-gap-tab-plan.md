@@ -298,18 +298,21 @@ the original table was built under; the tab's own default also drops private lab
 
 | Subcategory | BF prod | Matched | Map % | Map % shared | No-match | Addr % | Blended PI | Coverage % | Comp-only | Shared br | BF-only br | Comp-only br |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Ice Cream | 200 | 149 | 74.5 | 92.0 | 44 | 95.5 | 0.996 | 76.3 | 114 | 5 | 6 | 11 |
-| Chocolate | 269 | 226 | 84.0 | 93.3 | 39 | 98.3 | 0.991 | 77.2 | 324 | 26 | 6 | 26 |
-| Long-Life Milk | 35 | 34 | 97.1 | 97.1 | 1 | 100.0 | 1.006 | 100.0 | 22 | 5 | 0 | 1 |
-| Branded Cheese | 152 | 122 | 80.3 | 80.3 | 29 | 99.2 | 1.023 | 79.4 | 182 | 12 | 0 | 12 |
-| Chips | 171 | 112 | 65.5 | 80.5 | 55 | 96.6 | 0.993 | 58.0 | 144 | 11 | 5 | 19 |
-| Poultry | 71 | 33 | 46.5 | 86.8 | 29 | 78.6 | 1.070 | 76.9 | 73 | 3 | 3 | 1 |
-| Vegetables | 87 | 26 | 29.9 | 17.2 | 49 | 68.4 | 1.075 | 18.4 | 110 | 2 | 4 | 5 |
-| Fruits | 95 | 7 | 7.4 | 0.0 | 71 | 29.2 | 1.093 | 6.8 | 85 | 2 | 4 | 7 |
+| Ice Cream | 200 | 149 | 74.5 | 92.0 | 44 | 95.5 | 0.996 | 76.3 | 100 | 5 | 6 | 11 |
+| Chocolate | 269 | 226 | 84.0 | 93.3 | 39 | 98.3 | 0.991 | 77.2 | 303 | 26 | 6 | 26 |
+| Long-Life Milk | 35 | 34 | 97.1 | 97.1 | 1 | 100.0 | 1.006 | 100.0 | 8 | 5 | 0 | 1 |
+| Branded Cheese | 152 | 122 | 80.3 | 80.3 | 29 | 99.2 | 1.023 | 79.4 | 142 | 12 | 0 | 12 |
+| Chips | 171 | 112 | 65.5 | 80.5 | 55 | 96.6 | 0.993 | 58.0 | 111 | 11 | 5 | 14 |
+| Poultry | 71 | 33 | 46.5 | 86.8 | 29 | 78.6 | 1.070 | 76.9 | 57 | 3 | 3 | 1 |
+| Vegetables | 87 | 26 | 29.9 | 17.2 | 49 | 68.4 | 1.075 | 18.4 | 93 | 2 | 4 | 5 |
+| Fruits | 95 | 7 | 7.4 | 0.0 | 71 | 29.2 | 1.093 | 6.8 | 78 | 2 | 4 | 7 |
 
 Talabat headline KPIs at this scope: 8,289 products · 4,839 matched (58.4 %) ·
-3,235 confirmed no-match · 95.7 % addressable · 10,688 competitor-only (8,420 bridged) ·
-506 shared / 248 BF-only / 893 comp-only brands.
+3,235 confirmed no-match · 95.7 % addressable · 9,319 competitor-only (7,218 bridged) ·
+506 shared / 248 BF-only / 884 comp-only brands.
+
+> Comp-only columns are **post-dedup** (see the dedup note below). Every Breadfast-side
+> column is unchanged by that fix.
 
 > **What moved vs. the rev-1 table, and why.** All 8 blended PIs and all 8 matched counts
 > came out identical, which is the strongest signal the roll-up is faithful. Two families
@@ -336,8 +339,10 @@ Checklist — **all verified 2026-08-03**:
       `ANY_VALUE` / row-order nondeterminism under DuckDB's parallel aggregation, not a
       regression. Use `scripts/kpi_snapshot.py --diff a.json b.json` (canonicalizes row
       order; `--raw` to keep it).
-- [x] competitor rows total **72,779** (plan predicted ≈72,825; the 46-row delta is 8 days
-      of catalogue churn). Carrefour = 0 with `competitor_has_v2_catalogue = false`.
+- [x] competitor rows total **65,713** after the duplicate fix below (72,779 before it; the
+      plan's ≈72,825 estimate carried the same duplication). Carrefour = 0 with
+      `competitor_has_v2_catalogue = false`.
+- [x] **zero** remaining (competitor, name, brand) groups with more than one row.
 - [x] `matched ≤ addressable ≤ bf_products` on every roll-up row, across all 7 competitors
       × both scopes — 0 violations.
 - [x] `comp_catalogue` = 72,779 == competitor rows in the Parquet (proves they bypassed
@@ -346,7 +351,45 @@ Checklist — **all verified 2026-08-03**:
 - [x] did **not** assert `mapping_pct ≤ mapping_pct_shared` — Vegetables (29.9 vs 17.2) and
       Branded Cheese (equal) confirm it does not hold.
 
-Two bugs the rebuild surfaced, both fixed in `bigquery_service.py`:
+### Duplicate competitor products — fixed 2026-08-03
+
+The `comp_products` dedup was meant to reduce each (competitor, name, brand) group to one
+row: a matched copy if there is one, otherwise the most recently seen. Its `QUALIFY` had an
+`OR is_matched_any = 1` short-circuit that kept **every** matched copy instead of one.
+
+That leaked **6,159 duplicate rows — 8.5 % of the competitor catalogue**: 19 identical
+"Flower Hair Clip" rows for Amazon, 18 "Ice Cream" for Amazon Now. All were
+`Matched Out Of Scope`, which is the diagnostic: `comp_matched_any` has no `fp_registry`
+gate, so it flags a product matched that `paired_comp_keys` (FP-gated, via
+`competitor_mapping`) does not exclude — so every copy fell through to the comp-only branch.
+
+The fix is a single deterministic ranking, applied at the one place the catalogue is
+defined so it carries into the brand universe, the category bridge, the recommendation
+flags, the catalogue-health counts and the comp-only branch alike:
+
+```sql
+QUALIFY name_norm = ''                      -- an unnamed row is not evidence of duplication
+     OR ROW_NUMBER() OVER (
+            PARTITION BY competitor_id, name_norm, brand_norm
+            ORDER BY is_matched_any DESC,   -- a matched copy wins
+                     comp_last_seen DESC,   -- else the freshest
+                     competitor_product_key -- deterministic tiebreak
+        ) = 1
+```
+
+Removed 19,116 catalogue rows (10,170 of them active); competitor output rows 72,779 →
+**65,713**. Same-name survivors are genuinely different brands — "Flower Hair Clip" keeps
+Daphne and Catch Up; "Ice Cream" keeps one row per ice-cream brand.
+
+**No Executive / Commercial / Master-Data number moved.** The dedup only feeds gap-only
+columns; `grep` confirms **zero** references to `comp_products` / `comp_brand` / `rec_flags`
+/ `competitor_catalogue` / `bridge_*` anywhere in STEPS 1-13, which are the sole source of
+`classification`, `used_product`, `sale_PI` and `is_mapped`. The 4 scalar entries that did
+shift between the two rebuilds (+1 Rabbit used product, ±2 classification, blended PI in the
+4th decimal) are ambient source drift: breadfast rows went 2,912,511 → 2,912,763 over the
+same interval, and the dedup cannot add a breadfast row.
+
+### Two further bugs the first rebuild surfaced, both fixed in `bigquery_service.py`:
 
 * `product_id` / `fp_id` / `fp_name` were cast with a bare `.astype(str)`. Those columns
   became nullable for the first time (competitor rows), so NULL turned into the literal
