@@ -43,6 +43,14 @@ class BlendedPIRow(BaseModel):
     eligible_product_count: int = 0
     mapped_product_count: int = 0
     needs_action_count: int = 0
+    # Matchability — same definitions as the gap tab and the Executive
+    # competitor overview. comp_only_products is 0 in commercial-category grain:
+    # the category bridge maps onto our subcategories only.
+    matched_fresh_count: int = 0
+    confirmed_no_match_count: int = 0
+    potential_match_count: int = 0
+    addressable_pct: Optional[float] = None
+    comp_only_products: int = 0
     product_pis: list[ProductPIPoint] = []
     competitor_blended_pis: dict[str, Optional[float]] = {}
     competitor_product_pis: dict[str, list[ProductPIPoint]] = {}

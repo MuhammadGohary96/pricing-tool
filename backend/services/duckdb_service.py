@@ -564,10 +564,31 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         # Lock serializes against concurrent requests on the single connection.
         materialize_sql = base_cte + " SELECT * FROM base"
 
+        # Competitor-only products, bridged into our taxonomy. Only meaningful at
+        # subcategory grain: the BigQuery bridge maps a competitor category onto
+        # one of OUR subcategories, never onto a commercial category. In category
+        # grain the CTE is present but empty so the join below stays uniform.
+        comp_where, comp_params = self._comp_side_where(filters)
+        if grp == "sub_category_name":
+            comp_side_sql = f"""
+        comp_side AS (
+            SELECT mapped_bf_sub_category AS group_key, COUNT(*) AS comp_only_products
+            FROM comp_catalogue
+            WHERE mapped_bf_sub_category IS NOT NULL{comp_where}
+            GROUP BY 1
+        ),"""
+        else:
+            comp_side_sql = """
+        comp_side AS (
+            SELECT CAST(NULL AS VARCHAR) AS group_key, 0 AS comp_only_products WHERE FALSE
+        ),"""
+            comp_params = []
+
         # __GRP__ is substituted with the grouping column (avoids f-string/format
         # clashing with the DuckDB struct literals `{...}` below).
         sql_subcat = """
-        WITH used_agg AS (
+        WITH __COMP_SIDE__
+        used_agg AS (
             SELECT
                 __GRP__ AS group_key,
                 ROUND(
@@ -583,7 +604,11 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 }) FILTER (WHERE used_product AND sale_PI IS NOT NULL) AS product_pis
             FROM base_tmp
             GROUP BY __GRP__
-            HAVING COUNT(DISTINCT product_id) FILTER (WHERE used_product) > 0
+            -- No HAVING on used_product: a group where nothing is matched or
+            -- priced is the single biggest gap there is, and filtering it out
+            -- made it invisible rather than flagged. Such rows now come through
+            -- with blended_pi NULL and their gap columns populated.
+            -- (The treemap route filters total_revenue > 0 so it is unaffected.)
         ),
         -- Revenue summed over DISTINCT used products (total_revenue is product-
         -- level, constant across competitor rows). Matches pandas
@@ -612,6 +637,38 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 ) AS needs_action_count
             FROM base_tmp
             GROUP BY __GRP__
+        ),
+        -- Matchability, computed PER PRODUCT first.
+        --
+        -- This row is pooled across every competitor in scope, so the flags have
+        -- to be resolved to the product before they are counted. A product can
+        -- be mapped to Talabat and confirmed-no-match for Amazon at the same
+        -- time; counting both directly makes "matched" and "no-match" overlap,
+        -- and (total - no_match) can then fall below matched — which produced an
+        -- addressable rate of 1800%. Resolved at product grain, "no-match" means
+        -- what a category manager reads it as: nobody has an equivalent.
+        prod_flags AS (
+            SELECT
+                __GRP__ AS group_key,
+                product_id,
+                BOOL_OR(is_mapped)                              AS is_mapped,
+                BOOL_OR(is_mapped AND matched_comp_active_7d)   AS matched_fresh,
+                BOOL_OR(is_confirmed_no_match)                  AS any_no_match,
+                BOOL_OR(is_potential_match)                     AS any_potential
+            FROM base_tmp
+            GROUP BY 1, 2
+        ),
+        gap_counts AS (
+            SELECT
+                group_key,
+                COUNT(*) FILTER (WHERE matched_fresh)                        AS matched_fresh_count,
+                COUNT(*) FILTER (WHERE NOT is_mapped AND any_no_match)       AS confirmed_no_match_count,
+                COUNT(*) FILTER (WHERE NOT is_mapped AND any_potential)      AS potential_match_count,
+                ROUND(100.0 * COUNT(*) FILTER (WHERE is_mapped)
+                      / NULLIF(COUNT(*) - COUNT(*) FILTER (
+                            WHERE NOT is_mapped AND any_no_match), 0), 1)     AS addressable_pct
+            FROM prod_flags
+            GROUP BY group_key
         )
         SELECT
             ua.group_key,
@@ -623,12 +680,19 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             CAST(COALESCE(fc.total_product_count, 0)    AS INTEGER) AS total_product_count,
             CAST(COALESCE(fc.eligible_product_count, 0) AS INTEGER) AS eligible_product_count,
             CAST(COALESCE(fc.mapped_product_count, 0)   AS INTEGER) AS mapped_product_count,
-            CAST(COALESCE(fc.needs_action_count, 0)     AS INTEGER) AS needs_action_count
+            CAST(COALESCE(fc.needs_action_count, 0)     AS INTEGER) AS needs_action_count,
+            CAST(COALESCE(gc.matched_fresh_count, 0)      AS INTEGER) AS matched_fresh_count,
+            CAST(COALESCE(gc.confirmed_no_match_count, 0) AS INTEGER) AS confirmed_no_match_count,
+            CAST(COALESCE(gc.potential_match_count, 0)    AS INTEGER) AS potential_match_count,
+            gc.addressable_pct,
+            CAST(COALESCE(cs.comp_only_products, 0)      AS INTEGER) AS comp_only_products
         FROM used_agg ua
         LEFT JOIN used_rev ur USING (group_key)
         LEFT JOIN full_counts fc USING (group_key)
+        LEFT JOIN gap_counts gc USING (group_key)
+        LEFT JOIN comp_side cs USING (group_key)
         ORDER BY ua.blended_pi DESC NULLS LAST
-        """.replace("__GRP__", grp)
+        """.replace("__GRP__", grp).replace("__COMP_SIDE__", comp_side_sql)
 
         sql_comp = """
         WITH comp_agg AS (
@@ -678,7 +742,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 "CREATE OR REPLACE TEMPORARY TABLE base_tmp AS " + materialize_sql,
                 params,
             )
-            df = self._duckdb_conn.execute(sql_subcat).df()
+            df = self._duckdb_conn.execute(sql_subcat, comp_params).df()
             comp_df = self._duckdb_conn.execute(sql_comp).df()
 
         if df.empty:
@@ -688,6 +752,8 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 "total_revenue", "pi_deviation", "direction",
                 "total_product_count", "eligible_product_count",
                 "mapped_product_count", "needs_action_count",
+                "matched_fresh_count", "confirmed_no_match_count",
+                "potential_match_count", "addressable_pct", "comp_only_products",
                 "product_pis",
                 "competitor_blended_pis", "competitor_product_pis",
                 "competitor_used_counts", "competitor_needs_action_counts",
@@ -699,9 +765,20 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             lambda x: round(x - 1, 4) if pd.notna(x) else None
         )
         df["direction"] = df["pi_deviation"].apply(pi_direction)
-        df["product_pis"] = df["product_pis"].apply(
-            lambda x: list(x) if x is not None else []
-        )
+        # A group with nothing used now reaches here (the HAVING is gone), and its
+        # LIST(...) FILTER aggregate comes back as pandas NA rather than None —
+        # list(pd.NA) raises, so test for missing rather than for None.
+        def _as_list(x):
+            if x is None:
+                return []
+            try:
+                if pd.isna(x):
+                    return []
+            except (TypeError, ValueError):
+                pass  # array-likes raise here; they are genuine lists
+            return list(x)
+
+        df["product_pis"] = df["product_pis"].apply(_as_list)
 
         # Build per-competitor dicts keyed by group_key
         comp_blended: dict[str, dict] = {}
@@ -1265,6 +1342,24 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         """
         return sql, params_bf + params_comp
 
+    def _comp_side_where(self, filters: dict | None) -> tuple[str, list]:
+        """WHERE fragment for `comp_catalogue` when it is joined onto a
+        Breadfast-side roll-up (the Executive overview, the Commercial
+        blended-PI table).
+
+        Only the crossover filters apply — a competitor-only row has no
+        commercial category, tier or action type of ours. The vertical toggle is
+        translated to the bridge's beauty evidence share, since there is no
+        category of ours on that row to test directly.
+        """
+        _, where_comp, _, params_comp = self._gap_where(filters)
+        vertical = str((filters or {}).get("vertical") or "").strip().lower()
+        if vertical == "supermarket":
+            where_comp += f" AND COALESCE(beauty_path_share, 0) <= {self._BEAUTY_PATH_CUTOFF}"
+        elif vertical == "beauty":
+            where_comp += f" AND COALESCE(beauty_path_share, 0) > {self._BEAUTY_PATH_CUTOFF}"
+        return where_comp, params_comp
+
     # ------------------------------------------------------------------
     # EXECUTIVE — competitor overview (one row per competitor)
     # ------------------------------------------------------------------
@@ -1297,15 +1392,8 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         fp_scoped = bool((filters or {}).get("fp_names"))
         bf_source = "base_tmp" if fp_scoped else f"(SELECT * FROM global_base {where})"
 
-        # Competitor side: only the crossover filters apply. Beauty is handled
-        # by the bridge's evidence share, because a competitor-only row has no
-        # category of ours to test.
-        _, where_comp, _, params_comp = self._gap_where(filters)
-        vertical = str((filters or {}).get("vertical") or "").strip().lower()
-        if vertical == "supermarket":
-            where_comp += f" AND COALESCE(beauty_path_share, 0) <= {self._BEAUTY_PATH_CUTOFF}"
-        elif vertical == "beauty":
-            where_comp += f" AND COALESCE(beauty_path_share, 0) > {self._BEAUTY_PATH_CUTOFF}"
+        # Competitor side: only the crossover filters apply (see _gap_where).
+        where_comp, params_comp = self._comp_side_where(filters)
 
         sql = f"""
         WITH bf_side AS (

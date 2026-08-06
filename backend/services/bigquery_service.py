@@ -1547,7 +1547,13 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             "needs_action": kpis["needs_action"],
             "top_5_cheapest": top_5_cheapest,
             "top_5_expensive": top_5_expensive,
-            "subcategory_count": len(blended),
+            # Counts subcategories that actually have a price index, which is
+            # what this field has always meant. get_blended_pi_by_subcategory now
+            # also returns fully-unmatched groups (so the Commercial table can
+            # flag them rather than hide them), so a plain len() would silently
+            # redefine this from 167 to 206.
+            "subcategory_count": int(blended["blended_pi"].notna().sum())
+            if not blended.empty else 0,
         }
 
     def get_executive_dashboard(self, filters: dict = None) -> dict:

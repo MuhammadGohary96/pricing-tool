@@ -72,6 +72,12 @@ def get_treemap(request: Request, filters: dict = Depends(_filters)):
     # Product-level aggregate — unaffected by the competitor price fallback.
     svc = request.app.state.data_service
     df = svc.get_blended_pi_by_subcategory(filters)
+    # The source method now also returns groups with nothing matched (so the
+    # blended-PI table can flag them instead of hiding them). A treemap sizes by
+    # revenue, so a zero-revenue node would be an invisible-but-present rect —
+    # keep this panel exactly as it was.
+    if "total_revenue" in df.columns:
+        df = df[df["total_revenue"] > 0]
     children = []
     for _, row in df.iterrows():
         children.append(TreemapNode(
@@ -155,6 +161,11 @@ def get_blended_pi(
             eligible_product_count=int(row.get("eligible_product_count", 0)),
             mapped_product_count=int(row.get("mapped_product_count", 0)),
             needs_action_count=int(row.get("needs_action_count", 0)),
+            matched_fresh_count=int(row.get("matched_fresh_count", 0) or 0),
+            confirmed_no_match_count=int(row.get("confirmed_no_match_count", 0) or 0),
+            potential_match_count=int(row.get("potential_match_count", 0) or 0),
+            addressable_pct=_safe(row.get("addressable_pct")),
+            comp_only_products=int(row.get("comp_only_products", 0) or 0),
             product_pis=product_pis,
             competitor_blended_pis=comp_bpi,
             competitor_product_pis=comp_product_pis,

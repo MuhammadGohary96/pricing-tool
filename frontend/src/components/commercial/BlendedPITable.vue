@@ -151,6 +151,20 @@
             <td class="px-3 py-1.5 text-body text-center font-mono">
               <span :class="rowUtilizationPct(row) == null ? 'text-grey-300' : 'text-grey-700'">{{ rowUtilizationPct(row) != null ? rowUtilizationPct(row) + '%' : '—' }}</span>
             </td>
+            <!-- Addressable %: matched over what CAN be matched. A subcategory at
+                 30% mapped but 100% addressable is finished, not behind. -->
+            <td class="px-3 py-1.5 text-body text-center font-mono">
+              <span :class="addrClass(row.addressable_pct)"
+                    :title="`${row.confirmed_no_match_count || 0} products have a confirmed no-match and are excluded from the denominator`">
+                {{ row.addressable_pct != null ? row.addressable_pct + '%' : '—' }}
+              </span>
+            </td>
+            <td v-if="groupBy === 'sub_category'" class="px-3 py-1.5 text-body text-center font-mono">
+              <span :class="(row.comp_only_products || 0) > 0 ? 'text-amber-700 font-semibold' : 'text-grey-300'"
+                    title="Competitor products with no link to anything of ours, placed here by the category bridge">
+                {{ (row.comp_only_products || 0) > 0 ? row.comp_only_products.toLocaleString() : '—' }}
+              </span>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -275,14 +289,21 @@ const fixedColumns = computed(() => {
   return cols
 })
 
-const trailingColumns = [
-  { key: 'total_product_count', label: 'Total' },
-  { key: 'eligible_product_count', label: 'Eligible' },
-  { key: 'used_product_count', label: 'Used' },
-  { key: 'mapped_product_count', label: 'Mapped' },
-  { key: 'mapping_pct', label: 'Map %' },
-  { key: 'utilization_pct', label: 'Util %' },
-]
+const trailingColumns = computed(() => {
+  const cols = [
+    { key: 'total_product_count', label: 'Total' },
+    { key: 'eligible_product_count', label: 'Eligible' },
+    { key: 'used_product_count', label: 'Used' },
+    { key: 'mapped_product_count', label: 'Mapped' },
+    { key: 'mapping_pct', label: 'Map %' },
+    { key: 'utilization_pct', label: 'Util %' },
+    { key: 'addressable_pct', label: 'Addr %' },
+  ]
+  // The category bridge maps a competitor category onto one of OUR
+  // subcategories, so there is no comp-only figure at category grain.
+  if (props.groupBy === 'sub_category') cols.push({ key: 'comp_only_products', label: 'They only' })
+  return cols
+})
 
 const sortKey = ref('max_pi')
 const sortDir = ref('desc')
@@ -330,6 +351,14 @@ function rowMappingPct(row) {
 function rowUtilizationPct(row) {
   const eligible = row.eligible_product_count || 0
   return eligible ? Math.round((rowUsed(row) / eligible) * 100) : null
+}
+
+// Addressable reads inversely to Map %: high is finished, low is real headroom.
+function addrClass(v) {
+  if (v == null) return 'text-grey-300'
+  if (v >= 90) return 'text-green-600'
+  if (v >= 60) return 'text-amber-600'
+  return 'text-red-500'
 }
 
 const allSortedData = computed(() => {
@@ -426,6 +455,12 @@ function exportData() {
         'Mapped': mapped,
         'Mapping %': total ? Math.round((mapped / total) * 100) : null,
         'Utilization %': eligible ? Math.round((used / eligible) * 100) : null,
+        // Row-level (all competitors pooled), not per-sheet-competitor — the
+        // matchability figures resolve at product grain across competitors.
+        'Addressable %': row.addressable_pct ?? null,
+        'Confirmed no-match': row.confirmed_no_match_count ?? 0,
+        'Matched fresh': row.matched_fresh_count ?? 0,
+        ...(isSubcat ? { 'They only': row.comp_only_products ?? 0 } : {}),
       }
     }),
   }))
