@@ -11,88 +11,25 @@
       <DefinitionsPanel :sections="definitions" storage-key="defs-brand-gap" />
 
       <!-- ─── Controls ─── -->
-      <div class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 px-4 py-3 flex items-center gap-3 flex-wrap">
-        <!-- Competitor: single-select on purpose. Every number here is
-             "against whom" — unioning competitors would double-count. -->
-        <div class="flex items-center gap-1.5">
-          <span class="text-caption text-grey-500 whitespace-nowrap">Compared with</span>
-          <select
-            v-model="store.competitor"
-            class="text-body border border-grey-200 rounded-lg px-3 py-1.5 font-semibold focus:outline-none focus:ring-1 focus:ring-brand-primary"
-          >
-            <option v-for="c in store.filterOptions.competitors" :key="c.name" :value="c.name">
-              {{ c.name }}{{ c.has_catalogue ? '' : ' (no catalogue)' }}
-            </option>
-          </select>
-        </div>
+      <!-- The same filter bar as Executive and Commercial, so one filter state
+           carries across all three. Tier and FP are hidden: this screen's
+           competitor-only rows are national and carry no tier of ours, so those
+           two could only ever narrow half the table. -->
+      <FilterBar :loading="store.loading" hide-competitor hide-tier hide-fp
+                 class="animate-fade-in-up stagger-2" />
 
-        <span class="h-5 w-px bg-grey-200" aria-hidden="true"></span>
-
-        <label class="flex items-center gap-2 text-body cursor-pointer select-none">
-          <input type="checkbox" v-model="store.excludeBeautyPL"
-                 class="rounded border-grey-300 text-brand-primary focus:ring-brand-primary" />
-          Exclude beauty &amp; private label
-        </label>
-
-        <label class="flex items-center gap-2 text-body cursor-pointer select-none"
-               :class="store.excludeBeautyPL ? '' : 'opacity-40 pointer-events-none'">
-          <input type="checkbox" v-model="store.includePrivateLabel"
-                 class="rounded border-grey-300 text-brand-primary focus:ring-brand-primary" />
-          …but keep private label
-        </label>
-
-        <span class="h-5 w-px bg-grey-200" aria-hidden="true"></span>
-
-        <!-- Category / subcategory narrowing -->
-        <div class="relative" ref="catRef">
-          <button @click="toggleCat" :class="DROPDOWN_BTN">
-            <span v-if="!store.mainCategoryFilter.length" class="text-grey-500">All categories</span>
-            <span v-else class="truncate max-w-[150px]">{{ store.mainCategoryFilter.length }} categories</span>
-            <ChevronDown class="w-3.5 h-3.5 text-grey-400 ml-auto shrink-0" />
-          </button>
-          <div v-if="catOpen" :class="DROPDOWN_PANEL">
-            <div class="overflow-y-auto flex-1 p-2 space-y-0.5">
-              <label v-for="c in store.filterOptions.main_categories" :key="c" :class="DROPDOWN_ITEM">
-                <input type="checkbox" :value="c" v-model="pendingCats"
-                       class="rounded border-grey-300 text-brand-primary focus:ring-brand-primary" />
-                {{ c }}
-              </label>
-            </div>
-            <div class="border-t border-grey-100 px-2 py-2 flex justify-between items-center">
-              <button @click="pendingCats = []; applyCats()" class="text-caption text-grey-500 hover:text-grey-700">Clear</button>
-              <button @click="applyCats()" class="text-caption font-semibold text-white bg-brand-primary hover:bg-brand-dark rounded px-3 py-1">Apply</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="relative" ref="subRef">
-          <button @click="toggleSub" :class="DROPDOWN_BTN">
-            <span v-if="!store.subCategoryFilter.length" class="text-grey-500">All subcategories</span>
-            <span v-else class="truncate max-w-[150px]">{{ store.subCategoryFilter.length }} subcategories</span>
-            <ChevronDown class="w-3.5 h-3.5 text-grey-400 ml-auto shrink-0" />
-          </button>
-          <div v-if="subOpen" :class="DROPDOWN_PANEL">
-            <input v-model="subSearch" type="search" placeholder="Search…"
-                   class="m-2 text-body border border-grey-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-brand-primary" />
-            <div class="overflow-y-auto flex-1 p-2 space-y-0.5">
-              <label v-for="c in visibleSubs" :key="c" :class="DROPDOWN_ITEM">
-                <input type="checkbox" :value="c" v-model="pendingSubs"
-                       class="rounded border-grey-300 text-brand-primary focus:ring-brand-primary" />
-                {{ c }}
-              </label>
-            </div>
-            <div class="border-t border-grey-100 px-2 py-2 flex justify-between items-center">
-              <button @click="pendingSubs = []; applySubs()" class="text-caption text-grey-500 hover:text-grey-700">Clear</button>
-              <button @click="applySubs()" class="text-caption font-semibold text-white bg-brand-primary hover:bg-brand-dark rounded px-3 py-1">Apply</button>
-            </div>
-          </div>
-        </div>
-
-        <button v-if="hasActiveFilters" @click="clearFilters"
-                class="text-caption text-brand-primary hover:text-brand-dark font-semibold px-2 py-1 rounded hover:bg-brand-50 transition-colors ml-auto">
-          Reset
-        </button>
-      </div>
+      <!-- Competitor: single-select, because every number here is "against
+           whom". Same widget as the other two views, squarer shape to signal
+           that it selects rather than merely dims. -->
+      <CompetitorToggle
+        v-if="competitorNames.length"
+        :competitors="competitorNames"
+        :model-value="store.competitor"
+        :without-catalogue="competitorsWithoutCatalogue"
+        single
+        class="animate-fade-in-up stagger-2"
+        @update:model-value="store.setCompetitor($event)"
+      />
 
       <!-- ─── Data-quality disclosures ─── -->
       <div v-if="store.competitorHasNoCatalogue"
@@ -164,33 +101,39 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-import { watchDebounced, onClickOutside } from '@vueuse/core'
+import { computed, onMounted } from 'vue'
+import { watchDebounced } from '@vueuse/core'
 import { useGapStore } from '../stores/gap'
+import { useFiltersStore } from '../stores/filters'
+import { useUrlSync } from '../composables/useUrlSync'
 import { gapApi } from '../api/client'
 import PageShell from '../components/shared/PageShell.vue'
 import PageHeader from '../components/shared/PageHeader.vue'
 import DefinitionsPanel from '../components/shared/DefinitionsPanel.vue'
+import FilterBar from '../components/layout/FilterBar.vue'
+import CompetitorToggle from '../components/shared/CompetitorToggle.vue'
 import GapKpiCards from '../components/gap/GapKpiCards.vue'
 import GapSubcategoryTable from '../components/gap/GapSubcategoryTable.vue'
 import GapBrandTable from '../components/gap/GapBrandTable.vue'
 import GapProductExplorer from '../components/gap/GapProductExplorer.vue'
 import {
-  ChevronDown, TriangleAlert, Info, Layers, Tags, PackageSearch,
+  TriangleAlert, Info, Layers, Tags, PackageSearch,
   GitCompareArrows, Target, Handshake, Scale, Sparkles,
 } from 'lucide-vue-next'
 
 const store = useGapStore()
+const filters = useFiltersStore()
+useUrlSync()
+
+const competitorNames = computed(() => store.filterOptions.competitors.map(c => c.name))
+const competitorsWithoutCatalogue = computed(() =>
+  store.filterOptions.competitors.filter(c => !c.has_catalogue).map(c => c.name))
 
 const VIEWS = [
   { label: 'Subcategories', value: 'subcategories', icon: Layers },
   { label: 'Brands', value: 'brands', icon: Tags },
   { label: 'Products', value: 'products', icon: PackageSearch },
 ]
-
-const DROPDOWN_BTN = 'text-body border border-grey-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-brand-primary flex items-center gap-1.5 min-w-[160px]'
-const DROPDOWN_PANEL = 'absolute z-20 mt-1 bg-white border border-grey-200 rounded-xl shadow-dropdown ring-1 ring-grey-200/70 w-64 max-h-72 flex flex-col'
-const DROPDOWN_ITEM = 'flex items-center gap-2 px-2 py-1.5 rounded hover:bg-grey-50 cursor-pointer text-body'
 
 const definitions = [
   {
@@ -209,59 +152,10 @@ const definitions = [
       { term: 'Blended PI', description: 'Quantity-weighted Breadfast price ÷ competitor price. Above 1.00 means BREADFAST IS MORE EXPENSIVE; below 1.00 means we are cheaper. Both tails matter.', icon: Scale },
       { term: 'Coverage %', description: 'Products with a fresh usable price on both sides, over the eligible set (the products making up our top 80% of revenue).', icon: Target },
       { term: 'They carry, we don\'t', description: 'Competitor products with no link to anything of ours, placed into one of our subcategories by learning from where already-matched products in the same competitor category landed. Never sum this across subcategories — one product can bridge to several.', icon: PackageSearch },
-      { term: 'Scope', description: 'Beauty and private label are excluded by default: in those ranges "we don\'t carry it" is usually a deliberate assortment decision rather than a gap.', icon: Layers },
+      { term: 'Scope', description: 'Use Vertical and Include Private Label in the filter bar to narrow this view. Setting Vertical to Supermarket and unchecking private label is often what you want, because in beauty and private label "we don\'t carry it" is usually a deliberate assortment decision rather than a gap. Note that private-label exclusion is approximate and can differ slightly between views.', icon: Layers },
     ],
   },
 ]
-
-// ── dropdowns ────────────────────────────────────────────────
-const catRef = ref(null)
-const subRef = ref(null)
-const catOpen = ref(false)
-const subOpen = ref(false)
-const pendingCats = ref([])
-const pendingSubs = ref([])
-const subSearch = ref('')
-
-onClickOutside(catRef, () => { catOpen.value = false })
-onClickOutside(subRef, () => { subOpen.value = false })
-
-function toggleCat() {
-  catOpen.value = !catOpen.value
-  if (catOpen.value) pendingCats.value = [...store.mainCategoryFilter]
-}
-function toggleSub() {
-  subOpen.value = !subOpen.value
-  if (subOpen.value) pendingSubs.value = [...store.subCategoryFilter]
-}
-function applyCats() {
-  store.mainCategoryFilter = [...pendingCats.value]
-  catOpen.value = false
-}
-function applySubs() {
-  store.subCategoryFilter = [...pendingSubs.value]
-  subOpen.value = false
-}
-
-const visibleSubs = computed(() => {
-  const q = subSearch.value.trim().toLowerCase()
-  const all = store.filterOptions.sub_categories || []
-  return q ? all.filter(s => s.toLowerCase().includes(q)) : all
-})
-
-const hasActiveFilters = computed(() =>
-  store.mainCategoryFilter.length > 0 ||
-  store.subCategoryFilter.length > 0 ||
-  !store.excludeBeautyPL ||
-  store.includePrivateLabel ||
-  store.brandTypeFilter !== null)
-
-function clearFilters() {
-  pendingCats.value = []
-  pendingSubs.value = []
-  store.resetFilters()
-  store.fetchAll()
-}
 
 async function exportRows(view) {
   const params = { ...store.filterParams, view }
@@ -272,6 +166,8 @@ async function exportRows(view) {
 
 onMounted(() => store.init())
 
+// One watcher over the merged params: the shared FilterBar commits atomically on
+// Apply, and the competitor bar is view-local, so both land here as one refetch.
 watchDebounced(
   () => store.filterParams,
   () => { store.currentPage = 1; store.fetchAll() },

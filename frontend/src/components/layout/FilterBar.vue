@@ -48,6 +48,7 @@
       />
 
       <MultiSelect
+        v-if="!hideTier"
         :model-value="pending.globalTier"
         :options="filters.globalTiers"
         label="Tiers"
@@ -70,6 +71,7 @@
       />
 
       <MultiSelect
+        v-if="!hideFp"
         :model-value="pending.fpNames"
         :options="filters.fps"
         label="FPs"
@@ -206,6 +208,12 @@ import { useFiltersStore } from '../../stores/filters'
 defineProps({
   loading: { type: Boolean, default: false },
   hideCompetitor: { type: Boolean, default: false },
+  // Gap Analysis hides these two. Its competitor-only rows are national and
+  // carry no tier of ours, so tier and FP could only ever narrow half that
+  // screen — a filter that silently applies to one column and not the next is
+  // worse than not offering it.
+  hideTier: { type: Boolean, default: false },
+  hideFp: { type: Boolean, default: false },
 })
 
 const filters = useFiltersStore()

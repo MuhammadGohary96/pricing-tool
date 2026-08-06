@@ -76,22 +76,6 @@
                 {{ withCatalogueCount != null ? `${withCatalogueCount} with a live catalogue` : 'benchmarked' }}
               </dd>
             </div>
-            <div class="bg-white p-5 lg:p-6 flex flex-col justify-center gap-1.5">
-              <dt class="text-caption text-grey-500 font-medium">Addressable</dt>
-              <dd class="font-mono text-[26px] font-bold text-grey-900 tabular-nums leading-none">
-                <span v-if="addressablePct != null"><AnimatedNumber :value="addressablePct" />%</span>
-                <span v-else>—</span>
-              </dd>
-              <dd class="text-micro text-grey-500">matched, of what can be matched</dd>
-            </div>
-            <div class="bg-white p-5 lg:p-6 flex flex-col justify-center gap-1.5">
-              <dt class="text-caption text-grey-500 font-medium">Benchmark freshness</dt>
-              <dd class="font-mono text-[26px] font-bold text-grey-900 tabular-nums leading-none">
-                <span v-if="freshPct != null"><AnimatedNumber :value="freshPct" />%</span>
-                <span v-else>—</span>
-              </dd>
-              <dd class="text-micro text-grey-500">of matches seen in the last 7 days</dd>
-            </div>
           </dl>
         </div>
         </template>
@@ -179,6 +163,31 @@
       </div>
       <MappingProgressChart :data="store.dashboard?.mapping_progress || []" class="animate-fade-in-up stagger-5" />
 
+      <!-- Coverage headlines. These summarise the table below, so they sit with
+           it rather than competing with the blended-PI hero: a hero plus four
+           equal peers reads as five numbers of equal weight, and this view is
+           specced for a five-second glance. Pooled over product x competitor
+           pairs, the grain MappingProgressChart already pools on. -->
+      <div v-if="addressablePct != null || freshPct != null"
+           class="flex items-center gap-6 flex-wrap px-4 py-2.5 bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 animate-fade-in-up stagger-5">
+        <div class="flex items-baseline gap-2">
+          <span class="text-caption text-grey-500 font-medium">Addressable</span>
+          <span class="font-mono text-subheading font-bold text-grey-900 tabular-nums">
+            {{ addressablePct != null ? `${addressablePct}%` : '—' }}
+          </span>
+          <span class="text-micro text-grey-400">matched, of what can be matched</span>
+        </div>
+        <span class="h-4 w-px bg-grey-200" aria-hidden="true"></span>
+        <div class="flex items-baseline gap-2">
+          <span class="text-caption text-grey-500 font-medium">Benchmark freshness</span>
+          <span class="font-mono text-subheading font-bold tabular-nums"
+                :class="freshPct != null && freshPct < 80 ? 'text-amber-600' : 'text-grey-900'">
+            {{ freshPct != null ? `${freshPct}%` : '—' }}
+          </span>
+          <span class="text-micro text-grey-400">of matches seen in the last 7 days</span>
+        </div>
+      </div>
+
       <CompetitorOverviewTable
         v-if="store.competitorOverview?.length"
         :data="store.competitorOverview"
@@ -199,7 +208,7 @@ import { useExecutiveStore } from '../stores/executive'
 import { dataApi } from '../api/client'
 import KpiCard from '../components/layout/KpiCard.vue'
 import FilterBar from '../components/layout/FilterBar.vue'
-import CompetitorToggle from '../components/commercial/CompetitorToggle.vue'
+import CompetitorToggle from '../components/shared/CompetitorToggle.vue'
 import CompetitorPITable from '../components/executive/CompetitorPITable.vue'
 import MappingProgressChart from '../components/executive/MappingProgressChart.vue'
 import ClassificationBreakdown from '../components/executive/ClassificationBreakdown.vue'
@@ -475,6 +484,7 @@ const definitions = [
       { term: 'Confirmed no-match', description: 'The matcher looked and rejected every candidate — a real assortment difference, not a queue item.', icon: PieChart },
       { term: 'Benchmark freshness', description: 'Share of our matches whose competitor product was seen in the last 7 days. A match that has gone quiet is a price benchmark quietly going stale.', icon: BarChart2Icon },
       { term: 'They only', description: "Competitor products with no link to anything of ours. A competitor with no crawled catalogue shows zero here — that is a collection gap, not an assortment gap, and the row is flagged.", icon: Layers },
+      { term: 'Include Private Label', description: 'Unchecking this excludes Breadfast own-brand products. Be aware the exclusion is approximate and not yet identical across views: brands named exactly "Breadfast" always drop, while sub-brands such as "Breadfast Bakery" may still be counted on some panels. Treat small differences between screens as this, not as a data error.', icon: Scale },
     ],
   },
 ]

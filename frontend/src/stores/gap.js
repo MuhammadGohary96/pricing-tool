@@ -1,16 +1,21 @@
 import { defineStore } from 'pinia'
 import { gapApi } from '../api/client'
+import { useFiltersStore } from './filters'
 
 /**
  * Brand & Subcategory Gap Analysis.
  *
- * Tab-local filter state, like the Competitors tab: the dimensions here are
- * gap-specific (scope toggles, a single competitor, a view switch) and do not
- * belong in the global FilterBar.
+ * Category, subcategory, brand and scope come from the GLOBAL filters store, so
+ * this view, Executive and Commercial all answer the same question about the
+ * same slice. Only genuinely view-local state lives here: the selected
+ * competitor, the view switch, and table paging.
  *
- * The competitor is deliberately SINGLE-select. Every question this tab answers
- * is "against whom" — mapping %, shared brands, what they carry that we do not.
- * Unioning two competitors would silently double-count products they both
+ * Tier and FP are deliberately not offered on this screen — see the hideTier /
+ * hideFp props on FilterBar for why.
+ *
+ * The competitor is deliberately SINGLE-select and view-local. Every question
+ * this tab answers is "against whom" — mapping %, shared brands, what they carry
+ * that we do not. Unioning two competitors would double-count products they both
  * stock and make brand counts meaningless.
  */
 export const useGapStore = defineStore('gap', {
@@ -27,14 +32,10 @@ export const useGapStore = defineStore('gap', {
     error: null,
     lastFetchedAt: null,
 
-    // ── filters ────────────────────────────────────────────────
+    // ── view-local filter ──────────────────────────────────────
+    // Everything else (category, subcategory, brand, vertical, private label)
+    // comes from the global filters store.
     competitor: null,          // single-select; set from filterOptions on load
-    subCategoryFilter: [],
-    mainCategoryFilter: [],
-    // Beauty and private label are excluded by default: in those ranges "we
-    // don't carry it" is usually a deliberate assortment call, not a gap.
-    excludeBeautyPL: true,
-    includePrivateLabel: false,
 
     // ── view state ─────────────────────────────────────────────
     view: 'subcategories',     // subcategories | brands | products
@@ -48,13 +49,18 @@ export const useGapStore = defineStore('gap', {
   }),
 
   getters: {
+    /** Shared filters from the global store, plus this view's competitor.
+     *  Tier, FP and action type are dropped: tier and FP are not offered here,
+     *  and action type is a Commercial-only vocabulary. */
     filterParams(state) {
+      const f = useFiltersStore()
       const p = {}
+      if (f.mainCategory.length) p.main_category = f.mainCategory.join(',')
+      if (f.subCategory.length) p.sub_category = f.subCategory.join(',')
+      if (f.brand.length) p.brand = f.brand.join(',')
+      if (f.vertical) p.vertical = f.vertical
+      if (!f.includePrivateLabel) p.exclude_private_label = true
       if (state.competitor) p.competitor = state.competitor
-      if (state.subCategoryFilter.length) p.sub_category = state.subCategoryFilter.join(',')
-      if (state.mainCategoryFilter.length) p.main_category = state.mainCategoryFilter.join(',')
-      p.scope = state.excludeBeautyPL ? 'excl_beauty_pl' : 'all'
-      if (state.excludeBeautyPL && state.includePrivateLabel) p.include_private_label = true
       return p
     },
 
@@ -73,7 +79,8 @@ export const useGapStore = defineStore('gap', {
      *  their beauty products survive the exclude-beauty scope. Disclosed rather
      *  than silently patched. */
     hasBeautyBlindSpot(state) {
-      return state.excludeBeautyPL && ['Seoudi', 'Rabbit'].includes(state.competitor)
+      const f = useFiltersStore()
+      return f.vertical === 'Supermarket' && ['Seoudi', 'Rabbit'].includes(state.competitor)
     },
   },
 
@@ -83,7 +90,14 @@ export const useGapStore = defineStore('gap', {
         const res = await gapApi.getFilters()
         this.filterOptions = res.data
       }
-      if (!this.competitor) {
+      // A competitor in the URL wins, so a shared link reopens the same
+      // comparison. Namespaced as `gap_competitor` because competitor is
+      // view-local: a Gap link must not silently set Commercial's.
+      const fromUrl = new URLSearchParams(window.location.search).get('gap_competitor')
+      const known = this.filterOptions.competitors.map(c => c.name)
+      if (fromUrl && known.includes(fromUrl)) {
+        this.competitor = fromUrl
+      } else if (!this.competitor) {
         // Default to the best-matched competitor, not the one with the most
         // competitor-only rows — that would land on whoever we've matched
         // *least*, and an opening screen at 5% matched reads as a broken tab.
@@ -91,7 +105,25 @@ export const useGapStore = defineStore('gap', {
         const best = [...usable].sort((a, b) => b.matched_products - a.matched_products)[0]
         this.competitor = best?.name || this.filterOptions.competitors[0]?.name || null
       }
+      this._syncCompetitorToUrl()
       await this.fetchAll()
+    },
+
+    async setCompetitor(name) {
+      if (!name || name === this.competitor) return
+      this.competitor = name
+      this.currentPage = 1
+      this._syncCompetitorToUrl()
+      await this.fetchAll()
+    },
+
+    _syncCompetitorToUrl() {
+      try {
+        const url = new URL(window.location.href)
+        if (this.competitor) url.searchParams.set('gap_competitor', this.competitor)
+        else url.searchParams.delete('gap_competitor')
+        window.history.replaceState({}, '', url)
+      } catch { /* history is unavailable in some embeds; not worth failing over */ }
     },
 
     async fetchAll() {
@@ -193,10 +225,8 @@ export const useGapStore = defineStore('gap', {
     },
 
     resetFilters() {
-      this.subCategoryFilter = []
-      this.mainCategoryFilter = []
-      this.excludeBeautyPL = true
-      this.includePrivateLabel = false
+      // Shared filters are cleared by the FilterBar's own Clear All; this only
+      // resets what belongs to this view.
       this.brandTypeFilter = null
       this.searchQuery = ''
       this.currentPage = 1

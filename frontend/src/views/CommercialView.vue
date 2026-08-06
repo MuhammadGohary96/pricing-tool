@@ -125,7 +125,7 @@ import { useCommercialStore } from '../stores/commercial'
 import FilterBar from '../components/layout/FilterBar.vue'
 import BlendedPITable from '../components/commercial/BlendedPITable.vue'
 import ProductPivotTable from '../components/commercial/ProductPivotTable.vue'
-import CompetitorToggle from '../components/commercial/CompetitorToggle.vue'
+import CompetitorToggle from '../components/shared/CompetitorToggle.vue'
 import DrilldownBreadcrumb from '../components/commercial/DrilldownBreadcrumb.vue'
 import PageShell from '../components/shared/PageShell.vue'
 import PageHeader from '../components/shared/PageHeader.vue'
@@ -228,7 +228,10 @@ const definitions = [
     items: [
       { term: 'Filter', description: 'Use dropdowns to narrow by category, subcategory, tier, or brand. Press Escape to clear all.', icon: SlidersHorizontal },
       { term: 'Blended PI Table', description: 'Click a row to filter to that subcategory. Dots show individual product PIs; click to jump to the product.', icon: Table2 },
-      { term: 'Edit Price', description: 'Click any BF Price cell to edit the now price inline. Saves to Catalog API if you have write access.', icon: PencilLine },
+      { term: 'BF Price', description: 'The Breadfast regular and sale price for the current scope, read-only. Inline price editing was removed; prices are sourced from BigQuery.', icon: PencilLine },
+      { term: 'Addr %', description: 'Addressable: matched over what CAN be matched, i.e. our products minus those the matcher positively rejected. A subcategory at 30% mapped but 100% addressable is finished, not behind. Resolved per product across competitors, so "no-match" here means nobody carries an equivalent.', icon: Table2 },
+      { term: 'They only', description: 'Competitor products with no link to anything of ours, placed into this subcategory by the category bridge. Rows with no matched product now appear with a blank PI instead of being hidden, because those are the biggest gaps.', icon: Table2 },
+      { term: 'Include Private Label', description: 'Unchecking this excludes Breadfast own-brand products. The exclusion is approximate and not yet identical across views: brands named exactly "Breadfast" always drop, while sub-brands such as "Breadfast Bakery" may still be counted on some panels.', icon: SlidersHorizontal },
       { term: 'Color Coding', description: 'Cells are shaded by PI: PI < 0.95, near parity (0.95–1.05), and PI > 1.05. Lower PI = BF cheaper, higher PI = BF more expensive. Worst PI column shows your biggest competitive gap.', icon: Palette },
     ],
   },

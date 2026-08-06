@@ -1481,11 +1481,31 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         category of ours on that row to test directly.
         """
         _, where_comp, _, params_comp = self._gap_where(filters)
-        vertical = str((filters or {}).get("vertical") or "").strip().lower()
+        f = filters or {}
+
+        vertical = str(f.get("vertical") or "").strip().lower()
         if vertical == "supermarket":
             where_comp += f" AND COALESCE(beauty_path_share, 0) <= {self._BEAUTY_PATH_CUTOFF}"
         elif vertical == "beauty":
             where_comp += f" AND COALESCE(beauty_path_share, 0) > {self._BEAUTY_PATH_CUTOFF}"
+
+        # Commercial category has no direct equivalent on a competitor-only row,
+        # but it reaches them through the bridge: the bridge assigns each of their
+        # products one of OUR subcategories, and our subcategories belong to our
+        # commercial categories. Without this, picking a category narrowed our
+        # side while leaving "they carry, we don't" at its full count — the same
+        # half-applied trap that tier and FP are hidden for, except here it is
+        # fixable rather than inherent.
+        cats = [v.strip() for v in str(f.get("main_category") or "").split(",") if v.strip()]
+        if cats:
+            ph = ", ".join(["?"] * len(cats))
+            where_comp += (
+                " AND mapped_bf_sub_category IN ("
+                f"SELECT DISTINCT sub_category_name FROM global_base"
+                f" WHERE commercial_category_name IN ({ph})"
+                "   AND sub_category_name IS NOT NULL)"
+            )
+            params_comp = list(params_comp) + cats
         return where_comp, params_comp
 
     # ------------------------------------------------------------------
