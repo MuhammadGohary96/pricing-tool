@@ -24,10 +24,13 @@ def _filters(
     global_tier: Optional[str] = Query(None),
     subcat_tier: Optional[str] = Query(None),
     fp_names: Optional[str] = Query(None),
-    # Scope now uses the same two controls as Executive and Commercial, so one
-    # filter bar drives all three views. The old `scope=excl_beauty_pl` enum is
-    # gone; use vertical=Supermarket + exclude_private_label=true for what it
-    # used to mean. Default is unscoped, matching the other two views.
+    brand_scope: Optional[str] = Query(
+        None, description="'shared' = only products whose brand the competitor also carries"
+    ),
+    # Scope uses the same two controls as Executive and Commercial, so one filter
+    # bar drives all three views. The old `scope=excl_beauty_pl` enum is gone;
+    # vertical=Supermarket + exclude_private_label=true is what it used to mean.
+    # Default is unscoped, matching the other two views.
     vertical: Optional[str] = Query(None, description="Beauty | Supermarket"),
     exclude_private_label: Optional[bool] = Query(None),
 ) -> dict:
@@ -46,6 +49,8 @@ def _filters(
         params["subcat_tier"] = subcat_tier
     if fp_names:
         params["fp_names"] = fp_names
+    if brand_scope:
+        params["brand_scope"] = brand_scope
     if vertical:
         params["vertical"] = vertical
     if exclude_private_label:

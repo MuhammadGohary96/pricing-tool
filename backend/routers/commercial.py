@@ -27,6 +27,9 @@ def _filters(
     vertical: Optional[str] = Query(None),
     exclude_private_label: Optional[bool] = Query(None),
     fp_names: Optional[str] = Query(None),
+    brand_scope: Optional[str] = Query(
+        None, description="'shared' = only products whose brand the competitor also carries"
+    ),
 ) -> dict:
     params = {}
     if main_category:
@@ -49,6 +52,8 @@ def _filters(
         params["exclude_private_label"] = True
     if fp_names:
         params["fp_names"] = fp_names
+    if brand_scope:
+        params["brand_scope"] = brand_scope
     return params
 
 

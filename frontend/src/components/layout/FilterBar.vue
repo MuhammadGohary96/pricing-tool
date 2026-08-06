@@ -31,6 +31,24 @@
         </div>
       </div>
 
+      <!-- Brand scope: the realistic-ceiling switch. Shared-only answers "of the
+           brands they actually stock, how are we doing", which is a different
+           question from the raw mapping rate. -->
+      <div class="inline-flex items-center gap-1.5">
+        <span class="text-body text-grey-500 font-medium">Brands</span>
+        <div class="inline-flex items-center rounded-lg border border-grey-200 overflow-hidden">
+          <button
+            v-for="opt in brandScopeOptions"
+            :key="opt.value"
+            type="button"
+            :title="opt.title"
+            class="px-2.5 py-1.5 text-body font-medium transition-colors border-r border-grey-200 last:border-r-0"
+            :class="pending.brandScope === opt.value ? 'bg-brand-primary text-white' : 'bg-white text-grey-600 hover:bg-grey-50'"
+            @click="pending.brandScope = opt.value"
+          >{{ opt.label }}</button>
+        </div>
+      </div>
+
       <div class="h-5 w-px bg-grey-200"></div>
 
       <MultiSelect
@@ -162,6 +180,10 @@
           {{ pending.vertical }}
           <button class="hover:text-brand-dark" @click="pending.vertical = ''"><X class="w-3 h-3" /></button>
         </span>
+        <span v-if="pending.brandScope" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
+          Shared brands only
+          <button class="hover:text-brand-dark" @click="pending.brandScope = ''"><X class="w-3 h-3" /></button>
+        </span>
         <span v-for="cat in pending.mainCategory" :key="'cat-' + cat" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
           {{ cat }}
           <button class="hover:text-brand-dark" @click="removeChip('mainCategory', cat)"><X class="w-3 h-3" /></button>
@@ -220,6 +242,11 @@ const filters = useFiltersStore()
 const linkCopied = ref(false)
 const expanded = ref(false)
 
+const brandScopeOptions = [
+  { value: '', label: 'All', title: 'Every brand we carry' },
+  { value: 'shared', label: 'Shared only', title: 'Only products whose brand the competitor also carries — the realistic matching ceiling, since a brand they do not stock can never be matched' },
+]
+
 const verticalOptions = [
   { value: '', label: 'All' },
   { value: 'Beauty', label: 'Beauty' },
@@ -230,7 +257,7 @@ const verticalOptions = [
 // refetch / URL change) until Apply. subcatTier & actionType are carried through
 // even though they have no control here, so committing never wipes filters set
 // elsewhere (e.g. Master Data action cards).
-const FIELDS = ['mainCategory', 'subCategory', 'globalTier', 'subcatTier', 'actionType', 'brand', 'competitor', 'fpNames', 'vertical', 'includePrivateLabel', 'priceFallback']
+const FIELDS = ['mainCategory', 'subCategory', 'globalTier', 'subcatTier', 'actionType', 'brand', 'competitor', 'fpNames', 'vertical', 'brandScope', 'includePrivateLabel', 'priceFallback']
 
 function committedSnapshot() {
   const s = {}

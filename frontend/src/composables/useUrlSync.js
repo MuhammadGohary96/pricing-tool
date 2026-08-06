@@ -48,6 +48,10 @@ export function useUrlSync() {
       filters.vertical = query.vertical
       changed = true
     }
+    if (query.brands === 'shared') {
+      filters.brandScope = 'shared'
+      changed = true
+    }
     if (changed && query.category) {
       filters.fetchSubcategories()
     }
@@ -72,6 +76,9 @@ export function useUrlSync() {
     if (filters.vertical) {
       query.vertical = filters.vertical
     }
+    if (filters.brandScope) {
+      query.brands = filters.brandScope
+    }
 
     const currentQuery = { ...route.query }
     // Remove filter params from current query
@@ -81,6 +88,7 @@ export function useUrlSync() {
     delete currentQuery.private_label
     delete currentQuery.estimate
     delete currentQuery.vertical
+    delete currentQuery.brands
 
     router.replace({ query: { ...currentQuery, ...query } })
   }
@@ -90,7 +98,7 @@ export function useUrlSync() {
 
   // Watch filter changes and sync to URL
   watch(
-    () => [...FILTER_KEYS.map(k => filters[k]), filters.includePrivateLabel, filters.priceFallback, filters.vertical],
+    () => [...FILTER_KEYS.map(k => filters[k]), filters.includePrivateLabel, filters.priceFallback, filters.vertical, filters.brandScope],
     () => syncToUrl(),
     { deep: true }
   )

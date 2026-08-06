@@ -233,6 +233,13 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                     filtered = filtered[mc != "fragrances & beauty"]
             if filters.get("exclude_private_label"):
                 filtered = filtered[~filtered["brand_name"].str.lower().str.contains("breadfast", na=False)]
+            # Brand scope. Applied here as well as in _build_where_clause because
+            # the GLOBAL path reads the pre-built global_base and narrows it in
+            # pandas; same filter-after caveat that already applies to
+            # `competitor` on this path.
+            if str(filters.get("brand_scope") or "").strip().lower() == "shared" \
+                    and "is_shared_brand" in filtered.columns:
+                filtered = filtered[filtered["is_shared_brand"] == True]
         return filtered
 
     # ------------------------------------------------------------------
@@ -339,6 +346,13 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         # Private-label exclusion (matches pandas behavior)
         if filters.get("exclude_private_label"):
             clauses.append("brand_name != 'Breadfast'")
+
+        # Brand scope — 'shared' keeps only (product, competitor) pairs whose brand
+        # the competitor also carries. A brand they do not stock can never be
+        # matched, so this turns every mapping rate on the screen into the
+        # realistic ceiling rather than a target nobody can hit.
+        if str(filters.get("brand_scope") or "").strip().lower() == "shared":
+            clauses.append("COALESCE(is_shared_brand, FALSE)")
 
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
         return where, params
@@ -1370,6 +1384,10 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                          all competitors but 41.50 within Talabat, moving its PI
                          from 1.11 to 0.93.
           action_type  — varies per (fp, competitor), so it slices partitions too.
+          brand_scope  — is_shared_brand is per (product, competitor), so keeping
+                         shared-brand pairs only drops some of a product's
+                         competitor rows, which is enough to move the Breadfast
+                         modal for the same reason `competitor` does.
 
         Everything else (category, subcategory, tier, brand, vertical, private
         label) is a product-level attribute: it removes whole products and never
@@ -1377,7 +1395,8 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         """
         where, params = self._build_where_clause(filters)
         f = filters or {}
-        if f.get("fp_names") or f.get("competitor") or f.get("action_type"):
+        if (f.get("fp_names") or f.get("competitor") or f.get("action_type")
+                or str(f.get("brand_scope") or "").lower() == "shared"):
             return (
                 "base_tmp",
                 params,
@@ -1551,6 +1570,13 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         # side while leaving "they carry, we don't" at its full count — the same
         # half-applied trap that tier and FP are hidden for, except here it is
         # fixable rather than inherent.
+        # Brand scope crosses over cleanly: on a competitor-only row
+        # is_shared_brand means "Breadfast carries this brand", so 'shared' asks
+        # "of the brands we both carry, what do they have that we don't" — the
+        # actionable half of the assortment gap.
+        if str(f.get("brand_scope") or "").strip().lower() == "shared":
+            where_comp += " AND COALESCE(is_shared_brand, FALSE)"
+
         cats = [v.strip() for v in str(f.get("main_category") or "").split(",") if v.strip()]
         if cats:
             ph = ", ".join(["?"] * len(cats))

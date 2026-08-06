@@ -15,6 +15,10 @@ export const useFiltersStore = defineStore('filters', {
     // Beauty = main_category_name 'Fragrances & Beauty'; Supermarket = the rest.
     vertical: '',
     includePrivateLabel: true,
+    // Brand scope — '' (All brands) | 'shared'. 'shared' keeps only products
+    // whose brand the competitor also carries, which is the realistic ceiling:
+    // a brand they do not stock can never be matched.
+    brandScope: '',
     // Mode (not a scope filter): fill mapped-but-not-fresh prices with the
     // product×competitor modal, flagged estimated. Default OFF.
     priceFallback: false,
@@ -41,6 +45,7 @@ export const useFiltersStore = defineStore('filters', {
       if (state.fpNames.length) params.fp_names = state.fpNames.join(',')
       if (state.vertical) params.vertical = state.vertical
       if (!state.includePrivateLabel) params.exclude_private_label = true
+      if (state.brandScope) params.brand_scope = state.brandScope
       if (state.priceFallback) params.price_fallback = true
       return params
     },
@@ -55,6 +60,7 @@ export const useFiltersStore = defineStore('filters', {
         state.competitor.length ||
         state.fpNames.length ||
         !!state.vertical ||
+        !!state.brandScope ||
         !state.includePrivateLabel
       )
     },

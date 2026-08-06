@@ -60,6 +60,7 @@ export const useGapStore = defineStore('gap', {
       if (f.brand.length) p.brand = f.brand.join(',')
       if (f.vertical) p.vertical = f.vertical
       if (!f.includePrivateLabel) p.exclude_private_label = true
+      if (f.brandScope) p.brand_scope = f.brandScope
       if (state.competitor) p.competitor = state.competitor
       return p
     },
