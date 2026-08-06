@@ -158,6 +158,7 @@ export const useFiltersStore = defineStore('filters', {
       this.competitor = []
       this.fpNames = []
       this.vertical = ''
+      this.brandScope = ''
       this.includePrivateLabel = true
       this.fetchSubcategories()
     },
@@ -177,6 +178,9 @@ export const useFiltersStore = defineStore('filters', {
       this.competitor = Array.isArray(snap.competitor) ? [...snap.competitor] : []
       this.fpNames = Array.isArray(snap.fpNames) ? [...snap.fpNames] : []
       this.vertical = typeof snap.vertical === 'string' ? snap.vertical : ''
+      // Must be listed here: this method assigns field by field, so anything
+      // missing is silently dropped on Apply rather than committed.
+      this.brandScope = typeof snap.brandScope === 'string' ? snap.brandScope : ''
       this.includePrivateLabel = 'includePrivateLabel' in snap ? !!snap.includePrivateLabel : true
       if ('priceFallback' in snap) this.priceFallback = !!snap.priceFallback
       this.fetchSubcategories()

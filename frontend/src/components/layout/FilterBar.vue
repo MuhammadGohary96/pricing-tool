@@ -295,14 +295,17 @@ const pendingChanges = computed(() =>
   [pending.mainCategory, pending.subCategory, pending.globalTier, pending.brand, pending.competitor, pending.fpNames]
     .reduce((n, a) => n + a.length, 0)
   + (pending.vertical ? 1 : 0)
+  + (pending.brandScope ? 1 : 0)
   + (!pending.includePrivateLabel ? 1 : 0)
   + (pending.priceFallback ? 1 : 0)
 )
 
+// Gates the "Selected:" chip row and Clear All, so brandScope has to be counted
+// or its chip never appears when it is the only thing set.
 const pendingHasFilters = computed(() =>
   !!(pending.mainCategory.length || pending.subCategory.length || pending.globalTier.length ||
      pending.brand.length || pending.competitor.length || pending.fpNames.length ||
-     pending.vertical || !pending.includePrivateLabel)
+     pending.vertical || pending.brandScope || !pending.includePrivateLabel)
 )
 
 const activeCount = computed(() => pendingChanges.value)
