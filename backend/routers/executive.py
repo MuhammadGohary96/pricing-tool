@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from typing import Optional
 
 router = APIRouter(prefix="/api/executive", tags=["executive"])
@@ -79,6 +79,25 @@ def get_fp_competitor_pi(
     """
     svc = request.app.state.data_service
     return svc.get_fp_competitor_pi(filters, price_fallback=price_fallback)
+
+
+@router.get("/competitor-overview")
+def get_competitor_overview(request: Request, filters: dict = Depends(_filters)):
+    """Matching + assortment coverage per competitor — the live equivalent of the
+    hand-maintained "Competitor Overview" workbook sheet.
+
+    DuckDB-only, like /fp-competitor-pi: no @abstractmethod is added to
+    data_interface.py because that ABC is enforced at instantiation and would
+    break DATA_SOURCE=mock.
+    """
+    svc = request.app.state.data_service
+    if svc is None or not hasattr(svc, "get_competitor_overview"):
+        raise HTTPException(
+            status_code=503,
+            detail="Competitor overview requires the DuckDB data service "
+                   "(DATA_SOURCE=bigquery with USE_DUCKDB enabled).",
+        )
+    return svc.get_competitor_overview(filters)
 
 
 @router.get("/week-over-week")

@@ -433,7 +433,34 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             MIN(competitor_sale_price) FILTER (WHERE competitor_sale_price > 0)    AS min_competitor_sale_price,
             MAX(competitor_sale_price) FILTER (WHERE competitor_sale_price > 0)    AS max_competitor_sale_price,
             MAX(bf_price_updated_at) FILTER (WHERE competitor_sale_price > 0)      AS bf_price_updated_at,
-            MAX(competitor_price_updated_at) FILTER (WHERE competitor_sale_price > 0) AS competitor_price_updated_at
+            MAX(competitor_price_updated_at) FILTER (WHERE competitor_sale_price > 0) AS competitor_price_updated_at,
+
+            -- ── Gap-analysis columns ────────────────────────────────────────
+            -- Carried so the Executive and Commercial roll-ups can answer "how
+            -- much CAN be matched", not just "how much is". Anything absent
+            -- from this list is invisible to them: `base` is `pm.*`.
+            --
+            -- BOOL_OR / MAX, never ANY_VALUE, for the flags that can vary
+            -- across a pair's FP rows — ANY_VALUE would reproduce exactly the
+            -- nondeterminism the MIN(classification) note above warns about,
+            -- and Executive would then disagree with the Gap tab run to run.
+            ANY_VALUE(is_beauty)                    AS is_beauty,
+            ANY_VALUE(is_private_label)             AS is_private_label,
+            -- Blank brand_key means unbranded, not a brand named "" — matching
+            -- the normalization in _gap_ctes.
+            NULLIF(TRIM(ANY_VALUE(brand_key)), '')  AS brand_key,
+            BOOL_OR(is_shared_brand)                AS is_shared_brand,
+            BOOL_OR(matched_comp_active_7d)         AS matched_comp_active_7d,
+            BOOL_OR(is_confirmed_no_match)          AS is_confirmed_no_match,
+            BOOL_OR(is_potential_match)             AS is_potential_match,
+            MAX(best_similarity_in_portfolio)       AS best_similarity_in_portfolio,
+            BOOL_OR(competitor_has_v2_catalogue)    AS competitor_has_v2_catalogue,
+            -- Competitor-level constant: the size of their live catalogue.
+            MAX(comp_active_products)               AS comp_active_products
+            -- Deliberately NOT carried: mapped_bf_sub_category. On
+            -- row_type='breadfast' rows it only echoes sub_category_name, so it
+            -- adds no information, and _apply_filters materializes every
+            -- global_base column into pandas on each GLOBAL request.
         FROM scoped
         GROUP BY product_id, competitor_id
     ),
@@ -1237,6 +1264,109 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         )
         """
         return sql, params_bf + params_comp
+
+    # ------------------------------------------------------------------
+    # EXECUTIVE — competitor overview (one row per competitor)
+    # ------------------------------------------------------------------
+    def get_competitor_overview(self, filters: dict | None = None) -> list[dict]:
+        """Matching + assortment coverage per competitor.
+
+        This is the live equivalent of the hand-maintained workbook sheet
+        `Brand_Portfolio_Consolidated_excl_Beauty.xlsx` -> "Competitor Overview".
+        To reproduce that sheet, set Vertical = Supermarket (the workbook
+        excludes beauty).
+
+        Purely additive: it introduces no metric the Executive view already
+        shows, and reuses the same Addressable formula as `get_gap_kpis` so the
+        Executive panel and the Gap tab can never print different numbers for
+        the same scope.
+
+        The Breadfast side goes through `_base_cte`, so it honours the whole
+        Executive filter bar exactly as `get_executive_dashboard` does. The
+        competitor side reads `comp_catalogue` and can only honour the filters
+        that mean something on that grain (see `_gap_where`).
+        """
+        where, params_bf = self._build_where_clause(filters)
+        base_cte = self._base_cte(where)
+
+        # Competitor side: only the crossover filters apply. Beauty is handled
+        # by the bridge's evidence share, because a competitor-only row has no
+        # category of ours to test.
+        _, where_comp, _, params_comp = self._gap_where(filters)
+        vertical = str((filters or {}).get("vertical") or "").strip().lower()
+        if vertical == "supermarket":
+            where_comp += f" AND COALESCE(beauty_path_share, 0) <= {self._BEAUTY_PATH_CUTOFF}"
+        elif vertical == "beauty":
+            where_comp += f" AND COALESCE(beauty_path_share, 0) > {self._BEAUTY_PATH_CUTOFF}"
+
+        sql = f"""
+        WITH bf_side AS (
+            SELECT
+                competitor_name,
+                COUNT(DISTINCT product_id)                                        AS bf_products,
+                COUNT(DISTINCT product_id) FILTER (WHERE is_mapped)               AS matched,
+                -- Matched AND the competitor product was seen in the last 7 days:
+                -- a match whose competitor side has gone quiet is a benchmark
+                -- that is quietly rotting.
+                COUNT(DISTINCT product_id) FILTER (
+                    WHERE is_mapped AND matched_comp_active_7d)                   AS matched_fresh,
+                COUNT(DISTINCT product_id) FILTER (WHERE is_confirmed_no_match)   AS confirmed_no_match,
+                COUNT(DISTINCT product_id) FILTER (WHERE is_potential_match)      AS potential_match,
+                COUNT(DISTINCT product_id) FILTER (WHERE is_shared_brand)         AS shared_brand_products,
+                COUNT(DISTINCT product_id) FILTER (
+                    WHERE is_mapped AND is_shared_brand)                          AS matched_shared_brand,
+                COUNT(DISTINCT brand_key) FILTER (WHERE is_shared_brand)          AS shared_brands,
+                COUNT(DISTINCT brand_key) FILTER (WHERE NOT is_shared_brand)      AS bf_only_brands,
+                BOOL_OR(COALESCE(competitor_has_v2_catalogue, FALSE))             AS has_catalogue,
+                MAX(comp_active_products)                                         AS comp_products
+            FROM base_tmp
+            WHERE competitor_name IS NOT NULL
+            GROUP BY competitor_name
+        ),
+        comp_side AS (
+            SELECT
+                competitor_name,
+                COUNT(*)                                                     AS comp_only_products,
+                COUNT(DISTINCT brand_key) FILTER (WHERE NOT is_shared_brand)  AS comp_only_brands
+            FROM comp_catalogue
+            WHERE TRUE{where_comp}
+            GROUP BY competitor_name
+        )
+        SELECT
+            b.competitor_name,
+            CAST(b.bf_products        AS INTEGER) AS bf_products,
+            CAST(b.matched            AS INTEGER) AS matched,
+            CAST(b.matched_fresh      AS INTEGER) AS matched_fresh,
+            ROUND(100.0 * b.matched / NULLIF(b.bf_products, 0), 1)            AS mapping_pct,
+            -- Restricted to brands the competitor also carries: the realistic
+            -- ceiling, since a brand they do not stock can never be matched.
+            ROUND(100.0 * b.matched_shared_brand
+                  / NULLIF(b.shared_brand_products, 0), 1)                   AS mapping_pct_shared,
+            CAST(b.confirmed_no_match AS INTEGER) AS confirmed_no_match,
+            CAST(b.bf_products - b.confirmed_no_match AS INTEGER)            AS addressable,
+            -- Products the matcher positively rejected leave the denominator.
+            ROUND(100.0 * b.matched
+                  / NULLIF(b.bf_products - b.confirmed_no_match, 0), 1)      AS addressable_pct,
+            CAST(b.potential_match    AS INTEGER) AS potential_match,
+            ROUND(100.0 * b.potential_match / NULLIF(b.bf_products, 0), 1)   AS potential_pct,
+            CAST(COALESCE(b.comp_products, 0)      AS INTEGER) AS comp_products,
+            CAST(COALESCE(c.comp_only_products, 0) AS INTEGER) AS comp_only_products,
+            CAST(b.shared_brands      AS INTEGER) AS shared_brands,
+            CAST(b.bf_only_brands     AS INTEGER) AS bf_only_brands,
+            CAST(COALESCE(c.comp_only_brands, 0)   AS INTEGER) AS comp_only_brands,
+            b.has_catalogue
+        FROM bf_side b
+        LEFT JOIN comp_side c USING (competitor_name)
+        ORDER BY b.matched DESC, b.competitor_name
+        """
+
+        with self._duckdb_lock:
+            self._duckdb_conn.execute(
+                "CREATE OR REPLACE TEMP TABLE base_tmp AS " + base_cte + " SELECT * FROM base",
+                params_bf,
+            )
+            df = self._duckdb_conn.execute(sql, params_comp).df()
+        return self._gap_records(df)
 
     def get_gap_kpis(self, filters: dict | None = None) -> dict:
         """Headline gap numbers for the scope currently selected."""

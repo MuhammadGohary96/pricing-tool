@@ -926,7 +926,11 @@ SELECT
     CAST(NULL AS FLOAT64) AS mapped_pct_of_comp_category,
     'bf_own'              AS bridge_level,
     CAST(NULL AS FLOAT64) AS beauty_path_share,
-    cc.competitor_has_v2_catalogue
+    cc.competitor_has_v2_catalogue,
+    -- Size of the competitor's live catalogue. Already computed in
+    -- competitor_catalogue; exposed because comp_catalogue downstream holds
+    -- only UNPAIRED products, so the total is not otherwise derivable.
+    cc.comp_active_products
 FROM final_product_data AS f
 LEFT JOIN bf_universe_enriched AS bu ON bu.product_id = f.product_id
 LEFT JOIN comp_brand           AS cb ON cb.competitor_id = f.competitor_id AND cb.brand_key = bu.brand_key
@@ -1015,7 +1019,8 @@ SELECT
     CASE WHEN pme.competitor_id IS NOT NULL THEN 'exact_path'
          WHEN pml.competitor_id IS NOT NULL THEN 'parent_l3_fallback' END       AS bridge_level,
     pb.beauty_path_share,
-    cc.competitor_has_v2_catalogue
+    cc.competitor_has_v2_catalogue,
+    cc.comp_active_products
 FROM comp_products AS cp
 LEFT JOIN paired_comp_keys AS pk
     ON  pk.competitor_id          = cp.competitor_id

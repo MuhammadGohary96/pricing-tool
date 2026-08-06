@@ -131,7 +131,10 @@ SELECT
     CAST(mapped_pct_of_comp_category AS FLOAT64) AS mapped_pct_of_comp_category,
     bridge_level,
     -- data-quality flag: FALSE for Carrefour (no live v2 catalogue)
-    competitor_has_v2_catalogue
+    competitor_has_v2_catalogue,
+    -- Size of the competitor's live catalogue. comp_catalogue downstream holds
+    -- only the UNPAIRED products, so the total is not derivable from it.
+    CAST(comp_active_products AS INT64) AS comp_active_products
 FROM `{project}.{dataset}.{table}`
 """
 
