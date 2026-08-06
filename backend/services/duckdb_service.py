@@ -523,6 +523,93 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             return "AND " + w[6:]
         return "AND " + w
 
+    # ------------------------------------------------------------------
+    # FP-grain twin of _BASE_CTE. Identical method — collapse the filtered rows
+    # to one row per key, recompute modal prices, then derive sale_PI and
+    # used_product from those — but with fp_id in the key, so the result stays a
+    # per-FP grid. Used by get_fp_competitor_pi, whose whole axis IS the FP and
+    # which therefore cannot use the national collapse.
+    #
+    # Why not just read fp_grain's own sale_PI / used_product, as this used to:
+    # those come straight from BigQuery and are computed on a different basis
+    # (bf_eod ÷ last_seen, BigQuery's freshness gate) than every other number in
+    # the app. Recomputing here puts the geographic grid on the same price basis
+    # as Commercial and Executive. Measured effect: 402 of 441 cells identical,
+    # mean |delta| 0.0015, worst cell 1.0023 -> 1.0234.
+    # ------------------------------------------------------------------
+    _FP_BASE_CTE = """
+    WITH scoped AS (
+        SELECT * FROM fp_grain
+        WHERE row_type = 'breadfast'
+        {and_where}
+    ),
+    fp_bf_modal AS (
+        SELECT product_id, fp_id, bf_sale_price AS bf_modal FROM (
+            SELECT product_id, fp_id, bf_sale_price,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY product_id, fp_id
+                       ORDER BY COUNT(*) DESC, bf_sale_price ASC
+                   ) AS rn
+            FROM scoped
+            WHERE is_recent_breadfast = TRUE AND bf_sale_price IS NOT NULL
+            GROUP BY product_id, fp_id, bf_sale_price
+        ) WHERE rn = 1
+    ),
+    fp_comp_fresh AS (
+        SELECT product_id, competitor_id, fp_id, competitor_sale_price AS comp_fresh_modal FROM (
+            SELECT product_id, competitor_id, fp_id, competitor_sale_price,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY product_id, competitor_id, fp_id
+                       ORDER BY COUNT(*) DESC, competitor_sale_price ASC
+                   ) AS rn
+            FROM scoped
+            WHERE competitor_sale_price > 0 AND is_recent_competitor = TRUE
+            GROUP BY product_id, competitor_id, fp_id, competitor_sale_price
+        ) WHERE rn = 1
+    ),
+    fp_comp_all AS (
+        SELECT product_id, competitor_id, fp_id, competitor_sale_price AS comp_all_modal FROM (
+            SELECT product_id, competitor_id, fp_id, competitor_sale_price,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY product_id, competitor_id, fp_id
+                       ORDER BY COUNT(*) DESC, competitor_sale_price ASC
+                   ) AS rn
+            FROM scoped
+            WHERE competitor_sale_price > 0
+            GROUP BY product_id, competitor_id, fp_id, competitor_sale_price
+        ) WHERE rn = 1
+    ),
+    fp_pair AS (
+        SELECT
+            product_id, competitor_id, fp_id,
+            ANY_VALUE(fp_name)              AS fp_name,
+            ANY_VALUE(competitor_name)      AS competitor_name,
+            ANY_VALUE(avg_daily_quantity)   AS avg_daily_quantity,
+            ANY_VALUE(eligible_product)     AS eligible_product,
+            BOOL_OR(is_mapped)              AS is_mapped
+        FROM scoped
+        GROUP BY product_id, competitor_id, fp_id
+    ),
+    fp_base AS (
+        SELECT
+            p.*,
+            bm.bf_modal                                       AS bf_sale_price,
+            COALESCE(cf.comp_fresh_modal, ca.comp_all_modal)  AS competitor_sale_price,
+            bm.bf_modal / COALESCE(cf.comp_fresh_modal, ca.comp_all_modal) AS sale_PI,
+            (p.eligible_product
+                AND ca.comp_all_modal   IS NOT NULL
+                AND bm.bf_modal         IS NOT NULL
+                AND cf.comp_fresh_modal IS NOT NULL)          AS used_product
+        FROM fp_pair p
+        LEFT JOIN fp_bf_modal   bm USING (product_id, fp_id)
+        LEFT JOIN fp_comp_fresh cf USING (product_id, competitor_id, fp_id)
+        LEFT JOIN fp_comp_all   ca USING (product_id, competitor_id, fp_id)
+    )
+    """
+
+    def _fp_base_cte(self, where: str) -> str:
+        return self._FP_BASE_CTE.format(and_where=self._as_and(where))
+
     def _base_cte(self, where: str) -> str:
         """_BASE_CTE with the WHERE clause injected. The product-level gate
         (`used_product`) is fixed to the observed definition — the competitor
@@ -859,12 +946,10 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
     def get_fp_competitor_pi(self, filters: dict | None = None, price_fallback: bool = False) -> dict:
         where, params = self._build_where_clause(filters)
         if not price_fallback:
-            # Observed-only — unchanged from the original (the regression guard:
-            # price_fallback=False must stay byte-identical to pre-feature output).
-            sql = """
-            WITH scoped AS (
-                SELECT * FROM fp_grain WHERE row_type = 'breadfast' {and_where}
-            )
+            # Observed-only. Reads the recomputed FP-grain base, so each cell is
+            # on the same price basis as Commercial and Executive rather than on
+            # BigQuery's raw sale_PI / used_product columns.
+            sql = self._fp_base_cte(where) + """
             SELECT
                 fp_name,
                 competitor_name,
@@ -876,12 +961,12 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 CAST(COUNT(DISTINCT product_id) FILTER (WHERE used_product)     AS INTEGER) AS used_count,
                 CAST(0 AS INTEGER) AS estimated_count,
                 CAST(COUNT(DISTINCT product_id) FILTER (WHERE eligible_product) AS INTEGER) AS eligible_count
-            FROM scoped
+            FROM fp_base
             WHERE competitor_name IS NOT NULL AND fp_name IS NOT NULL
             GROUP BY fp_name, competitor_name
             HAVING COUNT(DISTINCT product_id) FILTER (WHERE eligible_product) > 0
             ORDER BY fp_name, competitor_name
-            """.format(and_where=self._as_and(where))
+            """
         else:
             # Fallback ON — fill mapped, non-fresh (product, fp, competitor) cells
             # with the per-(product, competitor) FRESH modal price computed over ALL
@@ -892,11 +977,10 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             # FP-matrix, never in this blended aggregation). The modal CTE scans the
             # full grain (a price is a product-level property, independent of the FP
             # filter).
-            sql = """
-            WITH scoped AS (
-                SELECT * FROM fp_grain WHERE row_type = 'breadfast' {and_where}
-            ),
-            modal AS (
+            # Layered on the same recomputed FP-grain base as the observed branch,
+            # so an estimated cell and an observed cell are priced the same way.
+            sql = self._fp_base_cte(where) + """
+            , modal AS (
                 SELECT product_id, competitor_name, competitor_sale_price AS modal_price FROM (
                     SELECT product_id, competitor_name, competitor_sale_price,
                            ROW_NUMBER() OVER (PARTITION BY product_id, competitor_name
@@ -916,7 +1000,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                      AND m.modal_price IS NOT NULL AND s.bf_sale_price IS NOT NULL) AS is_estimated,
                     CASE WHEN s.used_product THEN s.sale_PI
                          ELSE s.bf_sale_price / NULLIF(m.modal_price, 0) END AS pi_eff
-                FROM scoped s
+                FROM fp_base s
                 LEFT JOIN modal m USING (product_id, competitor_name)
             )
             SELECT
