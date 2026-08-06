@@ -147,7 +147,9 @@ import ExportButton from '../shared/ExportButton.vue'
 import CompetitorLogo from '../shared/CompetitorLogo.vue'
 import { piTextClass, piBgClass, piToHex } from '../../utils/piColor'
 
-defineProps({
+// Must be bound: exportData() below dereferences `props`, so without this the
+// Export CSV button throws ReferenceError and sticks on "Exporting...".
+const props = defineProps({
   data: { type: Array, default: () => [] },
 })
 defineEmits(['select-competitor'])

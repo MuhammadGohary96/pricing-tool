@@ -70,7 +70,27 @@
             <div class="bg-white p-5 lg:p-6 flex flex-col justify-center gap-1.5">
               <dt class="text-caption text-grey-500 font-medium">Competitors tracked</dt>
               <dd class="font-mono text-[26px] font-bold text-grey-900 tabular-nums leading-none"><AnimatedNumber :value="competitorCount" /></dd>
-              <dd class="text-micro text-grey-500">with live price data</dd>
+              <!-- Was the flat claim "with live price data", which is untrue for a
+                   competitor whose catalogue was never crawled. -->
+              <dd class="text-micro text-grey-500">
+                {{ withCatalogueCount != null ? `${withCatalogueCount} with a live catalogue` : 'benchmarked' }}
+              </dd>
+            </div>
+            <div class="bg-white p-5 lg:p-6 flex flex-col justify-center gap-1.5">
+              <dt class="text-caption text-grey-500 font-medium">Addressable</dt>
+              <dd class="font-mono text-[26px] font-bold text-grey-900 tabular-nums leading-none">
+                <span v-if="addressablePct != null"><AnimatedNumber :value="addressablePct" />%</span>
+                <span v-else>—</span>
+              </dd>
+              <dd class="text-micro text-grey-500">matched, of what can be matched</dd>
+            </div>
+            <div class="bg-white p-5 lg:p-6 flex flex-col justify-center gap-1.5">
+              <dt class="text-caption text-grey-500 font-medium">Benchmark freshness</dt>
+              <dd class="font-mono text-[26px] font-bold text-grey-900 tabular-nums leading-none">
+                <span v-if="freshPct != null"><AnimatedNumber :value="freshPct" />%</span>
+                <span v-else>—</span>
+              </dd>
+              <dd class="text-micro text-grey-500">of matches seen in the last 7 days</dd>
             </div>
           </dl>
         </div>
@@ -155,9 +175,16 @@
       <!-- ═══ TIER 3 · Data coverage — how complete the mapping behind these numbers is ═══ -->
       <div class="flex items-baseline gap-2.5 mt-3 animate-fade-in-up stagger-5">
         <h2 class="text-caption font-semibold uppercase tracking-wide text-grey-500">Data coverage</h2>
-        <span class="text-micro text-grey-400">how much of the catalog is mapped, per competitor</span>
+        <span class="text-micro text-grey-400">how much of the catalog is mapped, how much can be, and what they carry that we don't</span>
       </div>
       <MappingProgressChart :data="store.dashboard?.mapping_progress || []" class="animate-fade-in-up stagger-5" />
+
+      <CompetitorOverviewTable
+        v-if="store.competitorOverview?.length"
+        :data="store.competitorOverview"
+        :vertical="filters.vertical"
+        class="animate-fade-in-up stagger-5"
+      />
 
     </div>
   </PageShell>
@@ -177,6 +204,7 @@ import CompetitorPITable from '../components/executive/CompetitorPITable.vue'
 import MappingProgressChart from '../components/executive/MappingProgressChart.vue'
 import ClassificationBreakdown from '../components/executive/ClassificationBreakdown.vue'
 import GeographicExposure from '../components/executive/GeographicExposure.vue'
+import CompetitorOverviewTable from '../components/executive/CompetitorOverviewTable.vue'
 import PageShell from '../components/shared/PageShell.vue'
 import PageHeader from '../components/shared/PageHeader.vue'
 import DefinitionsPanel from '../components/shared/DefinitionsPanel.vue'
@@ -280,6 +308,24 @@ function onSelectFp(fp) {
 
 const kpis = computed(() => store.dashboard?.kpis ?? null)
 const competitorCount = computed(() => store.dashboard?.competitor_pi?.length ?? 0)
+
+// ─── Coverage headlines, from the competitor-overview panel ──────
+// Pooled over (product × competitor) pairs, the same grain MappingProgressChart
+// already pools on: a product matched to three competitors counts three times.
+// These are additive — they replace no existing number.
+const overview = computed(() => store.competitorOverview || [])
+const withCatalogueCount = computed(() =>
+  overview.value.length ? overview.value.filter(r => r.has_catalogue).length : null)
+
+function pooled(numKey, denFn) {
+  const rows = overview.value
+  if (!rows.length) return null
+  const num = rows.reduce((s, r) => s + (r[numKey] || 0), 0)
+  const den = rows.reduce((s, r) => s + (denFn(r) || 0), 0)
+  return den > 0 ? Math.round((num / den) * 1000) / 10 : null
+}
+const addressablePct = computed(() => pooled('matched', r => r.addressable))
+const freshPct = computed(() => pooled('matched_fresh', r => r.matched))
 
 // ─── Competitor visibility (client-side, same UX as Commercial) ──
 // Empty selection = show all. The pills filter the Competitor PI table and the
@@ -419,6 +465,16 @@ const definitions = [
       { term: 'Category PI', description: 'Blended PI per category. Click a category to explore it in the Commercial view.', icon: Layers },
       { term: 'Classification', description: 'Donut of product x competitor pairs by mapping status. Use the competitor pills to filter; click a segment to navigate.', icon: PieChart },
       { term: 'Mapping Progress', description: 'Stacked bar of product status per competitor. Shows coverage now, plus the reachable headroom from potential matches.', icon: BarChart2Icon },
+      { term: 'Competitor Overview', description: 'Matching and assortment coverage per competitor — the live version of the Brand Portfolio workbook sheet. Set Vertical to Supermarket to match that sheet, which excludes beauty.', icon: BarChart2Icon },
+    ],
+  },
+  {
+    title: 'Coverage & matchability',
+    items: [
+      { term: 'Addressable %', description: 'Matched divided by (our products minus confirmed no-match). Products the matcher positively rejected leave the denominator, so this is the honest ceiling rather than a backlog. Pooled across product x competitor pairs.', icon: Target },
+      { term: 'Confirmed no-match', description: 'The matcher looked and rejected every candidate — a real assortment difference, not a queue item.', icon: PieChart },
+      { term: 'Benchmark freshness', description: 'Share of our matches whose competitor product was seen in the last 7 days. A match that has gone quiet is a price benchmark quietly going stale.', icon: BarChart2Icon },
+      { term: 'They only', description: "Competitor products with no link to anything of ours. A competitor with no crawled catalogue shows zero here — that is a collection gap, not an assortment gap, and the row is flagged.", icon: Layers },
     ],
   },
 ]

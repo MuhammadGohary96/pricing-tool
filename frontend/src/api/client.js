@@ -102,4 +102,5 @@ export const executiveApi = {
   getTopActions: (limit = 10, params = {}) => api.get('/executive/top-actions', { params: { limit, ...params } }),
   getDashboard: (params) => api.get('/executive/dashboard', { params }),
   getFpCompetitorPi: (params) => api.get('/executive/fp-competitor-pi', { params }),
+  getCompetitorOverview: (params) => api.get('/executive/competitor-overview', { params }),
 }

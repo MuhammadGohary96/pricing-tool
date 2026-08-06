@@ -1287,7 +1287,15 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         that mean something on that grain (see `_gap_where`).
         """
         where, params_bf = self._build_where_clause(filters)
-        base_cte = self._base_cte(where)
+
+        # Read the pre-materialized global_base whenever we can. It IS
+        # _BASE_CTE("") built once at startup, and it carries every column the
+        # filters touch, so re-running the CTE per request costs ~4s for nothing.
+        # Only an FP filter forces the rebuild: global_base has no fp_name (the
+        # FP grain is collapsed away), so an fp_names filter cannot be applied
+        # to it. This is the same GLOBAL/FP-scoped split as _apply_filters.
+        fp_scoped = bool((filters or {}).get("fp_names"))
+        bf_source = "base_tmp" if fp_scoped else f"(SELECT * FROM global_base {where})"
 
         # Competitor side: only the crossover filters apply. Beauty is handled
         # by the bridge's evidence share, because a competitor-only row has no
@@ -1319,7 +1327,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 COUNT(DISTINCT brand_key) FILTER (WHERE NOT is_shared_brand)      AS bf_only_brands,
                 BOOL_OR(COALESCE(competitor_has_v2_catalogue, FALSE))             AS has_catalogue,
                 MAX(comp_active_products)                                         AS comp_products
-            FROM base_tmp
+            FROM {bf_source} AS bf
             WHERE competitor_name IS NOT NULL
             GROUP BY competitor_name
         ),
@@ -1327,7 +1335,12 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             SELECT
                 competitor_name,
                 COUNT(*)                                                     AS comp_only_products,
-                COUNT(DISTINCT brand_key) FILTER (WHERE NOT is_shared_brand)  AS comp_only_brands
+                -- NULLIF(TRIM(...)) is required, not cosmetic: comp_catalogue is
+                -- read raw here (unlike the Breadfast side, which gets it from
+                -- pair_meta already normalized), and a blank brand_key would
+                -- otherwise count as one extra brand on every competitor.
+                COUNT(DISTINCT NULLIF(TRIM(brand_key), ''))
+                    FILTER (WHERE NOT is_shared_brand)                       AS comp_only_brands
             FROM comp_catalogue
             WHERE TRUE{where_comp}
             GROUP BY competitor_name
@@ -1361,11 +1374,16 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         """
 
         with self._duckdb_lock:
-            self._duckdb_conn.execute(
-                "CREATE OR REPLACE TEMP TABLE base_tmp AS " + base_cte + " SELECT * FROM base",
-                params_bf,
-            )
-            df = self._duckdb_conn.execute(sql, params_comp).df()
+            if fp_scoped:
+                self._duckdb_conn.execute(
+                    "CREATE OR REPLACE TEMP TABLE base_tmp AS "
+                    + self._base_cte(where) + " SELECT * FROM base",
+                    params_bf,
+                )
+                df = self._duckdb_conn.execute(sql, params_comp).df()
+            else:
+                # `where` is inlined into bf_source, so its params come first.
+                df = self._duckdb_conn.execute(sql, params_bf + params_comp).df()
         return self._gap_records(df)
 
     def get_gap_kpis(self, filters: dict | None = None) -> dict:
