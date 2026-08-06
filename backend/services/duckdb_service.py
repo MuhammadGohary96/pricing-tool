@@ -1290,31 +1290,46 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
     # that landed in our beauty range. >0.90 means <10% of it is in scope.
     _BEAUTY_PATH_CUTOFF = 0.90
 
-    @staticmethod
-    def _gap_scope(filters: dict | None) -> tuple[str, str]:
-        """Scope predicates for the two sides, driven by the tab's toggles.
+    def _collapsed_source(self, filters: dict | None) -> tuple[str, list, str | None]:
+        """The Breadfast-side source for every national roll-up.
 
-        scope='excl_beauty_pl' (the default) drops beauty and private label from
-        the gap rates — the ranges where "we don't carry it" is a deliberate
-        assortment choice rather than a gap. include_private_label puts private
-        label back without also re-including beauty.
+        One method for the whole app: collapse the filtered rows to one row per
+        (product, competitor) with recomputed modal prices, then calculate. That
+        is what `_BASE_CTE` does, and `global_base` is it pre-materialized for the
+        unfiltered case.
 
-        Returns (breadfast_predicate, competitor_predicate), each already
-        prefixed with AND or empty.
+        Returns (source_sql, params, materialize_sql). When materialize_sql is
+        non-None the caller must execute it first; otherwise the source is a
+        filtered read of the pre-built table.
+
+        The CTE has to be re-run for any filter that can select rows *within* a
+        product's modal partition, because `global_base` is built unfiltered and
+        filtering it afterwards cannot change a modal that was already chosen:
+
+          fp_names     — global_base has collapsed fp_name away entirely.
+          competitor   — less obvious, and it bit us. `bf_sale_price` is NOT
+                         competitor-invariant: BigQuery emits
+                         COALESCE(bf_eod_sale_price, scd_price), so each
+                         competitor contributes its own end-of-day Breadfast
+                         price. For one real product the modal is 78.75 across
+                         all competitors but 41.50 within Talabat, moving its PI
+                         from 1.11 to 0.93.
+          action_type  — varies per (fp, competitor), so it slices partitions too.
+
+        Everything else (category, subcategory, tier, brand, vertical, private
+        label) is a product-level attribute: it removes whole products and never
+        rows inside a surviving product, so the pre-built table stays valid.
         """
+        where, params = self._build_where_clause(filters)
         f = filters or {}
-        scope = str(f.get("scope") or "excl_beauty_pl").strip().lower()
-        if scope == "all":
-            return "", ""
-        bf = " AND NOT COALESCE(is_beauty, FALSE)"
-        if not f.get("include_private_label"):
-            bf += " AND NOT COALESCE(is_private_label, FALSE)"
-        # Known blind spot (plan section 9.5): Seoudi and Rabbit file everything
-        # under one flat "Beauty and Personal Care" node, so that path keeps
-        # in-scope evidence and never crosses the cutoff. Their beauty products
-        # survive this filter. Surfaced in the UI rather than silently patched.
-        comp = f" AND COALESCE(beauty_path_share, 0) <= {DuckDBPricingDataService._BEAUTY_PATH_CUTOFF}"
-        return bf, comp
+        if f.get("fp_names") or f.get("competitor") or f.get("action_type"):
+            return (
+                "base_tmp",
+                params,
+                "CREATE OR REPLACE TEMP TABLE base_tmp AS "
+                + self._base_cte(where) + " SELECT * FROM base",
+            )
+        return f"(SELECT * FROM global_base {where})", params, None
 
     def _gap_where(self, filters: dict | None) -> tuple[str, str, list, list]:
         """WHERE fragments for the Breadfast and competitor sides.
@@ -1365,20 +1380,31 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         comp = (" AND " + " AND ".join(comp_clauses)) if comp_clauses else ""
         return bf, comp, bf_params, comp_params
 
-    def _gap_ctes(self, filters: dict | None) -> tuple[str, list]:
+    def _gap_ctes(self, filters: dict | None) -> tuple[str, list, list, str | None]:
         """Shared CTE prelude: `bf_prod` (our side, product grain) and
-        `comp_prod` (theirs). Returns (sql, params) — params are BF-side first,
-        then competitor-side, matching the order the CTEs appear."""
-        scope_bf, scope_comp = self._gap_scope(filters)
-        where_bf, where_comp, params_bf, params_comp = self._gap_where(filters)
+        `comp_prod` (theirs).
+
+        Returns (sql, params_bf, params_comp, materialize_sql). The two param
+        lists are kept apart because `materialize_sql` binds only the Breadfast
+        ones; the query itself binds them in CTE order, bf then comp.
+        materialize_sql is non-None only when an FP filter forces the base CTE
+        to be re-run.
+
+        The Breadfast side reads `_collapsed_source`, i.e. the same
+        collapse-then-calculate base as Commercial and Executive, rather than
+        `fp_grain` directly. It used to read the FP grain and collapse it here,
+        which produced the right counts but the wrong price weighting — see the
+        note on pi_side in get_gap_by_subcategory.
+        """
+        bf_source, params_bf, materialize = self._collapsed_source(filters)
+        where_comp, params_comp = self._comp_side_where(filters)
 
         sql = f"""
         WITH bf_scoped AS (
-            SELECT * FROM fp_grain
-            WHERE row_type = 'breadfast'{scope_bf}{where_bf}
+            SELECT * FROM {bf_source}
         ),
-        -- Collapse the FP replication FIRST. Gap metrics are national; counting
-        -- before this would multiply every product by its number of FPs.
+        -- One row per product. The source is already one row per (product,
+        -- competitor), so this collapses only across the competitors in scope.
         bf_prod AS (
             SELECT
                 product_id,
@@ -1421,10 +1447,28 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 classification,
                 competitor_has_v2_catalogue
             FROM comp_catalogue
-            WHERE TRUE{scope_comp}{where_comp}
+            WHERE TRUE{where_comp}
         )
         """
-        return sql, params_bf + params_comp
+        return sql, params_bf, params_comp, materialize
+
+    def _gap_execute(self, sql, params_bf, params_comp, materialize, extra=None):
+        """Run a gap query, materializing the FP-scoped base first when needed.
+
+        Param binding differs between the two paths. When the base is
+        materialized, `bf_source` is the bare table name `base_tmp` and carries
+        no placeholders — the Breadfast params belong to the CREATE statement.
+        Otherwise `bf_source` is an inline filtered read of global_base and the
+        placeholders are in the query itself.
+        """
+        with self._duckdb_lock:
+            if materialize:
+                self._duckdb_conn.execute(materialize, params_bf)
+                # bf_source is the bare name `base_tmp`, which has no placeholders.
+                bound = list(params_comp)
+            else:
+                bound = list(params_bf) + list(params_comp)
+            return self._duckdb_conn.execute(sql, bound + list(extra or [])).df()
 
     def _comp_side_where(self, filters: dict | None) -> tuple[str, list]:
         """WHERE fragment for `comp_catalogue` when it is joined onto a
@@ -1560,7 +1604,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
 
     def get_gap_kpis(self, filters: dict | None = None) -> dict:
         """Headline gap numbers for the scope currently selected."""
-        cte, params = self._gap_ctes(filters)
+        cte, params_bf, params_comp, materialize = self._gap_ctes(filters)
         sql = cte + """
         SELECT
             (SELECT COUNT(*) FROM bf_prod)                                        AS bf_products,
@@ -1580,8 +1624,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             (SELECT COUNT(DISTINCT brand_key) FROM comp_prod
               WHERE brand_key IS NOT NULL AND NOT is_shared_brand)                AS comp_only_brands
         """
-        with self._duckdb_lock:
-            r = self._duckdb_conn.execute(sql, params).df().iloc[0]
+        r = self._gap_execute(sql, params_bf, params_comp, materialize).iloc[0]
 
         def i(v):
             return int(v) if pd.notna(v) else 0
@@ -1618,9 +1661,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         NOTE: never sum comp_only_products across rows — one competitor product
         can bridge to several of our subcategories (plan section 9.7).
         """
-        cte, params = self._gap_ctes(filters)
-        _, pi_where, _, pi_params = self._gap_where(filters)
-        scope_bf, _ = self._gap_scope(filters)
+        cte, params_bf, params_comp, materialize = self._gap_ctes(filters)
 
         sql = cte + f"""
         , bf_side AS (
@@ -1654,21 +1695,29 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             WHERE sub_category_name IS NOT NULL
             GROUP BY sub_category_name
         ),
-        -- Price position stays at FP grain, matching the BigQuery
-        -- subcategory_summary roll-up: quantity-weighted, over the FP-level
-        -- used_product / sale_PI columns rather than the product-collapsed
-        -- recompute the Commercial tab uses.
+        -- Price position, on the same collapse-then-calculate basis as Commercial
+        -- and Executive.
+        --
+        -- This used to read fp_grain directly and sum across FP rows. That was
+        -- wrong, not merely different: avg_daily_quantity is a NATIONAL figure,
+        -- so repeating it on every FP row and summing weights each product by
+        -- demand x number of FPs it is stocked in. Hair Care / Talabat came out
+        -- at 1.061 that way against 0.945 here, off the same 18 products, with a
+        -- weight sum inflated 21x -- the two screens disagreed about which side
+        -- of parity we were on, because of distribution breadth rather than
+        -- price. docs/DDD.md requires weighting by real demand.
         pi_side AS (
             SELECT
                 sub_category_name,
+                -- 4dp, matching get_blended_pi_by_subcategory exactly, so the two
+                -- screens cannot differ even at a rounding boundary.
                 ROUND(SUM(CASE WHEN used_product THEN sale_PI * avg_daily_quantity END)
-                      / NULLIF(SUM(CASE WHEN used_product THEN avg_daily_quantity END), 0), 3)
+                      / NULLIF(SUM(CASE WHEN used_product THEN avg_daily_quantity END), 0), 4)
                                                                              AS blended_pi,
                 ROUND(100.0 * COUNT(DISTINCT product_id) FILTER (WHERE used_product)
                       / NULLIF(COUNT(DISTINCT product_id) FILTER (WHERE eligible_product), 0), 1)
                                                                              AS coverage_pct
-            FROM fp_grain
-            WHERE row_type = 'breadfast'{scope_bf}{pi_where}
+            FROM bf_scoped
             GROUP BY sub_category_name
         ),
         comp_side AS (
@@ -1710,8 +1759,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         LEFT JOIN comp_side c USING (sub_category_name)
         ORDER BY b.daily_revenue DESC NULLS LAST
         """
-        with self._duckdb_lock:
-            df = self._duckdb_conn.execute(sql, params + pi_params).df()
+        df = self._gap_execute(sql, params_bf, params_comp, materialize)
         return self._gap_records(df)
 
     def get_gap_by_brand(self, filters: dict | None = None) -> list[dict]:
@@ -1724,7 +1772,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         "L'Oreal", "L'Oréal Paris" and "Elvive" stay separate rows, so comp-only
         brand counts run high. Fuzzy brand resolution is its own piece of work.
         """
-        cte, params = self._gap_ctes(filters)
+        cte, params_bf, params_comp, materialize = self._gap_ctes(filters)
         sql = cte + """
         , bf_side AS (
             SELECT
@@ -1784,8 +1832,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         FULL OUTER JOIN comp_side c USING (brand_key)
         ORDER BY daily_revenue DESC, comp_only_products DESC, brand_name
         """
-        with self._duckdb_lock:
-            df = self._duckdb_conn.execute(sql, params).df()
+        df = self._gap_execute(sql, params_bf, params_comp, materialize)
         return self._gap_records(df)
 
     def get_gap_products(
@@ -1804,8 +1851,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         side='competitor' → their products we do not carry, with the subcategory
                             the bridge assigned and how confident that call is.
         """
-        cte, params = self._gap_ctes(filters)
-        params = list(params)
+        cte, params_bf, params_comp, materialize = self._gap_ctes(filters)
         competitor_side = str(side).lower() == "competitor"
 
         if competitor_side:
@@ -1870,14 +1916,22 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         direction = "ASC" if str(sort_dir).lower() == "asc" else "DESC"
         offset = max(0, (max(1, page) - 1) * page_size)
 
+        # Both statements run under ONE lock acquisition. base_tmp is a temp table
+        # on the single shared connection, so releasing the lock between the count
+        # and the page would let a concurrent request replace it underneath us.
         with self._duckdb_lock:
+            if materialize:
+                self._duckdb_conn.execute(materialize, params_bf)
+                bound = list(params_comp)      # bf_source is `base_tmp`, no placeholders
+            else:
+                bound = list(params_bf) + list(params_comp)
             (total,) = self._duckdb_conn.execute(
-                cte + f" SELECT COUNT(*) FROM {source}{where}", params + extra
+                cte + f" SELECT COUNT(*) FROM {source}{where}", bound + extra
             ).fetchone()
             df = self._duckdb_conn.execute(
                 cte + select + where
                 + f" ORDER BY {col} {direction} NULLS LAST LIMIT ? OFFSET ?",
-                params + extra + [page_size, offset],
+                bound + extra + [page_size, offset],
             ).df()
 
         return {
