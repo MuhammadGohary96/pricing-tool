@@ -105,14 +105,22 @@
         <PILegend />
       </div>
 
-      <!-- By competitor: blended PI table + classification donut, paired -->
+      <!-- One table per competitor: price position and assortment coverage, which
+           were two separate panels at opposite ends of this page. Same grain, so
+           the same row now answers "are we priced right against them" and "how
+           much of our range can we even compare". -->
+      <CompetitorScorecard
+        v-if="visibleOverview.length"
+        :data="visibleOverview"
+        :mapping-progress="store.dashboard?.mapping_progress || []"
+        :vertical="filters.vertical"
+        class="animate-fade-in-up stagger-3"
+        @select-competitor="navigateToCompetitor"
+      />
+
+      <!-- Classification donut keeps its place in this tier, now paired with the
+           category strip (also a pricing-position panel) so neither sits alone. -->
       <div class="flex flex-col xl:flex-row gap-4 items-start animate-fade-in-up stagger-3">
-        <div class="w-full xl:w-[58%] min-w-0">
-          <CompetitorPITable
-            :data="enrichedCompetitorPI"
-            @select-competitor="navigateToCompetitor"
-          />
-        </div>
         <div class="w-full xl:w-[42%] min-w-0">
           <ClassificationBreakdown
             :data="store.dashboard?.classification_breakdown"
@@ -120,31 +128,29 @@
             @navigate="navigateToAction"
           />
         </div>
-      </div>
-
-      <!-- By category: blended PI per category (full-width chip strip) -->
-      <div
-        v-if="store.categoryPerformance?.length"
-        class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden animate-fade-in-up stagger-4"
-      >
-        <div class="px-4 py-3 border-b border-grey-100 flex items-center gap-2">
-          <Layers class="w-4 h-4 text-brand-primary" />
-          <span class="text-subheading font-bold text-grey-900 tracking-tightish">Category PI</span>
-          <span class="text-caption text-grey-400 ml-1">click to explore</span>
-        </div>
-        <div class="flex flex-wrap gap-2 px-4 py-3">
-          <button
-            v-for="cat in store.categoryPerformance"
-            :key="cat.category_name"
-            class="flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all hover:shadow-panel-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-lightest"
-            :class="deviationBorderClass(cat.pi_deviation)"
-            @click="navigateToCategory(cat.category_name)"
-          >
-            <span class="text-body text-grey-800 font-medium">{{ cat.category_name }}</span>
-            <span class="font-mono text-body font-bold" :class="piTextClass(cat.blended_pi)">
-              {{ cat.blended_pi?.toFixed(2) ?? '—' }}
-            </span>
-          </button>
+        <div
+          v-if="store.categoryPerformance?.length"
+          class="w-full xl:w-[58%] min-w-0 bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden"
+        >
+          <div class="px-4 py-3 border-b border-grey-100 flex items-center gap-2">
+            <Layers class="w-4 h-4 text-brand-primary" />
+            <span class="text-subheading font-bold text-grey-900 tracking-tightish">Category PI</span>
+            <span class="text-caption text-grey-400 ml-1">click to explore</span>
+          </div>
+          <div class="flex flex-wrap gap-2 px-4 py-3">
+            <button
+              v-for="cat in store.categoryPerformance"
+              :key="cat.category_name"
+              class="flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all hover:shadow-panel-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-lightest"
+              :class="deviationBorderClass(cat.pi_deviation)"
+              @click="navigateToCategory(cat.category_name)"
+            >
+              <span class="text-body text-grey-800 font-medium">{{ cat.category_name }}</span>
+              <span class="font-mono text-body font-bold" :class="piTextClass(cat.blended_pi)">
+                {{ cat.blended_pi?.toFixed(2) ?? '—' }}
+              </span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -159,41 +165,9 @@
       <!-- ═══ TIER 3 · Data coverage — how complete the mapping behind these numbers is ═══ -->
       <div class="flex items-baseline gap-2.5 mt-3 animate-fade-in-up stagger-5">
         <h2 class="text-caption font-semibold uppercase tracking-wide text-grey-500">Data coverage</h2>
-        <span class="text-micro text-grey-400">how much of the catalog is mapped, how much can be, and what they carry that we don't</span>
+        <span class="text-micro text-grey-400">how much of the catalog is mapped per competitor, and the reachable headroom</span>
       </div>
       <MappingProgressChart :data="store.dashboard?.mapping_progress || []" class="animate-fade-in-up stagger-5" />
-
-      <!-- Coverage headlines. These summarise the table below, so they sit with
-           it rather than competing with the blended-PI hero: a hero plus four
-           equal peers reads as five numbers of equal weight, and this view is
-           specced for a five-second glance. Pooled over product x competitor
-           pairs, the grain MappingProgressChart already pools on. -->
-      <div v-if="addressablePct != null || freshPct != null"
-           class="flex items-center gap-6 flex-wrap px-4 py-2.5 bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 animate-fade-in-up stagger-5">
-        <div class="flex items-baseline gap-2">
-          <span class="text-caption text-grey-500 font-medium">Addressable</span>
-          <span class="font-mono text-subheading font-bold text-grey-900 tabular-nums">
-            {{ addressablePct != null ? `${addressablePct}%` : '—' }}
-          </span>
-          <span class="text-micro text-grey-400">matched, of what can be matched</span>
-        </div>
-        <span class="h-4 w-px bg-grey-200" aria-hidden="true"></span>
-        <div class="flex items-baseline gap-2">
-          <span class="text-caption text-grey-500 font-medium">Benchmark freshness</span>
-          <span class="font-mono text-subheading font-bold tabular-nums"
-                :class="freshPct != null && freshPct < 80 ? 'text-amber-600' : 'text-grey-900'">
-            {{ freshPct != null ? `${freshPct}%` : '—' }}
-          </span>
-          <span class="text-micro text-grey-400">of matches seen in the last 7 days</span>
-        </div>
-      </div>
-
-      <CompetitorOverviewTable
-        v-if="store.competitorOverview?.length"
-        :data="store.competitorOverview"
-        :vertical="filters.vertical"
-        class="animate-fade-in-up stagger-5"
-      />
 
     </div>
   </PageShell>
@@ -209,11 +183,10 @@ import { dataApi } from '../api/client'
 import KpiCard from '../components/layout/KpiCard.vue'
 import FilterBar from '../components/layout/FilterBar.vue'
 import CompetitorToggle from '../components/shared/CompetitorToggle.vue'
-import CompetitorPITable from '../components/executive/CompetitorPITable.vue'
 import MappingProgressChart from '../components/executive/MappingProgressChart.vue'
 import ClassificationBreakdown from '../components/executive/ClassificationBreakdown.vue'
 import GeographicExposure from '../components/executive/GeographicExposure.vue'
-import CompetitorOverviewTable from '../components/executive/CompetitorOverviewTable.vue'
+import CompetitorScorecard from '../components/executive/CompetitorScorecard.vue'
 import PageShell from '../components/shared/PageShell.vue'
 import PageHeader from '../components/shared/PageHeader.vue'
 import DefinitionsPanel from '../components/shared/DefinitionsPanel.vue'
@@ -318,23 +291,12 @@ function onSelectFp(fp) {
 const kpis = computed(() => store.dashboard?.kpis ?? null)
 const competitorCount = computed(() => store.dashboard?.competitor_pi?.length ?? 0)
 
-// ─── Coverage headlines, from the competitor-overview panel ──────
-// Pooled over (product × competitor) pairs, the same grain MappingProgressChart
-// already pools on: a product matched to three competitors counts three times.
-// These are additive — they replace no existing number.
+// withCatalogueCount powers the header caption "N with a live catalogue"; the
+// Addressable / freshness summaries now live inside CompetitorScorecard, beside
+// the table they describe.
 const overview = computed(() => store.competitorOverview || [])
 const withCatalogueCount = computed(() =>
   overview.value.length ? overview.value.filter(r => r.has_catalogue).length : null)
-
-function pooled(numKey, denFn) {
-  const rows = overview.value
-  if (!rows.length) return null
-  const num = rows.reduce((s, r) => s + (r[numKey] || 0), 0)
-  const den = rows.reduce((s, r) => s + (denFn(r) || 0), 0)
-  return den > 0 ? Math.round((num / den) * 1000) / 10 : null
-}
-const addressablePct = computed(() => pooled('matched', r => r.addressable))
-const freshPct = computed(() => pooled('matched_fresh', r => r.matched))
 
 // ─── Competitor visibility (client-side, same UX as Commercial) ──
 // Empty selection = show all. The pills filter the Competitor PI table and the
@@ -412,18 +374,10 @@ const sparklinePath = computed(() => {
   }).join(' ')
 })
 
-// ─── Enriched competitor PI (merge mapping data for tooltips) ───
-const enrichedCompetitorPI = computed(() => {
-  const pi = store.dashboard?.competitor_pi || []
-  const progress = store.dashboard?.mapping_progress || []
-  const progressMap = Object.fromEntries(progress.map(p => [p.competitor_name, p]))
-  return pi
-    .filter(row => compVisible(row.competitor_name))
-    .map(row => ({
-      ...row,
-      _mapping: progressMap[row.competitor_name] || null,
-    }))
-})
+// The competitor pills are visibility-only on this view, so they filter the
+// scorecard's rows client-side without changing any number.
+const visibleOverview = computed(() =>
+  (store.competitorOverview || []).filter(r => compVisible(r.competitor_name)))
 
 // ─── Navigation helpers ─────────────────────────────────────────
 function navigateToCompetitor(name) {

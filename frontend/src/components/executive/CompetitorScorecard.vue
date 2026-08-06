@@ -1,0 +1,262 @@
+<template>
+  <div class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden">
+    <div class="px-4 py-3 border-b border-grey-100 flex items-center justify-between gap-3 flex-wrap">
+      <div class="flex items-center gap-2 min-w-0">
+        <LayoutList class="w-4 h-4 text-brand-primary shrink-0" />
+        <span class="text-subheading font-bold text-grey-900 tracking-tightish">By competitor</span>
+        <span class="text-caption text-grey-400">price position &amp; assortment coverage</span>
+      </div>
+
+      <div class="flex items-center gap-4 flex-wrap">
+        <!-- Summaries OF this table, so they live with it rather than competing
+             with the blended-PI hero above. Pooled over product x competitor
+             pairs, the grain MappingProgressChart already pools on. -->
+        <div v-if="addressablePct != null" class="flex items-baseline gap-1.5">
+          <span class="text-caption text-grey-500">Addressable</span>
+          <span class="font-mono text-body font-bold text-grey-900 tabular-nums">{{ addressablePct }}%</span>
+          <HelpTooltip text="Matched over what CAN be matched, pooled across every competitor. Products the matcher positively rejected leave the denominator." />
+        </div>
+        <div v-if="freshPct != null" class="flex items-baseline gap-1.5">
+          <span class="text-caption text-grey-500">Benchmark freshness</span>
+          <span class="font-mono text-body font-bold tabular-nums"
+                :class="freshPct < 80 ? 'text-amber-600' : 'text-grey-900'">{{ freshPct }}%</span>
+          <HelpTooltip text="Share of our matches whose competitor product was seen in the last 7 days. A match that has gone quiet is a benchmark quietly going stale." />
+        </div>
+        <ExportButton :fetcher="exportData" filename="competitor_scorecard.csv" />
+      </div>
+    </div>
+
+    <p v-if="!isSupermarket" class="px-4 py-2 text-caption text-grey-500 bg-grey-50/70 border-b border-grey-100">
+      <Info class="w-3.5 h-3.5 inline -mt-0.5 text-grey-400" />
+      Showing all verticals. Set <strong>Vertical → Supermarket</strong> above to match the
+      <em>excl. beauty</em> brand-portfolio workbook.
+    </p>
+
+    <div v-if="rows.length" class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <!-- Grouped header: three questions, read left to right. -->
+          <tr class="bg-grey-50 border-b border-grey-100">
+            <th :class="TH_L" rowspan="2" class="sticky left-0 bg-grey-50 z-10 align-bottom">Competitor</th>
+            <th :class="GROUP" colspan="3">Price position</th>
+            <th :class="[GROUP, 'border-l border-grey-200']" colspan="6">Match coverage</th>
+            <th :class="[GROUP, 'border-l border-grey-200']" colspan="3">Their assortment</th>
+          </tr>
+          <tr class="bg-grey-50 border-b border-grey-100">
+            <th :class="TH_R">
+              <span class="inline-flex items-center gap-1">Blended PI
+                <HelpTooltip text="Quantity-weighted Breadfast price divided by competitor price. Above 1.00 means BREADFAST IS MORE EXPENSIVE. Both tails matter." />
+              </span>
+            </th>
+            <th :class="TH_R">vs Parity</th>
+            <th :class="TH_R">
+              <span class="inline-flex items-center gap-1">Priced
+                <HelpTooltip text="Share of our eligible range (top 80% of revenue) that has a usable fresh price against this competitor. The denominator is the eligible set as a whole, so read it as how much of our priced-worthy range is benchmarked here." />
+              </span>
+            </th>
+            <th :class="[TH_R, 'border-l border-grey-200']">Our SKUs</th>
+            <th :class="TH_R">Matched</th>
+            <th :class="TH_C" style="min-width: 118px">Matched %</th>
+            <th :class="TH_R">
+              <span class="inline-flex items-center gap-1">Fresh
+                <HelpTooltip text="Matched AND the competitor product was seen in the last 7 days." />
+              </span>
+            </th>
+            <th :class="TH_C" style="min-width: 118px">
+              <span class="inline-flex items-center gap-1">Addressable %
+                <HelpTooltip text="Matched divided by (our SKUs minus confirmed no-match). The honest ceiling: a competitor at 30% matched but 100% addressable is finished, not behind." />
+              </span>
+            </th>
+            <th :class="TH_R">Potential</th>
+            <th :class="[TH_R, 'border-l border-grey-200']">
+              <span class="inline-flex items-center gap-1">Catalogue
+                <HelpTooltip text="Their ENTIRE live catalogue, across every category. This is the one column the vertical and category filters do not narrow." />
+              </span>
+            </th>
+            <th :class="TH_R">
+              <span class="inline-flex items-center gap-1">They only
+                <HelpTooltip text="Their products with no link to anything of ours. Never sum across views: one competitor product can bridge to several of our subcategories." />
+              </span>
+            </th>
+            <th :class="TH_C" style="min-width: 132px">Brands s / ours / theirs</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-grey-50">
+          <tr
+            v-for="row in rows"
+            :key="row.competitor_name"
+            class="hover:bg-brand-50 transition-colors cursor-pointer"
+            :class="{ 'opacity-70': !row.has_catalogue }"
+            :title="rowTitle(row)"
+            @click="$emit('select-competitor', row.competitor_name)"
+          >
+            <td class="px-4 py-3 sticky left-0 bg-white z-10">
+              <div class="flex items-center gap-2">
+                <CompetitorLogo :name="row.competitor_name" />
+                <span class="text-body font-semibold text-grey-900">{{ row.competitor_name }}</span>
+                <span v-if="!row.has_catalogue"
+                      class="px-1.5 py-0.5 rounded text-caption font-semibold bg-red-50 text-red-600 whitespace-nowrap"
+                      title="Nothing crawled into the catalogue in the last 7 days. The competitor-side columns are a collection gap, not an assortment gap; our matching figures are still valid.">
+                  no catalogue
+                </span>
+              </div>
+            </td>
+
+            <!-- Price position -->
+            <td class="px-4 py-3 text-right">
+              <span v-if="row.blended_pi != null"
+                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-mono text-body font-bold"
+                    :class="piBgClass(row.blended_pi)">
+                <span :class="piTextClass(row.blended_pi)">{{ piArrow(row.blended_pi) }}</span>
+                {{ row.blended_pi.toFixed(2) }}
+              </span>
+              <span v-else class="text-grey-300">—</span>
+            </td>
+            <td :class="[TD_N, devClass(row.pi_deviation)]">{{ dev(row.pi_deviation) }}</td>
+            <td class="px-4 py-3"><Bar :pct="row.priced_pct" /></td>
+
+            <!-- Match coverage -->
+            <td :class="[TD_N, 'border-l border-grey-100 text-grey-700']">{{ n(row.bf_products) }}</td>
+            <td :class="[TD_N, 'text-green-600']">{{ n(row.matched) }}</td>
+            <td class="px-4 py-3"><Bar :pct="row.mapping_pct" /></td>
+            <td :class="[TD_N, row.matched_fresh === 0 && row.matched > 0 ? 'text-red-500 font-semibold' : 'text-grey-600']"
+                :title="staleTitle(row)">{{ n(row.matched_fresh) }}</td>
+            <td class="px-4 py-3"><Bar :pct="row.addressable_pct" /></td>
+            <td :class="[TD_N, 'text-amber-600']">{{ n(row.potential_match) }}</td>
+
+            <!-- Their assortment -->
+            <td :class="[TD_N, 'border-l border-grey-100 text-grey-600']">{{ n(row.comp_products) }}</td>
+            <td :class="[TD_N, 'text-amber-700 font-semibold']">{{ n(row.comp_only_products) }}</td>
+            <td class="px-4 py-3">
+              <div class="flex items-center gap-1 text-caption font-mono">
+                <span class="px-1.5 py-0.5 rounded bg-green-50 text-green-700" title="Brands both of us carry">{{ row.shared_brands }}</span>
+                <span class="text-grey-300">/</span>
+                <span class="px-1.5 py-0.5 rounded bg-brand-50 text-brand-primary" title="Brands only we carry">{{ row.bf_only_brands }}</span>
+                <span class="text-grey-300">/</span>
+                <span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700" title="Brands only they carry. Name variants are not collapsed, so this is an upper bound.">{{ row.comp_only_brands }}</span>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <EmptyState v-else message="No competitor data for the current filters" />
+  </div>
+</template>
+
+<script setup>
+import { computed, h } from 'vue'
+import { LayoutList, Info } from 'lucide-vue-next'
+import ExportButton from '../shared/ExportButton.vue'
+import EmptyState from '../shared/EmptyState.vue'
+import HelpTooltip from '../shared/HelpTooltip.vue'
+import CompetitorLogo from '../shared/CompetitorLogo.vue'
+import { piTextClass, piBgClass, piArrow } from '../../utils/piColor'
+
+const props = defineProps({
+  data: { type: Array, default: () => [] },
+  /** mapping_progress rows, keyed by competitor, for the hover breakdown. */
+  mappingProgress: { type: Array, default: () => [] },
+  vertical: { type: String, default: '' },
+})
+defineEmits(['select-competitor'])
+
+const GROUP = 'px-4 py-1.5 text-center text-micro font-bold uppercase tracking-wide text-grey-400'
+const TH_L = 'px-4 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide'
+const TH_R = 'px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide'
+const TH_C = 'px-4 py-2 text-caption font-semibold text-grey-500 uppercase tracking-wide'
+const TD_N = 'px-4 py-3 text-right text-body font-mono'
+
+const rows = computed(() => props.data || [])
+const isSupermarket = computed(() => String(props.vertical).toLowerCase() === 'supermarket')
+
+const mappingByComp = computed(() =>
+  Object.fromEntries((props.mappingProgress || []).map(m => [m.competitor_name, m])))
+
+function pooled(numKey, denFn) {
+  const r = rows.value
+  if (!r.length) return null
+  const num = r.reduce((s, x) => s + (x[numKey] || 0), 0)
+  const den = r.reduce((s, x) => s + (denFn(x) || 0), 0)
+  return den > 0 ? Math.round((num / den) * 1000) / 10 : null
+}
+const addressablePct = computed(() => pooled('matched', r => r.addressable))
+const freshPct = computed(() => pooled('matched_fresh', r => r.matched))
+
+function n(v) { return v == null ? '—' : Number(v).toLocaleString() }
+function dev(v) { return v == null ? '—' : `${v > 0 ? '+' : ''}${(v * 100).toFixed(1)}%` }
+function devClass(v) {
+  if (v == null) return 'text-grey-300'
+  if (Math.abs(v) <= 0.005) return 'text-grey-500'
+  // Same convention as piColor: pricier = warm, cheaper = cool.
+  return v > 0 ? 'text-red-600' : 'text-blue-600'
+}
+function staleTitle(row) {
+  if (!row.matched) return 'Nothing matched'
+  const stale = row.matched - row.matched_fresh
+  return stale <= 0
+    ? 'Every match was seen in the last 7 days'
+    : `${stale.toLocaleString()} of ${row.matched.toLocaleString()} matches have not been seen in 7 days`
+}
+
+// Carried over from the table this replaces: the classification split was only
+// ever available on hover there, and it is still the quickest way to see why the
+// unmatched remainder is what it is.
+function rowTitle(row) {
+  const m = mappingByComp.value[row.competitor_name]
+  const head = `${row.competitor_name} — click to open Commercial filtered to this competitor`
+  if (!m) return head
+  const mapped = (m.mapped_not_pl || 0) + (m.mapped_pl || 0)
+  const potential = (m.potential_not_pl || 0) + (m.potential_pl || 0)
+  const noPotential = (m.no_potential_not_pl || 0) + (m.no_potential_pl || 0)
+  const noMatch = (m.no_match_not_pl || 0) + (m.no_match_pl || 0)
+  return [
+    head,
+    '',
+    `Mapped: ${mapped.toLocaleString()}`,
+    `Potential match: ${potential.toLocaleString()}`,
+    `No likely match: ${noPotential.toLocaleString()}`,
+    `Confirmed no match: ${noMatch.toLocaleString()}`,
+    m.potential_reach_pct != null ? `Potential reach: ${m.potential_reach_pct}%` : '',
+  ].filter(Boolean).join('\n')
+}
+
+const Bar = (p) => {
+  const v = p.pct
+  const color = v == null ? 'bg-grey-200' : v >= 80 ? 'bg-green-500' : v >= 50 ? 'bg-amber-500' : 'bg-red-400'
+  const text = v == null ? 'text-grey-300' : v >= 80 ? 'text-green-600' : v >= 50 ? 'text-amber-600' : 'text-red-500'
+  return h('div', { class: 'flex items-center gap-2' }, [
+    h('div', { class: 'flex-1 h-1.5 bg-grey-100 rounded-full overflow-hidden' }, [
+      h('div', { class: `h-full rounded-full transition-all duration-500 ${color}`, style: { width: `${v || 0}%` } }),
+    ]),
+    h('span', { class: `text-caption font-semibold w-10 text-right ${text}` }, v == null ? '—' : `${v}%`),
+  ])
+}
+
+function exportData() {
+  return rows.value.map(r => ({
+    COMPETITOR: r.competitor_name,
+    'BLENDED PI': r.blended_pi,
+    'VS PARITY': r.pi_deviation,
+    'PRICED %': r.priced_pct,
+    'USED PRODUCTS': r.used_products,
+    'ELIGIBLE PRODUCTS': r.eligible_products,
+    'BF PRODUCTS': r.bf_products,
+    MATCHED: r.matched,
+    'MATCHED %': r.mapping_pct,
+    'MATCHED FRESH': r.matched_fresh,
+    'MAPPING % (SHARED BRANDS)': r.mapping_pct_shared,
+    'CONFIRMED NO-MATCH': r.confirmed_no_match,
+    ADDRESSABLE: r.addressable,
+    'ADDRESSABLE %': r.addressable_pct,
+    'POTENTIAL MATCH': r.potential_match,
+    'POTENTIAL %': r.potential_pct,
+    'COMP PRODUCTS (ALL CATEGORIES)': r.comp_products,
+    'COMP-ONLY PRODUCTS': r.comp_only_products,
+    'SHARED BRANDS': r.shared_brands,
+    'BF-ONLY BRANDS': r.bf_only_brands,
+    'COMP-ONLY BRANDS': r.comp_only_brands,
+    'HAS CATALOGUE': r.has_catalogue,
+  }))
+}
+</script>

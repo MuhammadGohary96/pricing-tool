@@ -1562,7 +1562,16 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 COUNT(DISTINCT brand_key) FILTER (WHERE is_shared_brand)          AS shared_brands,
                 COUNT(DISTINCT brand_key) FILTER (WHERE NOT is_shared_brand)      AS bf_only_brands,
                 BOOL_OR(COALESCE(competitor_has_v2_catalogue, FALSE))             AS has_catalogue,
-                MAX(comp_active_products)                                         AS comp_products
+                MAX(comp_active_products)                                         AS comp_products,
+                -- Price position, so one table can carry both stories. Same
+                -- quantity-weighted blend as get_executive_dashboard's
+                -- competitor_pi and get_blended_pi_by_subcategory; verified equal
+                -- to the dashboard's values, so consolidating moves no number.
+                ROUND(SUM(sale_PI * avg_daily_quantity) FILTER (WHERE used_product)
+                      / NULLIF(SUM(avg_daily_quantity) FILTER (WHERE used_product), 0), 4)
+                                                                                  AS blended_pi,
+                COUNT(DISTINCT product_id) FILTER (WHERE used_product)             AS used_products,
+                COUNT(DISTINCT product_id) FILTER (WHERE eligible_product)         AS eligible_products
             FROM {bf_source} AS bf
             WHERE competitor_name IS NOT NULL
             GROUP BY competitor_name
@@ -1603,10 +1612,21 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             CAST(b.shared_brands      AS INTEGER) AS shared_brands,
             CAST(b.bf_only_brands     AS INTEGER) AS bf_only_brands,
             CAST(COALESCE(c.comp_only_brands, 0)   AS INTEGER) AS comp_only_brands,
-            b.has_catalogue
+            b.has_catalogue,
+            b.blended_pi,
+            ROUND(b.blended_pi - 1, 4)             AS pi_deviation,
+            CAST(b.used_products     AS INTEGER)   AS used_products,
+            CAST(b.eligible_products AS INTEGER)   AS eligible_products,
+            -- Share of the eligible basket we can actually price against this
+            -- competitor. The denominator is the eligible set as a whole, which
+            -- is the same for every competitor because BigQuery emits every
+            -- (product, competitor) pair — so this reads as "how much of our
+            -- priced-worthy range is benchmarked here", not as a per-competitor
+            -- utilisation rate. Labelled accordingly in the UI.
+            ROUND(100.0 * b.used_products / NULLIF(b.eligible_products, 0), 1) AS priced_pct
         FROM bf_side b
         LEFT JOIN comp_side c USING (competitor_name)
-        ORDER BY b.matched DESC, b.competitor_name
+        ORDER BY b.blended_pi DESC NULLS LAST, b.matched DESC
         """
 
         with self._duckdb_lock:
