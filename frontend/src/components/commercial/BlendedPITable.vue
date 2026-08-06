@@ -85,6 +85,10 @@
             >
               <span class="inline-flex items-center gap-1">
                 {{ col.label }}
+                <span
+                  v-if="col.dynamic && selectedCompetitor"
+                  class="px-1.5 py-px rounded-full font-bold text-[9px] bg-brand-lightest text-brand-primary"
+                >{{ selectedCompetitor }}</span>
                 <component
                   v-if="col.sortable !== false"
                   :is="sortKey === col.key ? (sortDir === 'asc' ? ArrowUp : ArrowDown) : ChevronsUpDown"
@@ -154,15 +158,15 @@
             <!-- Addressable %: matched over what CAN be matched. A subcategory at
                  30% mapped but 100% addressable is finished, not behind. -->
             <td class="px-3 py-1.5 text-body text-center font-mono">
-              <span :class="addrClass(row.addressable_pct)"
-                    :title="`${row.confirmed_no_match_count || 0} products have a confirmed no-match and are excluded from the denominator`">
-                {{ row.addressable_pct != null ? row.addressable_pct + '%' : '—' }}
+              <span :class="addrClass(rowAddressablePct(row))"
+                    :title="`${rowNoMatch(row)} products have a confirmed no-match and are excluded from the denominator${selectedCompetitor ? ` (${selectedCompetitor})` : ''}`">
+                {{ rowAddressablePct(row) != null ? rowAddressablePct(row) + '%' : '—' }}
               </span>
             </td>
             <td v-if="groupBy === 'sub_category'" class="px-3 py-1.5 text-body text-center font-mono">
-              <span :class="(row.comp_only_products || 0) > 0 ? 'text-amber-700 font-semibold' : 'text-grey-300'"
-                    title="Competitor products with no link to anything of ours, placed here by the category bridge">
-                {{ (row.comp_only_products || 0) > 0 ? row.comp_only_products.toLocaleString() : '—' }}
+              <span :class="rowCompOnly(row) > 0 ? 'text-amber-700 font-semibold' : 'text-grey-300'"
+                    :title="`Competitor products with no link to anything of ours, placed here by the category bridge${selectedCompetitor ? ` (${selectedCompetitor})` : ' (all competitors)'}`">
+                {{ rowCompOnly(row) > 0 ? rowCompOnly(row).toLocaleString() : '—' }}
               </span>
             </td>
           </tr>
@@ -293,15 +297,15 @@ const trailingColumns = computed(() => {
   const cols = [
     { key: 'total_product_count', label: 'Total' },
     { key: 'eligible_product_count', label: 'Eligible' },
-    { key: 'used_product_count', label: 'Used' },
-    { key: 'mapped_product_count', label: 'Mapped' },
-    { key: 'mapping_pct', label: 'Map %' },
-    { key: 'utilization_pct', label: 'Util %' },
-    { key: 'addressable_pct', label: 'Addr %' },
+    { key: 'used_product_count', label: 'Used', dynamic: true },
+    { key: 'mapped_product_count', label: 'Mapped', dynamic: true },
+    { key: 'mapping_pct', label: 'Map %', dynamic: true },
+    { key: 'utilization_pct', label: 'Util %', dynamic: true },
+    { key: 'addressable_pct', label: 'Addr %', dynamic: true },
   ]
   // The category bridge maps a competitor category onto one of OUR
   // subcategories, so there is no comp-only figure at category grain.
-  if (props.groupBy === 'sub_category') cols.push({ key: 'comp_only_products', label: 'They only' })
+  if (props.groupBy === 'sub_category') cols.push({ key: 'comp_only_products', label: 'They only', dynamic: true })
   return cols
 })
 
@@ -342,6 +346,28 @@ function rowMapped(row) {
   return row.mapped_product_count ?? 0
 }
 
+// Addr % and They only follow the selected competitor header, like Used and
+// Mapped. With no competitor selected they show the pooled row value, where
+// "no-match" means no competitor carries an equivalent; with one selected they
+// show that competitor's own figures.
+function rowAddressablePct(row) {
+  if (selectedCompetitor.value)
+    return row.competitor_addressable_pcts?.[selectedCompetitor.value] ?? null
+  return row.addressable_pct ?? null
+}
+
+function rowCompOnly(row) {
+  if (selectedCompetitor.value)
+    return row.competitor_comp_only_counts?.[selectedCompetitor.value] ?? 0
+  return row.comp_only_products ?? 0
+}
+
+function rowNoMatch(row) {
+  if (selectedCompetitor.value)
+    return row.competitor_no_match_counts?.[selectedCompetitor.value] ?? 0
+  return row.confirmed_no_match_count ?? 0
+}
+
 // Mapping % = mapped / total tracked; Utilization % = used / eligible.
 function rowMappingPct(row) {
   const total = row.total_product_count || 0
@@ -378,6 +404,12 @@ const allSortedData = computed(() => {
     } else if (sortKey.value === 'utilization_pct') {
       va = rowUtilizationPct(a) ?? -Infinity
       vb = rowUtilizationPct(b) ?? -Infinity
+    } else if (sortKey.value === 'addressable_pct') {
+      va = rowAddressablePct(a) ?? -Infinity
+      vb = rowAddressablePct(b) ?? -Infinity
+    } else if (sortKey.value === 'comp_only_products') {
+      va = rowCompOnly(a) ?? -Infinity
+      vb = rowCompOnly(b) ?? -Infinity
     } else {
       va = a[sortKey.value] ?? -Infinity
       vb = b[sortKey.value] ?? -Infinity
@@ -457,10 +489,11 @@ function exportData() {
         'Utilization %': eligible ? Math.round((used / eligible) * 100) : null,
         // Row-level (all competitors pooled), not per-sheet-competitor — the
         // matchability figures resolve at product grain across competitors.
-        'Addressable %': row.addressable_pct ?? null,
-        'Confirmed no-match': row.confirmed_no_match_count ?? 0,
-        'Matched fresh': row.matched_fresh_count ?? 0,
-        ...(isSubcat ? { 'They only': row.comp_only_products ?? 0 } : {}),
+        // Per-sheet-competitor, matching that sheet's other columns.
+        'Addressable %': row.competitor_addressable_pcts?.[comp] ?? null,
+        'Confirmed no-match': row.competitor_no_match_counts?.[comp] ?? 0,
+        'Matched fresh': row.competitor_matched_fresh_counts?.[comp] ?? 0,
+        ...(isSubcat ? { 'They only': row.competitor_comp_only_counts?.[comp] ?? 0 } : {}),
       }
     }),
   }))

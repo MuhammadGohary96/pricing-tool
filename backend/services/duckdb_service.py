@@ -671,6 +671,26 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         ),"""
             comp_params = []
 
+        # The same count, split BY competitor, so the table's "They only" column
+        # follows the selected competitor header instead of staying pooled.
+        if grp == "sub_category_name":
+            comp_only_join = f"""
+        LEFT JOIN (
+            SELECT mapped_bf_sub_category AS group_key, competitor_name,
+                   COUNT(*) AS comp_only_count
+            FROM comp_catalogue
+            WHERE mapped_bf_sub_category IS NOT NULL{comp_where}
+            GROUP BY 1, 2
+        ) cco ON cco.group_key = ca.group_key AND cco.competitor_name = ca.competitor_name"""
+            comp_only_params = list(comp_params)
+        else:
+            comp_only_join = """
+        LEFT JOIN (
+            SELECT CAST(NULL AS VARCHAR) AS group_key, CAST(NULL AS VARCHAR) AS competitor_name,
+                   0 AS comp_only_count WHERE FALSE
+        ) cco ON FALSE"""
+            comp_only_params = []
+
         # __GRP__ is substituted with the grouping column (avoids f-string/format
         # clashing with the DuckDB struct literals `{...}` below).
         sql_subcat = """
@@ -796,6 +816,21 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 CAST(COUNT(DISTINCT product_id) FILTER (
                     WHERE eligible_product AND action_type != 'Complete'
                 ) AS INTEGER) AS comp_needs_action,
+                -- Matchability per competitor, so the table's Addr % column
+                -- follows the selected competitor like Used and Mapped do.
+                -- No per-product pre-pass needed here, unlike the pooled row:
+                -- within ONE competitor, is_mapped and is_confirmed_no_match are
+                -- mutually exclusive by construction, so counting them directly
+                -- cannot make matched exceed addressable.
+                CAST(COUNT(DISTINCT product_id) FILTER (
+                    WHERE is_confirmed_no_match) AS INTEGER)  AS comp_no_match_count,
+                CAST(COUNT(DISTINCT product_id) FILTER (
+                    WHERE is_mapped AND matched_comp_active_7d) AS INTEGER) AS comp_fresh_count,
+                ROUND(100.0 * COUNT(DISTINCT product_id) FILTER (WHERE is_mapped)
+                      / NULLIF(COUNT(DISTINCT product_id)
+                               - COUNT(DISTINCT product_id) FILTER (
+                                     WHERE is_confirmed_no_match), 0), 1)
+                                                              AS comp_addressable_pct,
                 LIST({
                     'product_name': product_name,
                     'sale_PI': sale_PI,
@@ -818,11 +853,16 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             ca.comp_used_count,
             ca.comp_mapped_count,
             ca.comp_needs_action,
+            ca.comp_no_match_count,
+            ca.comp_fresh_count,
+            ca.comp_addressable_pct,
+            CAST(COALESCE(cco.comp_only_count, 0) AS INTEGER) AS comp_only_count,
             ca.comp_product_pis,
             sta.total_active AS comp_eligible_count
         FROM comp_agg ca
         LEFT JOIN subcat_total_active sta USING (group_key)
-        """.replace("__GRP__", grp)
+        __COMP_ONLY_JOIN__
+        """.replace("__GRP__", grp).replace("__COMP_ONLY_JOIN__", comp_only_join)
 
         with self._duckdb_lock:
             self._duckdb_conn.execute(
@@ -830,7 +870,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 params,
             )
             df = self._duckdb_conn.execute(sql_subcat, comp_params).df()
-            comp_df = self._duckdb_conn.execute(sql_comp).df()
+            comp_df = self._duckdb_conn.execute(sql_comp, comp_only_params).df()
 
         if df.empty:
             return pd.DataFrame(columns=[
@@ -845,6 +885,8 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 "competitor_blended_pis", "competitor_product_pis",
                 "competitor_used_counts", "competitor_needs_action_counts",
                 "competitor_eligible_counts", "competitor_mapped_counts",
+                "competitor_addressable_pcts", "competitor_comp_only_counts",
+                "competitor_matched_fresh_counts", "competitor_no_match_counts",
             ])
 
         # Derived columns
@@ -874,6 +916,10 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         comp_action: dict[str, dict] = {}
         comp_eligible: dict[str, dict] = {}
         comp_mapped: dict[str, dict] = {}
+        comp_addr: dict[str, dict] = {}
+        comp_only: dict[str, dict] = {}
+        comp_fresh: dict[str, dict] = {}
+        comp_nomatch: dict[str, dict] = {}
 
         def _safe_list(v):
             if v is None:
@@ -904,6 +950,10 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             comp_action.setdefault(key, {})[comp] = _safe_int(row.comp_needs_action)
             comp_eligible.setdefault(key, {})[comp] = _safe_int(row.comp_eligible_count)
             comp_mapped.setdefault(key, {})[comp] = _safe_int(row.comp_mapped_count)
+            comp_addr.setdefault(key, {})[comp] = _safe_float(row.comp_addressable_pct)
+            comp_only.setdefault(key, {})[comp] = _safe_int(row.comp_only_count)
+            comp_fresh.setdefault(key, {})[comp] = _safe_int(row.comp_fresh_count)
+            comp_nomatch.setdefault(key, {})[comp] = _safe_int(row.comp_no_match_count)
 
         df["competitor_blended_pis"] = df["group_key"].map(comp_blended).apply(
             lambda x: x if isinstance(x, dict) else {}
@@ -923,6 +973,11 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         df["competitor_mapped_counts"] = df["group_key"].map(comp_mapped).apply(
             lambda x: x if isinstance(x, dict) else {}
         )
+        for col, src in (("competitor_addressable_pcts", comp_addr),
+                         ("competitor_comp_only_counts", comp_only),
+                         ("competitor_matched_fresh_counts", comp_fresh),
+                         ("competitor_no_match_counts", comp_nomatch)):
+            df[col] = df["group_key"].map(src).apply(lambda x: x if isinstance(x, dict) else {})
 
         # Identity columns per grain: subcategory mode keeps the subcategory name
         # (commercial category is a carried column); category mode has no single

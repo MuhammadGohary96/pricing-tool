@@ -148,6 +148,14 @@ def get_blended_pi(
         if not isinstance(comp_mapped, dict):
             comp_mapped = {}
 
+        def _cdict(key):
+            v = row.get(key, {})
+            return v if isinstance(v, dict) else {}
+        comp_addr = _cdict("competitor_addressable_pcts")
+        comp_only = _cdict("competitor_comp_only_counts")
+        comp_fresh = _cdict("competitor_matched_fresh_counts")
+        comp_nomatch = _cdict("competitor_no_match_counts")
+
         items.append(BlendedPIRow(
             group_key=str(row.get("group_key", row.get("sub_category_name")) or ""),
             sub_category_name=row.get("sub_category_name"),
@@ -173,6 +181,10 @@ def get_blended_pi(
             competitor_needs_action_counts={k: int(v) for k, v in comp_actions.items()},
             competitor_eligible_counts={k: int(v) for k, v in comp_eligible.items()},
             competitor_mapped_counts={k: int(v) for k, v in comp_mapped.items()},
+            competitor_addressable_pcts={k: _safe(v) for k, v in comp_addr.items()},
+            competitor_comp_only_counts={k: int(v or 0) for k, v in comp_only.items()},
+            competitor_matched_fresh_counts={k: int(v or 0) for k, v in comp_fresh.items()},
+            competitor_no_match_counts={k: int(v or 0) for k, v in comp_nomatch.items()},
         ))
     return BlendedPITable(items=items, competitors=sorted(all_competitors))
 

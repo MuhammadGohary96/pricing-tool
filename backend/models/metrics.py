@@ -58,6 +58,12 @@ class BlendedPIRow(BaseModel):
     competitor_needs_action_counts: dict[str, int] = {}
     competitor_eligible_counts: dict[str, int] = {}
     competitor_mapped_counts: dict[str, int] = {}
+    # Per-competitor matchability, so Addr % and They only follow the selected
+    # competitor header like Used and Mapped already do.
+    competitor_addressable_pcts: dict[str, Optional[float]] = {}
+    competitor_comp_only_counts: dict[str, int] = {}
+    competitor_matched_fresh_counts: dict[str, int] = {}
+    competitor_no_match_counts: dict[str, int] = {}
 
 
 class BlendedPITable(BaseModel):
