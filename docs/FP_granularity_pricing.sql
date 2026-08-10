@@ -459,8 +459,22 @@ ai_match_candidates AS (
     LEFT JOIN `followbreadfast.l03_marts.dim_competitor_products` cp
         ON rcp.competitor_product_id = cp.competitor_product_id
         AND cp.competitor_id = rcp.competitor_id
+    -- v2 only, matching rec_flags in the gap layer so the whole tool takes its
+    -- recommendations from one generation of the matcher.
+    --
+    -- This read used to be unfiltered, which let the superseded v1 model decide
+    -- match potential: every one of its 240,226 rows carries is_matched = TRUE,
+    -- so v1 never records a rejection, and whenever a v1 row won on similarity
+    -- the classification tree below could never reach its 'No Match' branch. It
+    -- won 21.5% of in-scope pairs despite a lower average similarity than v2
+    -- (0.66 vs 0.79), i.e. on artificially high scores.
+    --
+    -- country_code is a no-op today (there are no non-EG rows); it is here so the
+    -- two reads of this table stay identical.
+    WHERE rcp.pricing_tool_version = 'v2'
+      AND rcp.country_code = 'EG'
     QUALIFY ROW_NUMBER() OVER (PARTITION BY rcp.bf_product_id, rcp.competitor_id
-  ORDER BY rcp.similarity_score DESC) = 1
+        ORDER BY rcp.similarity_score DESC) = 1
 ),
 
 
