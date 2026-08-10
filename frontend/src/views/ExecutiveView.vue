@@ -196,6 +196,7 @@ import AnimatedNumber from '../components/shared/AnimatedNumber.vue'
 import {
   Gauge, Package, Users, Clock, Layers, ArrowUp, ArrowDown,
   Scale, AlertTriangle, Target, CheckCircle, BarChart2 as BarChart2Icon, PieChart,
+  Handshake,
 } from 'lucide-vue-next'
 
 const router = useRouter()
