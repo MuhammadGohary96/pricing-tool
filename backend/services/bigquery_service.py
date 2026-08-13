@@ -134,7 +134,10 @@ SELECT
     competitor_has_v2_catalogue,
     -- Size of the competitor's live catalogue. comp_catalogue downstream holds
     -- only the UNPAIRED products, so the total is not derivable from it.
-    CAST(comp_active_products AS INT64) AS comp_active_products
+    CAST(comp_active_products AS INT64) AS comp_active_products,
+    -- The same total restricted to brands we also carry, so the Shared-only
+    -- brand scope can narrow this column like it narrows every other one.
+    CAST(comp_active_products_shared AS INT64) AS comp_active_products_shared
 FROM `{project}.{dataset}.{table}`
 """
 

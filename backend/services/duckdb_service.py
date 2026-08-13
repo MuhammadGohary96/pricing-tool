@@ -469,8 +469,13 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             BOOL_OR(is_potential_match)             AS is_potential_match,
             MAX(best_similarity_in_portfolio)       AS best_similarity_in_portfolio,
             BOOL_OR(competitor_has_v2_catalogue)    AS competitor_has_v2_catalogue,
-            -- Competitor-level constant: the size of their live catalogue.
-            MAX(comp_active_products)               AS comp_active_products
+            -- Competitor-level constants: the size of their live catalogue, and
+            -- the same restricted to brands we also carry. Both are per-competitor
+            -- scalars, so MAX is just "carry the value through" — but the second
+            -- is what lets the Shared-only scope narrow the catalogue column
+            -- instead of leaving it as the one figure no filter touches.
+            MAX(comp_active_products)               AS comp_active_products,
+            MAX(comp_active_products_shared)        AS comp_active_products_shared
             -- Deliberately NOT carried: mapped_bf_sub_category. On
             -- row_type='breadfast' rows it only echoes sub_category_name, so it
             -- adds no information, and _apply_filters materializes every
@@ -785,6 +790,12 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 COUNT(*) FILTER (WHERE matched_fresh)                        AS matched_fresh_count,
                 COUNT(*) FILTER (WHERE NOT is_mapped AND any_no_match)       AS confirmed_no_match_count,
                 COUNT(*) FILTER (WHERE NOT is_mapped AND any_potential)      AS potential_match_count,
+                -- "Ours only": products matched at NO selected competitor, the
+                -- mirror of comp_only_products. Counted off prod_flags rather
+                -- than as (total - mapped) so the pooled row resolves per
+                -- product first — the same reason addressable_pct is computed
+                -- here instead of over the pair grain.
+                COUNT(*) FILTER (WHERE NOT COALESCE(is_mapped, FALSE))       AS our_only_count,
                 ROUND(100.0 * COUNT(*) FILTER (WHERE is_mapped)
                       / NULLIF(COUNT(*) - COUNT(*) FILTER (
                             WHERE NOT is_mapped AND any_no_match), 0), 1)     AS addressable_pct
@@ -806,6 +817,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             CAST(COALESCE(gc.confirmed_no_match_count, 0) AS INTEGER) AS confirmed_no_match_count,
             CAST(COALESCE(gc.potential_match_count, 0)    AS INTEGER) AS potential_match_count,
             gc.addressable_pct,
+            CAST(COALESCE(gc.our_only_count, 0)          AS INTEGER) AS our_only_count,
             CAST(COALESCE(cs.comp_only_products, 0)      AS INTEGER) AS comp_only_products
         FROM used_agg ua
         LEFT JOIN used_rev ur USING (group_key)
@@ -840,6 +852,10 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                     WHERE is_confirmed_no_match) AS INTEGER)  AS comp_no_match_count,
                 CAST(COUNT(DISTINCT product_id) FILTER (
                     WHERE is_mapped AND matched_comp_active_7d) AS INTEGER) AS comp_fresh_count,
+                -- Per-competitor "Ours only", so the column follows the selected
+                -- competitor like Used, Mapped and Addr % do.
+                CAST(COUNT(DISTINCT product_id) FILTER (
+                    WHERE NOT COALESCE(is_mapped, FALSE)) AS INTEGER) AS comp_our_only_count,
                 ROUND(100.0 * COUNT(DISTINCT product_id) FILTER (WHERE is_mapped)
                       / NULLIF(COUNT(DISTINCT product_id)
                                - COUNT(DISTINCT product_id) FILTER (
@@ -869,6 +885,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             ca.comp_needs_action,
             ca.comp_no_match_count,
             ca.comp_fresh_count,
+            ca.comp_our_only_count,
             ca.comp_addressable_pct,
             CAST(COALESCE(cco.comp_only_count, 0) AS INTEGER) AS comp_only_count,
             ca.comp_product_pis,
@@ -895,12 +912,14 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 "mapped_product_count", "needs_action_count",
                 "matched_fresh_count", "confirmed_no_match_count",
                 "potential_match_count", "addressable_pct", "comp_only_products",
+                "our_only_count",
                 "product_pis",
                 "competitor_blended_pis", "competitor_product_pis",
                 "competitor_used_counts", "competitor_needs_action_counts",
                 "competitor_eligible_counts", "competitor_mapped_counts",
                 "competitor_addressable_pcts", "competitor_comp_only_counts",
                 "competitor_matched_fresh_counts", "competitor_no_match_counts",
+                "competitor_our_only_counts",
             ])
 
         # Derived columns
@@ -934,6 +953,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         comp_only: dict[str, dict] = {}
         comp_fresh: dict[str, dict] = {}
         comp_nomatch: dict[str, dict] = {}
+        comp_our_only: dict[str, dict] = {}
 
         def _safe_list(v):
             if v is None:
@@ -968,6 +988,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             comp_only.setdefault(key, {})[comp] = _safe_int(row.comp_only_count)
             comp_fresh.setdefault(key, {})[comp] = _safe_int(row.comp_fresh_count)
             comp_nomatch.setdefault(key, {})[comp] = _safe_int(row.comp_no_match_count)
+            comp_our_only.setdefault(key, {})[comp] = _safe_int(row.comp_our_only_count)
 
         df["competitor_blended_pis"] = df["group_key"].map(comp_blended).apply(
             lambda x: x if isinstance(x, dict) else {}
@@ -990,7 +1011,8 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         for col, src in (("competitor_addressable_pcts", comp_addr),
                          ("competitor_comp_only_counts", comp_only),
                          ("competitor_matched_fresh_counts", comp_fresh),
-                         ("competitor_no_match_counts", comp_nomatch)):
+                         ("competitor_no_match_counts", comp_nomatch),
+                         ("competitor_our_only_counts", comp_our_only)):
             df[col] = df["group_key"].map(src).apply(lambda x: x if isinstance(x, dict) else {})
 
         # Identity columns per grain: subcategory mode keeps the subcategory name
@@ -1652,6 +1674,10 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 COUNT(DISTINCT brand_key) FILTER (WHERE NOT is_shared_brand)      AS bf_only_brands,
                 BOOL_OR(COALESCE(competitor_has_v2_catalogue, FALSE))             AS has_catalogue,
                 MAX(comp_active_products)                                         AS comp_products,
+                -- Their catalogue restricted to brands we also carry. Both are
+                -- returned; the UI shows this one while Shared-only is active, so
+                -- the column stops being the only figure the scope cannot narrow.
+                MAX(comp_active_products_shared)                                  AS comp_products_shared,
                 -- Price position, so one table can carry both stories. Same
                 -- quantity-weighted blend as get_executive_dashboard's
                 -- competitor_pi and get_blended_pi_by_subcategory; verified equal
@@ -1696,7 +1722,8 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                   / NULLIF(b.bf_products - b.confirmed_no_match, 0), 1)      AS addressable_pct,
             CAST(b.potential_match    AS INTEGER) AS potential_match,
             ROUND(100.0 * b.potential_match / NULLIF(b.bf_products, 0), 1)   AS potential_pct,
-            CAST(COALESCE(b.comp_products, 0)      AS INTEGER) AS comp_products,
+            CAST(COALESCE(b.comp_products, 0)        AS INTEGER) AS comp_products,
+            CAST(COALESCE(b.comp_products_shared, 0) AS INTEGER) AS comp_products_shared,
             CAST(COALESCE(c.comp_only_products, 0) AS INTEGER) AS comp_only_products,
             CAST(b.our_only_products  AS INTEGER) AS our_only_products,
             CAST(b.shared_brands      AS INTEGER) AS shared_brands,

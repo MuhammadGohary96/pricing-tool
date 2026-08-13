@@ -169,6 +169,12 @@
                 {{ rowCompOnly(row) > 0 ? rowCompOnly(row).toLocaleString() : '—' }}
               </span>
             </td>
+            <td class="px-3 py-1.5 text-body text-center font-mono">
+              <span :class="rowOurOnly(row) > 0 ? 'text-brand-primary font-semibold' : 'text-grey-300'"
+                    :title="ourOnlyTitle(row)">
+                {{ rowOurOnly(row) > 0 ? rowOurOnly(row).toLocaleString() : '—' }}
+              </span>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -306,6 +312,9 @@ const trailingColumns = computed(() => {
   // The category bridge maps a competitor category onto one of OUR
   // subcategories, so there is no comp-only figure at category grain.
   if (props.groupBy === 'sub_category') cols.push({ key: 'comp_only_products', label: 'They only', dynamic: true })
+  // Ours only needs no bridge — it is our own side — so unlike They only it is
+  // valid at both grains and stays in the list either way.
+  cols.push({ key: 'our_only_count', label: 'Ours only', dynamic: true })
   return cols
 })
 
@@ -362,6 +371,22 @@ function rowCompOnly(row) {
   return row.comp_only_products ?? 0
 }
 
+// Pooled means "matched at no competitor in scope"; per-competitor means "not
+// matched at that one". The pooled figure is therefore always the smaller, and
+// the two must not be read as the same measure narrowed.
+function rowOurOnly(row) {
+  if (selectedCompetitor.value)
+    return row.competitor_our_only_counts?.[selectedCompetitor.value] ?? 0
+  return row.our_only_count ?? 0
+}
+
+function ourOnlyTitle(row) {
+  const n = rowOurOnly(row)
+  const who = selectedCompetitor.value || 'any competitor in scope'
+  return `${n.toLocaleString()} of our products in this row have no match at ${who}.\n`
+    + 'Counts what they do not stock TOGETHER WITH what we failed to match, so read it as a ceiling.'
+}
+
 function rowNoMatch(row) {
   if (selectedCompetitor.value)
     return row.competitor_no_match_counts?.[selectedCompetitor.value] ?? 0
@@ -410,6 +435,11 @@ const allSortedData = computed(() => {
     } else if (sortKey.value === 'comp_only_products') {
       va = rowCompOnly(a) ?? -Infinity
       vb = rowCompOnly(b) ?? -Infinity
+    } else if (sortKey.value === 'our_only_count') {
+      // Needs its own branch: the generic fallback reads the pooled field off
+      // the row and would sort by that even with a competitor selected.
+      va = rowOurOnly(a) ?? -Infinity
+      vb = rowOurOnly(b) ?? -Infinity
     } else {
       va = a[sortKey.value] ?? -Infinity
       vb = b[sortKey.value] ?? -Infinity
@@ -487,13 +517,14 @@ function exportData() {
         'Mapped': mapped,
         'Mapping %': total ? Math.round((mapped / total) * 100) : null,
         'Utilization %': eligible ? Math.round((used / eligible) * 100) : null,
-        // Row-level (all competitors pooled), not per-sheet-competitor — the
-        // matchability figures resolve at product grain across competitors.
-        // Per-sheet-competitor, matching that sheet's other columns.
+        // Per-sheet-competitor, matching that sheet's other columns. (An earlier
+        // comment here still claimed these were pooled across competitors; they
+        // have not been since the per-competitor dicts landed.)
         'Addressable %': row.competitor_addressable_pcts?.[comp] ?? null,
         'Confirmed no-match': row.competitor_no_match_counts?.[comp] ?? 0,
         'Matched fresh': row.competitor_matched_fresh_counts?.[comp] ?? 0,
         ...(isSubcat ? { 'They only': row.competitor_comp_only_counts?.[comp] ?? 0 } : {}),
+        'Ours only': row.competitor_our_only_counts?.[comp] ?? 0,
       }
     }),
   }))

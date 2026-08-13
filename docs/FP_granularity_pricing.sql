@@ -789,9 +789,21 @@ competitor_catalogue AS (
     SELECT
         cr.competitor_id,
         COUNTIF(cp.is_active_7d = 1)     AS comp_active_products,
+        -- The same count restricted to brands Breadfast also carries. The app
+        -- cannot derive this: comp_active_products is a per-competitor scalar
+        -- with no brand dimension, and the downstream comp_catalogue holds only
+        -- UNPAIRED products, so the matched half of their catalogue is not
+        -- countable there. Without it, "their catalogue" was the one column the
+        -- Shared-only brand scope could not narrow, sitting next to columns it
+        -- does narrow — Amazon reads 31,762 when only ~22% of that is in brands
+        -- we stock at all.
+        -- bf_brands is DISTINCT brand_key, so this join cannot fan the count out.
+        COUNTIF(cp.is_active_7d = 1 AND bb.brand_key IS NOT NULL)
+                                         AS comp_active_products_shared,
         COUNTIF(cp.is_active_7d = 1) > 0 AS competitor_has_v2_catalogue
     FROM competitor_registry AS cr
     LEFT JOIN comp_products AS cp ON cp.competitor_id = cr.competitor_id
+    LEFT JOIN bf_brands     AS bb ON bb.brand_key     = cp.brand_key
     GROUP BY cr.competitor_id
 ),
 
@@ -944,7 +956,8 @@ SELECT
     -- Size of the competitor's live catalogue. Already computed in
     -- competitor_catalogue; exposed because comp_catalogue downstream holds
     -- only UNPAIRED products, so the total is not otherwise derivable.
-    cc.comp_active_products
+    cc.comp_active_products,
+    cc.comp_active_products_shared
 FROM final_product_data AS f
 LEFT JOIN bf_universe_enriched AS bu ON bu.product_id = f.product_id
 LEFT JOIN comp_brand           AS cb ON cb.competitor_id = f.competitor_id AND cb.brand_key = bu.brand_key
@@ -1034,7 +1047,9 @@ SELECT
          WHEN pml.competitor_id IS NOT NULL THEN 'parent_l3_fallback' END       AS bridge_level,
     pb.beauty_path_share,
     cc.competitor_has_v2_catalogue,
-    cc.comp_active_products
+    cc.comp_active_products,
+    -- Same position as the breadfast branch: UNION ALL matches by ordinal.
+    cc.comp_active_products_shared
 FROM comp_products AS cp
 LEFT JOIN paired_comp_keys AS pk
     ON  pk.competitor_id          = cp.competitor_id

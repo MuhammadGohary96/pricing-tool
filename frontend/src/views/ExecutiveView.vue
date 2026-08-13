@@ -115,6 +115,7 @@
         :data="visibleOverview"
         :mapping-progress="store.dashboard?.mapping_progress || []"
         :vertical="filters.vertical"
+        :brand-scope="filters.brandScope"
         class="animate-fade-in-up stagger-3"
         @select-competitor="navigateToCompetitor"
       />

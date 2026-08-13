@@ -70,7 +70,14 @@
             <th :class="TH_R">Potential</th>
             <th :class="[TH_R, 'border-l border-grey-200']">
               <span class="inline-flex items-center gap-1">Their catalogue
-                <HelpTooltip text="Their ENTIRE live catalogue, across every category. This is the one column no filter narrows — not vertical, not category, not the brand scope." />
+                <HelpTooltip :text="catalogueHelp" />
+              </span>
+              <!-- The basis has to be on the header, not only in a tooltip: the
+                   number changes by up to 4x between the two and the columns
+                   either side of it are always category-scoped. -->
+              <span class="block text-micro font-normal normal-case tracking-normal"
+                    :class="sharedOnly ? 'text-brand-primary' : 'text-grey-400'">
+                {{ sharedOnly ? 'shared brands' : 'all brands' }}
               </span>
             </th>
             <th :class="TH_R">
@@ -130,7 +137,8 @@
             <td :class="[TD_N, 'text-amber-600']">{{ n(row.potential_match) }}</td>
 
             <!-- Assortment overlap -->
-            <td :class="[TD_N, 'border-l border-grey-100 text-grey-600']">{{ n(row.comp_products) }}</td>
+            <td :class="[TD_N, 'border-l border-grey-100 text-grey-600']"
+                :title="catalogueTitle(row)">{{ n(catalogueVal(row)) }}</td>
             <td :class="[TD_N, 'text-amber-700 font-semibold']">{{ n(row.comp_only_products) }}</td>
             <td :class="[TD_N, 'text-brand-primary font-semibold']" :title="ourOnlyTitle(row)">{{ n(row.our_only_products) }}</td>
             <td class="px-4 py-3">
@@ -164,6 +172,8 @@ const props = defineProps({
   /** mapping_progress rows, keyed by competitor, for the hover breakdown. */
   mappingProgress: { type: Array, default: () => [] },
   vertical: { type: String, default: '' },
+  /** '' | 'shared' — switches the catalogue column onto the shared-brand basis. */
+  brandScope: { type: String, default: '' },
 })
 defineEmits(['select-competitor'])
 
@@ -197,6 +207,34 @@ function devClass(v) {
   // Same convention as piColor: pricier = warm, cheaper = cool.
   return v > 0 ? 'text-red-600' : 'text-blue-600'
 }
+const sharedOnly = computed(() => props.brandScope === 'shared')
+
+// The only column sourced from a competitor-level BigQuery scalar rather than
+// from the filtered rows, so it cannot honour category or vertical however it is
+// written. Under Shared-only it swaps to the shared-brand count, which IS
+// brand-scoped — so the honest caveat shrinks from "no filter narrows this" to
+// "the category filters do not narrow this", and the label has to change with it.
+const catalogueHelp = computed(() => sharedOnly.value
+  ? 'Their live catalogue restricted to brands we also carry — computed in BigQuery over their whole catalogue, so it respects the brand scope but still spans every category. Unlike the columns beside it, the category and vertical filters do not narrow it.'
+  : 'Their ENTIRE live catalogue, across every category and every brand. This is the one column no filter narrows. Turn on Shared-only to see just the part in brands we carry.')
+
+function catalogueVal(row) {
+  return sharedOnly.value ? row.comp_products_shared : row.comp_products
+}
+function catalogueTitle(row) {
+  const all = row.comp_products || 0
+  const shared = row.comp_products_shared || 0
+  if (!all) return `Nothing crawled for ${row.competitor_name}`
+  const pct = Math.round((shared / all) * 1000) / 10
+  return [
+    `${row.competitor_name} live catalogue`,
+    `All brands: ${all.toLocaleString()}`,
+    `In brands we carry: ${shared.toLocaleString()} (${pct}%)`,
+    '',
+    'Spans every category regardless of the category filters.',
+  ].join('\n')
+}
+
 // "Ours only" is one number covering three very different situations, and the
 // mix is what decides whether it is an assortment story or a matching backlog.
 // The three are disjoint and exhaustive by construction: confirmed no-match is
@@ -277,6 +315,7 @@ function exportData() {
     'POTENTIAL MATCH': r.potential_match,
     'POTENTIAL %': r.potential_pct,
     'COMP PRODUCTS (ALL CATEGORIES)': r.comp_products,
+    'COMP PRODUCTS (SHARED BRANDS)': r.comp_products_shared,
     'COMP-ONLY PRODUCTS': r.comp_only_products,
     'OURS-ONLY PRODUCTS (UNMATCHED)': r.our_only_products,
     'SHARED BRANDS': r.shared_brands,

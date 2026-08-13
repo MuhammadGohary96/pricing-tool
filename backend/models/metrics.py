@@ -51,6 +51,10 @@ class BlendedPIRow(BaseModel):
     potential_match_count: int = 0
     addressable_pct: Optional[float] = None
     comp_only_products: int = 0
+    # The mirror of comp_only_products: our products matched at no competitor in
+    # scope. Unlike comp_only_products this IS populated in category grain, since
+    # it comes off our own side and needs no category bridge.
+    our_only_count: int = 0
     product_pis: list[ProductPIPoint] = []
     competitor_blended_pis: dict[str, Optional[float]] = {}
     competitor_product_pis: dict[str, list[ProductPIPoint]] = {}
@@ -64,6 +68,7 @@ class BlendedPIRow(BaseModel):
     competitor_comp_only_counts: dict[str, int] = {}
     competitor_matched_fresh_counts: dict[str, int] = {}
     competitor_no_match_counts: dict[str, int] = {}
+    competitor_our_only_counts: dict[str, int] = {}
 
 
 class BlendedPITable(BaseModel):
