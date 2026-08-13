@@ -40,7 +40,7 @@
             <th :class="TH_L" rowspan="2" class="sticky left-0 bg-grey-50 z-10 align-bottom">Competitor</th>
             <th :class="GROUP" colspan="3">Price position</th>
             <th :class="[GROUP, 'border-l border-grey-200']" colspan="6">Match coverage</th>
-            <th :class="[GROUP, 'border-l border-grey-200']" colspan="3">Their assortment</th>
+            <th :class="[GROUP, 'border-l border-grey-200']" colspan="4">Assortment overlap</th>
           </tr>
           <tr class="bg-grey-50 border-b border-grey-100">
             <th :class="TH_R">
@@ -69,13 +69,18 @@
             </th>
             <th :class="TH_R">Potential</th>
             <th :class="[TH_R, 'border-l border-grey-200']">
-              <span class="inline-flex items-center gap-1">Catalogue
-                <HelpTooltip text="Their ENTIRE live catalogue, across every category. This is the one column the vertical and category filters do not narrow." />
+              <span class="inline-flex items-center gap-1">Their catalogue
+                <HelpTooltip text="Their ENTIRE live catalogue, across every category. This is the one column no filter narrows — not vertical, not category, not the brand scope." />
               </span>
             </th>
             <th :class="TH_R">
               <span class="inline-flex items-center gap-1">They only
                 <HelpTooltip text="Their products with no link to anything of ours. Never sum across views: one competitor product can bridge to several of our subcategories." />
+              </span>
+            </th>
+            <th :class="TH_R">
+              <span class="inline-flex items-center gap-1">Ours only
+                <HelpTooltip text="Our SKUs with no match at this competitor — Our SKUs minus Matched. The mirror of 'They only'. Read it as a CEILING: it counts what they genuinely do not stock TOGETHER WITH what we simply failed to match. Hover a row for the split into confirmed-not-stocked, likely matching miss, and never ruled either way." />
               </span>
             </th>
             <th :class="TH_C" style="min-width: 132px">Brands s / ours / theirs</th>
@@ -124,9 +129,10 @@
             <td class="px-4 py-3"><Bar :pct="row.addressable_pct" /></td>
             <td :class="[TD_N, 'text-amber-600']">{{ n(row.potential_match) }}</td>
 
-            <!-- Their assortment -->
+            <!-- Assortment overlap -->
             <td :class="[TD_N, 'border-l border-grey-100 text-grey-600']">{{ n(row.comp_products) }}</td>
             <td :class="[TD_N, 'text-amber-700 font-semibold']">{{ n(row.comp_only_products) }}</td>
+            <td :class="[TD_N, 'text-brand-primary font-semibold']" :title="ourOnlyTitle(row)">{{ n(row.our_only_products) }}</td>
             <td class="px-4 py-3">
               <div class="flex items-center gap-1 text-caption font-mono">
                 <span class="px-1.5 py-0.5 rounded bg-green-50 text-green-700" title="Brands both of us carry">{{ row.shared_brands }}</span>
@@ -191,6 +197,25 @@ function devClass(v) {
   // Same convention as piColor: pricier = warm, cheaper = cool.
   return v > 0 ? 'text-red-600' : 'text-blue-600'
 }
+// "Ours only" is one number covering three very different situations, and the
+// mix is what decides whether it is an assortment story or a matching backlog.
+// The three are disjoint and exhaustive by construction: confirmed no-match is
+// (rejected candidates), potential is (not confirmed AND similarity >= 0.85),
+// and the remainder is everything the matcher never ruled either way.
+function ourOnlyTitle(row) {
+  const only = row.our_only_products || 0
+  if (!only) return `Every one of our SKUs is matched at ${row.competitor_name}`
+  const confirmed = row.confirmed_no_match || 0
+  const potential = row.potential_match || 0
+  const unresolved = Math.max(0, only - confirmed - potential)
+  return [
+    `${only.toLocaleString()} of our SKUs have no match at ${row.competitor_name}`,
+    '',
+    `They confirmably do not stock it: ${confirmed.toLocaleString()}`,
+    `Likely a matching miss (similarity ≥ 0.85): ${potential.toLocaleString()}`,
+    `Never ruled either way: ${unresolved.toLocaleString()}`,
+  ].join('\n')
+}
 function staleTitle(row) {
   if (!row.matched) return 'Nothing matched'
   const stale = row.matched - row.matched_fresh
@@ -253,6 +278,7 @@ function exportData() {
     'POTENTIAL %': r.potential_pct,
     'COMP PRODUCTS (ALL CATEGORIES)': r.comp_products,
     'COMP-ONLY PRODUCTS': r.comp_only_products,
+    'OURS-ONLY PRODUCTS (UNMATCHED)': r.our_only_products,
     'SHARED BRANDS': r.shared_brands,
     'BF-ONLY BRANDS': r.bf_only_brands,
     'COMP-ONLY BRANDS': r.comp_only_brands,

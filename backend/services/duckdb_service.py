@@ -1637,6 +1637,14 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                     WHERE is_mapped AND matched_comp_active_7d)                   AS matched_fresh,
                 COUNT(DISTINCT product_id) FILTER (WHERE is_confirmed_no_match)   AS confirmed_no_match,
                 COUNT(DISTINCT product_id) FILTER (WHERE is_potential_match)      AS potential_match,
+                -- "Ours only": our SKUs with no match at this competitor, the
+                -- structural mirror of comp_only_products (their products with
+                -- no link to ours). COALESCE, not a bare NOT: is_mapped is
+                -- nullable, and `FILTER (WHERE NOT is_mapped)` would drop NULLs
+                -- from BOTH sides, so matched + our_only would silently stop
+                -- summing to bf_products.
+                COUNT(DISTINCT product_id) FILTER (
+                    WHERE NOT COALESCE(is_mapped, FALSE))                         AS our_only_products,
                 COUNT(DISTINCT product_id) FILTER (WHERE is_shared_brand)         AS shared_brand_products,
                 COUNT(DISTINCT product_id) FILTER (
                     WHERE is_mapped AND is_shared_brand)                          AS matched_shared_brand,
@@ -1690,6 +1698,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             ROUND(100.0 * b.potential_match / NULLIF(b.bf_products, 0), 1)   AS potential_pct,
             CAST(COALESCE(b.comp_products, 0)      AS INTEGER) AS comp_products,
             CAST(COALESCE(c.comp_only_products, 0) AS INTEGER) AS comp_only_products,
+            CAST(b.our_only_products  AS INTEGER) AS our_only_products,
             CAST(b.shared_brands      AS INTEGER) AS shared_brands,
             CAST(b.bf_only_brands     AS INTEGER) AS bf_only_brands,
             CAST(COALESCE(c.comp_only_brands, 0)   AS INTEGER) AS comp_only_brands,
