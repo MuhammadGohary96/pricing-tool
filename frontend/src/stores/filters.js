@@ -19,6 +19,15 @@ export const useFiltersStore = defineStore('filters', {
     // whose brand the competitor also carries, which is the realistic ceiling:
     // a brand they do not stock can never be matched.
     brandScope: '',
+    // Competitor pills. Cosmetic most of the time, but under Shared-only they
+    // decide which competitors count as sharing a brand, so they move numbers —
+    // and therefore stage behind Apply like every other filter.
+    //   pendingVisibleCompetitors — what the pills are showing right now
+    //   visibleCompetitors        — what the views actually query with
+    // When Shared-only is off the two are kept in lockstep, so focusing stays
+    // instant and free.
+    visibleCompetitors: [],
+    pendingVisibleCompetitors: [],
     // Mode (not a scope filter): fill mapped-but-not-fresh prices with the
     // product×competitor modal, flagged estimated. Default OFF.
     priceFallback: false,
@@ -159,6 +168,8 @@ export const useFiltersStore = defineStore('filters', {
       this.fpNames = []
       this.vertical = ''
       this.brandScope = ''
+      this.visibleCompetitors = []
+      this.pendingVisibleCompetitors = []
       this.includePrivateLabel = true
       this.fetchSubcategories()
     },
@@ -181,6 +192,10 @@ export const useFiltersStore = defineStore('filters', {
       // Must be listed here: this method assigns field by field, so anything
       // missing is silently dropped on Apply rather than committed.
       this.brandScope = typeof snap.brandScope === 'string' ? snap.brandScope : ''
+      if (Array.isArray(snap.visibleCompetitors)) {
+        this.visibleCompetitors = [...snap.visibleCompetitors]
+        this.pendingVisibleCompetitors = [...snap.visibleCompetitors]
+      }
       this.includePrivateLabel = 'includePrivateLabel' in snap ? !!snap.includePrivateLabel : true
       if ('priceFallback' in snap) this.priceFallback = !!snap.priceFallback
       this.fetchSubcategories()

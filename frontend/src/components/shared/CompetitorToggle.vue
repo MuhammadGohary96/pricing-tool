@@ -3,6 +3,13 @@
     <span class="text-micro font-semibold uppercase tracking-wide text-grey-400 mr-0.5">
       {{ single ? 'Compared with' : 'Competitors' }}
     </span>
+    <!-- Under Shared-only these pills stop being cosmetic and decide which
+         competitors "shared brand" is measured against, so the numbers move. -->
+    <span
+      v-if="scopesBrands"
+      class="px-1.5 py-0.5 rounded-full text-micro font-semibold bg-brand-lightest text-brand-primary whitespace-nowrap"
+      title="Shared-only is on, so these also decide which competitors count as sharing a brand. Deselecting one changes the numbers, not just what is shown."
+    >scoping shared brands</span>
 
     <button
       v-for="comp in visibleComps"
@@ -72,10 +79,14 @@ const props = defineProps({
   /**
    * Two genuinely different jobs, one widget so the vocabulary stays familiar:
    *
-   *  multi  (Executive, Commercial) — VISIBILITY only. Dims what you are not
-   *         looking at; changes no number, issues no request. Executive's blended
-   *         PI is defined across all tracked competitors, so letting these pills
-   *         filter it would move the headline every time someone focused.
+   *  multi  (Executive, Commercial) — visibility only BY DEFAULT: dims what you
+   *         are not looking at, changes no number, issues no request. Executive's
+   *         blended PI is defined across all tracked competitors, so letting
+   *         these pills filter it would move the headline on every focus.
+   *         ONE EXCEPTION: under the Shared-only brand toggle they also decide
+   *         which competitors count as sharing a brand — "shared" is meaningless
+   *         without saying shared with whom — so there they do filter and do
+   *         refetch. `scopesBrands` makes that switch visible on the control.
    *  single (Gap Analysis)          — SELECTS the subject of the screen and
    *         refetches. Every number there is "against whom", so unioning
    *         competitors would double-count what both of them stock.
@@ -83,6 +94,8 @@ const props = defineProps({
   single: { type: Boolean, default: false },
   /** Names to mark as having no crawled catalogue. */
   withoutCatalogue: { type: Array, default: () => [] },
+  /** True when Shared-only is active, i.e. these pills currently affect numbers. */
+  scopesBrands: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['update:modelValue'])

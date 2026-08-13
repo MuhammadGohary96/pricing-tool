@@ -289,13 +289,19 @@ const pendingSnapStr = computed(() => {
   for (const k of FIELDS) s[k] = Array.isArray(pending[k]) ? [...pending[k]] : pending[k]
   return JSON.stringify(s)
 })
-const isDirty = computed(() => pendingSnapStr.value !== JSON.stringify(committedSnapshot()))
+// The competitor pills live in the store rather than in `pending`, because they
+// are rendered by the views, not by this bar — but they must still gate Apply.
+const pillsDirty = computed(() =>
+  JSON.stringify(filters.pendingVisibleCompetitors) !== JSON.stringify(filters.visibleCompetitors))
+const isDirty = computed(() =>
+  pendingSnapStr.value !== JSON.stringify(committedSnapshot()) || pillsDirty.value)
 
 const pendingChanges = computed(() =>
   [pending.mainCategory, pending.subCategory, pending.globalTier, pending.brand, pending.competitor, pending.fpNames]
     .reduce((n, a) => n + a.length, 0)
   + (pending.vertical ? 1 : 0)
   + (pending.brandScope ? 1 : 0)
+  + (pillsDirty.value ? 1 : 0)
   + (!pending.includePrivateLabel ? 1 : 0)
   + (pending.priceFallback ? 1 : 0)
 )
@@ -313,7 +319,9 @@ const activeCount = computed(() => pendingChanges.value)
 function applyFilters() {
   if (!isDirty.value) return
   // Atomic commit → the views' watchers refetch once and the URL syncs once.
-  filters.applySnapshot({ ...pending, mainCategory: [...pending.mainCategory], subCategory: [...pending.subCategory], globalTier: [...pending.globalTier], subcatTier: [...pending.subcatTier], actionType: [...pending.actionType], brand: [...pending.brand], competitor: [...pending.competitor], fpNames: [...pending.fpNames] })
+  // Commit the pills in the same tick, so one Apply is one refetch.
+  filters.visibleCompetitors = [...filters.pendingVisibleCompetitors]
+  filters.applySnapshot({ ...pending, visibleCompetitors: [...filters.pendingVisibleCompetitors], mainCategory: [...pending.mainCategory], subCategory: [...pending.subCategory], globalTier: [...pending.globalTier], subcatTier: [...pending.subcatTier], actionType: [...pending.actionType], brand: [...pending.brand], competitor: [...pending.competitor], fpNames: [...pending.fpNames] })
 }
 
 function clearFilters() {

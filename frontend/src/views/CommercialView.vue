@@ -61,6 +61,7 @@
         v-if="allCompetitors.length > 0"
         :competitors="allCompetitors"
         v-model="selectedCompetitors"
+        :scopes-brands="filters.brandScope === 'shared'"
         :default-limit="5"
         class="animate-fade-in-up stagger-2"
       />
@@ -117,7 +118,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { watchDebounced } from '@vueuse/core'
 import { useFiltersStore } from '../stores/filters'
@@ -140,9 +141,33 @@ const filters = useFiltersStore()
 useUrlSync()
 const store = useCommercialStore()
 
-const selectedCompetitors = ref([])
+// The pills live in the store so _params() can read them: under Shared-only they
+// scope which competitors count as "shared". A computed proxy keeps every
+// existing `selectedCompetitors.value` usage working unchanged.
+// Pills bind to the STAGED list. Under Shared-only it commits on Apply, like
+// every other filter, so one Apply is one refetch instead of a page refresh per
+// click. When Shared-only is off it is mirrored to the committed list
+// immediately, keeping plain focusing instant and free.
+const selectedCompetitors = computed({
+  get: () => filters.pendingVisibleCompetitors,
+  set: (v) => {
+    filters.pendingVisibleCompetitors = v
+    if (filters.brandScope !== 'shared') filters.visibleCompetitors = [...v]
+  },
+})
+watch(() => filters.brandScope, (mode) => {
+  // Leaving Shared-only must not strand a staged selection that will never be
+  // applied — mirror it through so visibility and query agree again.
+  if (mode !== 'shared') filters.visibleCompetitors = [...filters.pendingVisibleCompetitors]
+})
 const compactMode = ref(false)
+// Pill options MUST come from a source the pills do not filter. Under Shared-only
+// they narrow the query, so deriving the list from the response made it collapse
+// to the current selection: the pill you just hid disappeared, and the "All" reset
+// hid too (selected.length == competitors.length), leaving no way back.
+// filters.competitors is loaded independently of this view's query.
 const allCompetitors = computed(() => {
+  if (filters.competitors?.length) return [...filters.competitors].sort()
   const set = new Set([...store.pivotedCompetitors, ...store.blendedCompetitors])
   return [...set].sort()
 })
@@ -176,6 +201,9 @@ watchDebounced(
     filters.fpNames,
     filters.vertical,
     filters.brandScope,
+    // Only varies when the pills actually affect the query, so plain focusing
+    // stays free and one Apply is one refetch rather than two.
+    filters.brandScope === 'shared' ? filters.visibleCompetitors.join(',') : '',
     filters.includePrivateLabel,
     filters.priceFallback,
   ],
