@@ -61,7 +61,7 @@ import { computed } from 'vue'
 import KpiCard from '../layout/KpiCard.vue'
 import {
   GitCompareArrows, Target, PackageSearch, Wallet,
-  Handshake, Home, Store, Clock,
+  Handshake, Home, Store, Sparkles,
 } from 'lucide-vue-next'
 
 const props = defineProps({
@@ -72,7 +72,7 @@ const strip = computed(() => [
   { label: 'Shared brands', value: props.kpis?.shared_brands, icon: Handshake, bg: 'bg-green-50', fg: 'text-green-600' },
   { label: 'Brands only we carry', value: props.kpis?.bf_only_brands, icon: Home, bg: 'bg-brand-50', fg: 'text-brand-primary' },
   { label: 'Brands only they carry', value: props.kpis?.comp_only_brands, icon: Store, bg: 'bg-amber-50', fg: 'text-amber-600' },
-  { label: 'Mapped but gone stale', value: props.kpis?.matched_but_stale, icon: Clock, bg: 'bg-grey-100', fg: 'text-grey-600' },
+  { label: 'Brands shared by match', value: props.kpis?.shared_by_match_brands, icon: Sparkles, bg: 'bg-green-50', fg: 'text-green-700', title: 'Of the shared brands, those whose names DISAGREE on the two sides — the overlap was proved by matching at least half their products, not read off the label. Our Froneri is their Nestle and Paradise. Included in Shared brands, not additional to it.' },
 ])
 
 function fmt(v) {

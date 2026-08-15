@@ -57,7 +57,11 @@
                 <HelpTooltip text="Competitor products we do not carry, placed into this subcategory by the category bridge. Never sum this column — one competitor product can bridge to several subcategories." />
               </span>
             </th>
-            <th :class="TH_C" style="min-width: 150px">Brands (shared / ours / theirs)</th>
+            <th :class="TH_C" style="min-width: 178px">
+              <span class="inline-flex items-center gap-1">Brands (shared · by match / ours / theirs)
+                <HelpTooltip text="Brands we SHARE in this subcategory, of which BY MATCH, then brands only we carry and only they carry. The second is a SUBSET of the first, not a fourth bucket: it counts shared brands whose two names disagree, where the overlap was proved by matching products rather than read off the label. Brand sets are WITHIN-SUBCATEGORY — a brand can be shared in one and ours-only in another." />
+              </span>
+            </th>
             <th :class="TH_R">Revenue/day</th>
           </tr>
         </thead>
@@ -98,6 +102,11 @@
             <td class="px-4 py-3">
               <div class="flex items-center gap-1 text-caption font-mono">
                 <span class="px-1.5 py-0.5 rounded bg-green-50 text-green-700" :title="titleList('Shared', row.shared_brand_list)">{{ row.shared_brands }}</span>
+                <!-- Middle dot, not a slash: this sits inside the number to its
+                     left, and a slash would read as a fourth bucket. -->
+                <span class="text-grey-300">·</span>
+                <span class="px-1.5 py-0.5 rounded ring-1 ring-green-200 text-green-700"
+                      :title="`${row.shared_by_match_brands} of those ${row.shared_brands} shared brands are named differently on each side — the overlap was proved by matching products, not by the label.`">{{ row.shared_by_match_brands }}</span>
                 <span class="text-grey-300">/</span>
                 <span class="px-1.5 py-0.5 rounded bg-brand-50 text-brand-primary" :title="titleList('Only ours', row.bf_only_brand_list)">{{ row.bf_only_brands }}</span>
                 <span class="text-grey-300">/</span>

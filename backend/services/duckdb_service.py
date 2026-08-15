@@ -1938,6 +1938,11 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             (SELECT COUNT(*) FROM comp_prod WHERE sub_category_name IS NOT NULL)  AS comp_only_bridged,
             (SELECT COUNT(DISTINCT brand_key) FROM bf_prod
               WHERE brand_key IS NOT NULL AND is_shared_brand)                    AS shared_brands,
+            -- A SUBSET of shared_brands: overlap proved by matching, because
+            -- the two names disagree. Every metric here is its own scalar
+            -- subquery, so it needs its own FROM.
+            (SELECT COUNT(DISTINCT brand_key) FROM bf_prod
+              WHERE brand_key IS NOT NULL AND shared_by_match)               AS shared_by_match_brands,
             (SELECT COUNT(DISTINCT brand_key) FROM bf_prod
               WHERE brand_key IS NOT NULL AND NOT is_shared_brand)                AS bf_only_brands,
             (SELECT COUNT(DISTINCT brand_key) FROM comp_prod
@@ -1969,6 +1974,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             "comp_only_products": i(r.comp_only_products),
             "comp_only_bridged": i(r.comp_only_bridged),
             "shared_brands": i(r.shared_brands),
+            "shared_by_match_brands": i(r.shared_by_match_brands),
             "bf_only_brands": i(r.bf_only_brands),
             "comp_only_brands": i(r.comp_only_brands),
         }
@@ -2003,6 +2009,9 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                       / NULLIF(COUNT(*) - COUNT(*) FILTER (WHERE no_match), 0), 1)
                                                                AS addressable_pct,
                 COUNT(DISTINCT brand_key) FILTER (WHERE is_shared_brand)     AS shared_brands,
+                -- A SUBSET of shared_brands, not a fourth bucket: brands whose
+                -- overlap was proved by matching because the two names disagree.
+                COUNT(DISTINCT brand_key) FILTER (WHERE shared_by_match)     AS shared_by_match_brands,
                 COUNT(DISTINCT brand_key) FILTER (WHERE NOT is_shared_brand) AS bf_only_brands,
                 ROUND(SUM(rev), 0)                             AS daily_revenue,
                 ROUND(SUM(rev) FILTER (WHERE NOT is_mapped), 0) AS unmatched_revenue,
@@ -2066,6 +2075,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             p.coverage_pct,
             CAST(COALESCE(c.comp_only_products, 0) AS INTEGER) AS comp_only_products,
             CAST(b.shared_brands       AS INTEGER) AS shared_brands,
+            CAST(b.shared_by_match_brands AS INTEGER) AS shared_by_match_brands,
             CAST(b.bf_only_brands      AS INTEGER) AS bf_only_brands,
             CAST(COALESCE(c.comp_only_brands, 0)   AS INTEGER) AS comp_only_brands,
             COALESCE(b.daily_revenue, 0)::DOUBLE      AS daily_revenue,
