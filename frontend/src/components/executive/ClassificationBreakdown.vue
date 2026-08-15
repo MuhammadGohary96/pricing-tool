@@ -47,7 +47,7 @@
                  brand" from "we have not matched it yet", which are the same
                  number today and completely different problems. -->
             <div v-if="item.notSharedPct != null"
-                 class="text-micro leading-tight tabular-nums mt-0.5 text-amber-600"
+                 class="text-micro leading-tight tabular-nums mt-0.5 text-slate-600"
                  :title="`${item.notShared.toLocaleString()} of these ${item.count.toLocaleString()} are in brands NO competitor in scope carries. Nothing about the matcher can reach them — the brand is simply not on their shelf.`">
               {{ item.notSharedPct }}% brand not carried
             </div>
@@ -55,7 +55,7 @@
         </div>
         <div v-if="brandUnreachable > 0"
              class="flex items-start gap-2 pt-2 mt-1 border-t border-grey-100">
-          <div class="w-2.5 h-2.5 rounded-sm shrink-0 mt-1 bg-amber-600"></div>
+          <div class="w-2.5 h-2.5 rounded-sm shrink-0 mt-1 bg-slate-600"></div>
           <div class="min-w-0">
             <div class="text-micro text-grey-500 leading-tight">Outer arc</div>
             <div class="text-caption font-semibold text-grey-800 leading-tight">
@@ -223,7 +223,7 @@ const SEGMENT_DATA = computed(() => {
 const BRAND_RING = computed(() => {
   const v = d.value
   const clear = '#00000000'
-  const mark = '#D97706'
+  const mark = '#475569'
   const out = []
   for (const seg of SEGMENT_DATA.value) {
     const notShared =
@@ -306,7 +306,7 @@ const chartOption = computed(() => {
           fontSize: 10,
           fontWeight: 600,
           fontFamily: 'Geist, system-ui, sans-serif',
-          fill: '#D97706',
+          fill: '#475569',
           textAlign: 'center',
         },
       }] : []),

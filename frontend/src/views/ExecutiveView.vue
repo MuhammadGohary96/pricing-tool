@@ -156,6 +156,14 @@
         class="animate-fade-in-up stagger-3"
       />
 
+      <!-- Pairs with the panel above: that one asks what we can DO about the gap,
+           this one asks how different the two ranges are in the first place. -->
+      <AssortmentOverlap
+        v-if="visibleOverview.length"
+        :data="visibleOverview"
+        class="animate-fade-in-up stagger-3"
+      />
+
       <!-- Classification donut keeps its place in this tier, now paired with the
            category strip (also a pricing-position panel) so neither sits alone. -->
       <div class="flex flex-col xl:flex-row gap-4 items-start animate-fade-in-up stagger-3">
@@ -225,6 +233,7 @@ import ClassificationBreakdown from '../components/executive/ClassificationBreak
 import GeographicExposure from '../components/executive/GeographicExposure.vue'
 import CompetitorScorecard from '../components/executive/CompetitorScorecard.vue'
 import AddressableGap from '../components/executive/AddressableGap.vue'
+import AssortmentOverlap from '../components/executive/AssortmentOverlap.vue'
 import PageShell from '../components/shared/PageShell.vue'
 import PageHeader from '../components/shared/PageHeader.vue'
 import DefinitionsPanel from '../components/shared/DefinitionsPanel.vue'

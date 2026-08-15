@@ -74,8 +74,8 @@ const props = defineProps({
 const KEYS = [
   { label: 'Mapped', swatch: 'bg-green-500' },
   { label: 'Workable backlog', swatch: 'bg-amber-400' },
-  { label: 'They lack the item', swatch: 'bg-grey-300' },
-  { label: 'They lack the brand', swatch: 'bg-grey-200' },
+  { label: 'They lack the item', swatch: 'bg-slate-500' },
+  { label: 'They lack the brand', swatch: 'bg-slate-200' },
 ]
 
 const byComp = computed(() =>
@@ -112,9 +112,9 @@ const rows = computed(() => {
           why: 'Matched to one of their products, so it carries a price comparison.' },
         { key: 'b', label: 'Workable backlog', value: backlog, pct: pct(backlog), swatch: 'bg-amber-400', ink: 'text-amber-950',
           why: 'Unmatched, and nothing rules it out — this is the queue matching work can close.' },
-        { key: 'i', label: 'They lack the item', value: noMatch - noBrand, pct: pct(noMatch - noBrand), swatch: 'bg-grey-300', ink: 'text-grey-700',
+        { key: 'i', label: 'They lack the item', value: noMatch - noBrand, pct: pct(noMatch - noBrand), swatch: 'bg-slate-500', ink: 'text-white',
           why: 'They carry the brand but the matcher rejected every candidate for this item.' },
-        { key: 'k', label: 'They lack the brand', value: noBrand, pct: pct(noBrand), swatch: 'bg-grey-200', ink: 'text-grey-600',
+        { key: 'k', label: 'They lack the brand', value: noBrand, pct: pct(noBrand), swatch: 'bg-slate-200', ink: 'text-slate-700',
           why: 'They do not stock the brand at all. No amount of matching reaches these.' },
       ].filter(s => s.value > 0),
     })
