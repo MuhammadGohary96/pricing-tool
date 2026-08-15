@@ -2099,6 +2099,12 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 ANY_VALUE(brand_name)                          AS brand_name,
                 COUNT(*)                                       AS bf_products,
                 COUNT(*) FILTER (WHERE is_mapped)              AS matched,
+                -- The mirror of comp_only_products on this table: our products
+                -- of this brand with no match at the competitor. COALESCE rather
+                -- than a bare NOT, so a NULL is_mapped cannot drop out of both
+                -- sides and leave matched + our_only short of bf_products.
+                COUNT(*) FILTER (WHERE NOT COALESCE(is_mapped, FALSE))
+                                                               AS our_only_products,
                 COUNT(*) FILTER (WHERE no_match)               AS confirmed_no_match,
                 COUNT(*) FILTER (WHERE potential)              AS potential_match,
                 ROUND(100.0 * COUNT(*) FILTER (WHERE is_mapped)
@@ -2169,6 +2175,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             b.addressable_pct,
             CAST(COALESCE(b.potential_match, 0)    AS INTEGER) AS potential_match,
             CAST(COALESCE(c.comp_only_products, 0) AS INTEGER) AS comp_only_products,
+            CAST(COALESCE(b.our_only_products, 0) AS INTEGER) AS our_only_products,
             CAST(COALESCE(b.bf_subcategories, 0)   AS INTEGER) AS bf_subcategories,
             CAST(COALESCE(c.comp_subcategories, 0) AS INTEGER) AS comp_subcategories,
             COALESCE(b.daily_revenue, 0)::DOUBLE               AS daily_revenue,

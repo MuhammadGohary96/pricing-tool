@@ -51,6 +51,11 @@
             <th :class="TH_R">No-match</th>
             <th :class="TH_R">Potential</th>
             <th :class="TH_R">They only</th>
+            <th :class="TH_R">
+              <span class="inline-flex items-center gap-1">Ours only
+                <HelpTooltip text="Our products of this brand with no match at this competitor — Our SKUs minus Mapped. The mirror of They only. A CEILING, not a proven assortment gap: it counts what they genuinely do not stock together with what we simply failed to match. The No-match column beside it is the confirmed subset." />
+              </span>
+            </th>
             <th :class="TH_R">Our subcats</th>
             <th :class="TH_R">Their subcats</th>
             <th :class="TH_R">Revenue/day</th>
@@ -93,6 +98,7 @@
             <td :class="TD_N" class="text-grey-500">{{ n(row.confirmed_no_match) }}</td>
             <td :class="TD_N" class="text-amber-600">{{ n(row.potential_match) }}</td>
             <td :class="TD_N" class="text-amber-700 font-semibold">{{ n(row.comp_only_products) }}</td>
+            <td :class="TD_N" class="text-brand-primary font-semibold">{{ n(row.our_only_products) }}</td>
             <td :class="TD_N" class="text-grey-600">{{ n(row.bf_subcategories) }}</td>
             <td :class="TD_N" class="text-grey-600">{{ n(row.comp_subcategories) }}</td>
             <td :class="TD_N" class="text-grey-900 font-semibold">{{ n(row.daily_revenue) }}</td>
