@@ -1475,7 +1475,20 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
 
         brands = split("brand")
         add(bf_clauses, bf_params, "brand_name", brands)
-        add(comp_clauses, comp_params, "brand_name", brands)
+        # Their side matches on the normalized KEY, not the display name.
+        # brand_name on a competitor row is THEIR spelling, and a competitor
+        # routinely uses several: Talabat carries 7up as '7up', '7Up' and '7UP'.
+        # Comparing our string to theirs case-sensitively kept 1 of their 6
+        # unpaired 7up products and silently dropped the other 5, so filtering to
+        # a brand made its own assortment gap look six times smaller than the
+        # unfiltered table said. brand_key already collapses the spellings.
+        if brands:
+            ph = ", ".join(["?"] * len(brands))
+            comp_clauses.append(
+                f"brand_key IN (SELECT DISTINCT brand_key FROM global_base "
+                f"WHERE brand_name IN ({ph}) AND brand_key IS NOT NULL)"
+            )
+            comp_params.extend(brands)
 
         # Breadfast-only dimensions
         add(bf_clauses, bf_params, "commercial_category_name", split("main_category"))
