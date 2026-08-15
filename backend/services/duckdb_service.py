@@ -1255,7 +1255,13 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         # total, so the donut is internally consistent and matches that table.
         sql_mapping_progress = """
         WITH product_class AS (
-            SELECT DISTINCT product_id, competitor_name, classification, is_mapped
+            -- is_shared_brand rides along so the per-competitor donut can make the
+            -- same distinction the overall one does: a dead end because THEY DO
+            -- NOT STOCK THE BRAND is not a matching backlog. Without it the panel
+            -- fell back to 0% the moment a competitor was selected, which is the
+            -- default state.
+            SELECT DISTINCT product_id, competitor_name, classification, is_mapped,
+                   COALESCE(is_shared_brand, FALSE) AS is_shared_brand
             FROM base_tmp
             WHERE competitor_name IS NOT NULL AND classification IS NOT NULL
         )
@@ -1270,6 +1276,11 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             -- "No Match" = master-data DECIDED there's no competitor equivalent (resolved)
             CAST(COUNT(*) FILTER (WHERE NOT is_mapped AND classification = 'Not Mapped - Not PL - No Match') AS INTEGER) AS no_match_not_pl,
             CAST(COUNT(*) FILTER (WHERE NOT is_mapped AND classification = 'Not Mapped - PL - No Match')     AS INTEGER) AS no_match_pl,
+            -- Same two splits the overall breakdown carries, per competitor.
+            CAST(COUNT(*) FILTER (WHERE NOT is_mapped AND NOT is_shared_brand
+                  AND classification LIKE '%No Match')          AS INTEGER) AS no_match_not_shared_brand,
+            CAST(COUNT(*) FILTER (WHERE NOT is_mapped AND NOT is_shared_brand
+                  AND classification LIKE '%No Potential Match') AS INTEGER) AS no_potential_not_shared_brand,
             CAST(COUNT(*) AS INTEGER) AS total
         FROM product_class
         GROUP BY competitor_name
@@ -1397,6 +1408,8 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 "no_potential_pl": int(r.no_potential_pl),
                 "no_match_not_pl": int(r.no_match_not_pl),
                 "no_match_pl": int(r.no_match_pl),
+                "no_match_not_shared_brand": int(r.no_match_not_shared_brand),
+                "no_potential_not_shared_brand": int(r.no_potential_not_shared_brand),
                 "total": total,
                 # is_mapped count (matches Blended PI by competitor); mapped_pct now
                 # uses it over total so the classification donut and that table agree.
