@@ -25,12 +25,21 @@
         <!-- Sixteen columns is right for the manager who lives here and hostile
              to the leader who does not. Eight by default, the rest one click
              away; the choice sticks so the daily reader sets it once. -->
+        <!-- Says WHAT is hidden and HOW MANY, because a control that only says
+             "detail" gives a reader no reason to press it -- and columns hidden
+             without a visible count read as columns that do not exist. -->
         <button type="button"
-                class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full ring-1 ring-grey-200 bg-white text-caption font-medium text-grey-600 hover:ring-grey-300 active:scale-[0.97] transition-[transform,box-shadow]"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-caption font-semibold ring-1 active:scale-[0.97] transition-[transform,background-color,box-shadow] duration-200 ease-premium"
+                :class="detailed
+                  ? 'bg-brand-primary text-white ring-brand-primary hover:bg-brand-dark'
+                  : 'bg-brand-50 text-brand-primary ring-brand-light/60 hover:bg-brand-lightest hover:ring-brand-light'"
                 :aria-pressed="detailed"
+                :title="detailed
+                  ? `Hide: ${DETAIL_COLUMNS.join(', ')}`
+                  : `Show ${DETAIL_COLUMNS.length} more columns: ${DETAIL_COLUMNS.join(', ')}`"
                 @click="toggleDetail">
-          <component :is="detailed ? ChevronLeft : Plus" class="w-3 h-3" />
-          {{ detailed ? 'Fewer columns' : 'Coverage detail' }}
+          <component :is="detailed ? Minus : Plus" class="w-3.5 h-3.5" />
+          {{ detailed ? `Hide ${DETAIL_COLUMNS.length} columns` : `${DETAIL_COLUMNS.length} more columns` }}
         </button>
         <ExportButton :fetcher="exportData" filename="competitor_scorecard.csv" />
       </div>
@@ -49,7 +58,7 @@
           <tr class="bg-grey-50 border-b border-grey-100">
             <th :class="TH_L" rowspan="2" class="sticky left-0 bg-grey-50 z-10 align-bottom">Competitor</th>
             <th :class="GROUP" colspan="2">Price position</th>
-            <th :class="[GROUP, 'border-l border-grey-200']" :colspan="detailed ? 8 : 2">Match coverage</th>
+            <th :class="[GROUP, 'border-l border-grey-200']" :colspan="detailed ? 9 : 3">Match coverage</th>
             <th :class="[GROUP, 'border-l border-grey-200']" colspan="4">Assortment overlap</th>
           </tr>
           <tr class="bg-grey-50 border-b border-grey-100">
@@ -81,6 +90,11 @@
             </th>
             <th v-if="detailed" :class="TH_R">Mapped</th>
             <th :class="TH_C" style="min-width: 118px">Mapped %</th>
+            <th :class="TH_C" style="min-width: 126px">
+              <span class="inline-flex items-center gap-1">Mapped % shared
+                <HelpTooltip text="Mapped counting ONLY products whose brand this competitor also carries. The realistic ceiling for matching effort: a brand they do not stock can never be matched, so the gap between this and Mapped % is assortment, not backlog. Shared includes brands proved shared by matching, where the two names disagree — our Froneri is their Nestle." />
+              </span>
+            </th>
             <th v-if="detailed" :class="TH_R">
               <span class="inline-flex items-center gap-1">Fresh
                 <HelpTooltip text="Mapped AND the competitor product was seen in the last 7 days." />
@@ -160,6 +174,7 @@
             <td v-if="detailed" :class="[TD_N, 'text-grey-700 font-semibold']" :title="usedTitle(row)">{{ n(row.used_products) }}</td>
             <td v-if="detailed" :class="[TD_N, 'text-green-600']">{{ n(row.matched) }}</td>
             <td class="px-4 py-3"><Bar :pct="row.mapping_pct" /></td>
+            <td class="px-4 py-3"><Bar :pct="row.mapping_pct_shared" /></td>
             <td v-if="detailed" :class="[TD_N, row.matched_fresh === 0 && row.matched > 0 ? 'text-red-500 font-semibold' : 'text-grey-600']"
                 :title="staleTitle(row)">{{ n(row.matched_fresh) }}</td>
             <td class="px-4 py-3"><Bar :pct="row.addressable_pct" /></td>
@@ -196,7 +211,7 @@
 
 <script setup>
 import { computed, h, ref } from 'vue'
-import { LayoutList, Info, Plus, ChevronLeft } from 'lucide-vue-next'
+import { LayoutList, Info, Plus, Minus } from 'lucide-vue-next'
 import ExportButton from '../shared/ExportButton.vue'
 import EmptyState from '../shared/EmptyState.vue'
 import HelpTooltip from '../shared/HelpTooltip.vue'
@@ -218,6 +233,11 @@ const TH_L = 'px-4 py-2 text-left text-caption font-semibold text-grey-500 upper
 const TH_R = 'px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide'
 const TH_C = 'px-4 py-2 text-caption font-semibold text-grey-500 uppercase tracking-wide'
 const TD_N = 'px-4 py-3 text-right text-body font-mono'
+
+// Named here rather than only in the template, so the button can say how many
+// columns it hides and which — and so this list cannot drift from the v-ifs
+// without someone noticing the count is wrong.
+const DETAIL_COLUMNS = ['Our SKUs', 'Eligible', 'Used', 'Mapped', 'Fresh', 'Potential']
 
 // Remembered, because a daily reader should not re-open it every morning.
 const detailed = ref(localStorage.getItem('exec-scorecard-detail') === '1')
