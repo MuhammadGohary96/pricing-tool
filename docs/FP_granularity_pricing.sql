@@ -709,6 +709,40 @@ bf_brands AS (
     SELECT DISTINCT brand_key FROM bf_universe_enriched WHERE brand_key IS NOT NULL
 ),
 
+-- ── NEW 6 ▸ PAIRED KEYS + PAIR FRESHNESS (both from the daily fact) ─────────
+-- Competitor products already represented on a Breadfast row, so comp-only
+-- counts are never inflated.
+--
+-- "Represented on a Breadfast row" is the operative phrase, and it is why this
+-- joins final_product_data rather than reading competitor_mapping flat. A
+-- competitor product can be matched to a Breadfast product this tool does not
+-- track -- the universe is product_type='single' inside the top 80% of revenue,
+-- so a match to a bundle or a long-tail SKU is real but has no row here. Read
+-- flat, such a product was excluded from the competitor-only branch (it is
+-- matched) while never appearing on a Breadfast row either (no row exists), so
+-- it fell out of the table entirely: 827 of Talabat's active products, 628 of
+-- Seoudi's, 127 of Amazon's.
+--
+-- That was invisible while "their catalogue" was a pre-aggregated total. Now
+-- that the paired and unpaired halves are counted to reconcile against it, the
+-- hole is load-bearing: without this gate the two halves add up to 94.7% of
+-- Talabat's catalogue and no filter can explain the missing 5.3%.
+--
+-- So the gate is reachability, and the products that fail it become competitor-only
+-- rows. That is a deliberate call: from this tool's point of view a product whose
+-- only counterpart is outside the tracked range is one we do not carry. It raises
+-- "They only" by 0.4-8.2% depending on the competitor.
+paired_comp_keys AS (
+    SELECT DISTINCT cm.competitor_id, cm.competitor_product_key
+    FROM competitor_mapping AS cm
+    INNER JOIN (
+        SELECT DISTINCT product_id, competitor_id FROM final_product_data
+    ) AS reachable
+        ON  reachable.competitor_id = cm.competitor_id
+        AND reachable.product_id    = cm.bf_product_id
+    WHERE cm.competitor_product_key IS NOT NULL
+),
+
 -- ── NEW 3 ▸ COMPETITOR CATALOGUE + DEDUP + BUNDLE EXCLUSION ─────────────────
 -- The only source of competitor products that were never matched.
 comp_products_raw AS (
@@ -760,20 +794,49 @@ comp_products AS (
             r.*,
             COALESCE(TRIM(LOWER(r.comp_product_name)), '')  AS name_norm,
             COALESCE(r.brand_key, '')                       AS brand_norm,
-            IF(ma.competitor_product_key IS NOT NULL, 1, 0) AS is_matched_any
+            IF(ma.competitor_product_key IS NOT NULL, 1, 0) AS is_matched_any,
+            IF(pk.competitor_product_key IS NOT NULL, 1, 0) AS is_paired
         FROM comp_products_raw AS r
         LEFT JOIN comp_matched_any AS ma
             ON  ma.competitor_id          = r.competitor_id
             AND ma.competitor_product_key = r.competitor_product_key
+        LEFT JOIN paired_comp_keys AS pk
+            ON  pk.competitor_id          = r.competitor_id
+            AND pk.competitor_product_key = r.competitor_product_key
     )
-    WHERE ( is_matched_any = 1
+    -- Bundle exclusion, and it now actually excludes. The condition was
+    -- `is_matched_any = 1 OR NOT bundle`, and since EVERY active competitor
+    -- product is in comp_matched_any the first half is always true -- so the
+    -- second was never evaluated and 1,058 active bundles sailed through. A
+    -- bundle of two items has no counterpart in a range of singles, so it
+    -- inflates "they carry, we don't" with products we were never going to
+    -- stock as such.
+    --   Matched bundles are KEPT: if the matcher paired it to one of ours, the
+    --   pairing is evidence enough that it belongs, and dropping it would strand
+    --   our product as unmatched. is_paired, not is_matched_any, for the reason
+    --   in the ORDER BY below.
+    --   Spaced ' + ' only, deliberately: an unspaced '+' also appears in names
+    --   like "Vitamin B+" where it marks no bundle at all. 399 unspaced cases
+    --   are knowingly left in rather than risk those.
+    WHERE ( is_paired = 1
             OR NOT REGEXP_CONTAINS(COALESCE(comp_product_name, ''), r'\s\+\s') )
     -- An empty name is not evidence of duplication, so those rows are never
     -- collapsed into each other.
     QUALIFY name_norm = ''
          OR ROW_NUMBER() OVER (
                 PARTITION BY competitor_id, name_norm, brand_norm
-                ORDER BY is_matched_any DESC,        -- a matched copy wins
+                -- is_paired FIRST, and this is the whole point. Talabat lists
+                -- "Soft Drink Pet Bottle" (7Up) twice, both active, both seen
+                -- today; one is matched to our 7up, one is not. Ordering by
+                -- is_matched_any could not separate them -- comp_matched_any is
+                -- broader than the pairing this query actually uses, so both
+                -- scored 1 -- and with last_seen equal the tiebreak fell to the
+                -- key, where the UNMATCHED copy happened to sort first. It
+                -- survived, so the product appeared under "they carry, we don't"
+                -- while its matched twin was dropped from the catalogue
+                -- entirely. The total stayed right and the split was wrong.
+                ORDER BY is_paired DESC,             -- the copy we actually matched
+                         is_matched_any DESC,        -- else any matched copy
                          comp_last_seen DESC,        -- else the freshest
                          competitor_product_key      -- deterministic tiebreak
             ) = 1
@@ -895,39 +958,7 @@ rec_flags AS (
     GROUP BY 1, 2
 ),
 
--- ── NEW 6 ▸ PAIRED KEYS + PAIR FRESHNESS (both from the daily fact) ─────────
--- Competitor products already represented on a Breadfast row, so comp-only
--- counts are never inflated.
---
--- "Represented on a Breadfast row" is the operative phrase, and it is why this
--- joins final_product_data rather than reading competitor_mapping flat. A
--- competitor product can be matched to a Breadfast product this tool does not
--- track -- the universe is product_type='single' inside the top 80% of revenue,
--- so a match to a bundle or a long-tail SKU is real but has no row here. Read
--- flat, such a product was excluded from the competitor-only branch (it is
--- matched) while never appearing on a Breadfast row either (no row exists), so
--- it fell out of the table entirely: 827 of Talabat's active products, 628 of
--- Seoudi's, 127 of Amazon's.
---
--- That was invisible while "their catalogue" was a pre-aggregated total. Now
--- that the paired and unpaired halves are counted to reconcile against it, the
--- hole is load-bearing: without this gate the two halves add up to 94.7% of
--- Talabat's catalogue and no filter can explain the missing 5.3%.
---
--- So the gate is reachability, and the products that fail it become competitor-only
--- rows. That is a deliberate call: from this tool's point of view a product whose
--- only counterpart is outside the tracked range is one we do not carry. It raises
--- "They only" by 0.4-8.2% depending on the competitor.
-paired_comp_keys AS (
-    SELECT DISTINCT cm.competitor_id, cm.competitor_product_key
-    FROM competitor_mapping AS cm
-    INNER JOIN (
-        SELECT DISTINCT product_id, competitor_id FROM final_product_data
-    ) AS reachable
-        ON  reachable.competitor_id = cm.competitor_id
-        AND reachable.product_id    = cm.bf_product_id
-    WHERE cm.competitor_product_key IS NOT NULL
-),
+-- ── NEW 6 ▸ PAIR FRESHNESS ────────────────────────────────────────────────
 -- Was the matched competitor product seen recently? Uses the daily fact's own
 -- days_since_crawl gate (competitor_clean.is_recent_competitor), so freshness
 -- means exactly what it means everywhere else in the tool.
