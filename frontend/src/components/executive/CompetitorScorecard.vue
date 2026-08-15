@@ -48,7 +48,7 @@
           <!-- Grouped header: three questions, read left to right. -->
           <tr class="bg-grey-50 border-b border-grey-100">
             <th :class="TH_L" rowspan="2" class="sticky left-0 bg-grey-50 z-10 align-bottom">Competitor</th>
-            <th :class="GROUP" colspan="3">Price position</th>
+            <th :class="GROUP" colspan="2">Price position</th>
             <th :class="[GROUP, 'border-l border-grey-200']" :colspan="detailed ? 8 : 2">Match coverage</th>
             <th :class="[GROUP, 'border-l border-grey-200']" colspan="4">Assortment overlap</th>
           </tr>
@@ -58,7 +58,6 @@
                 <HelpTooltip text="Quantity-weighted Breadfast price divided by competitor price. Above 1.00 means BREADFAST IS MORE EXPENSIVE. Both tails matter." />
               </span>
             </th>
-            <th :class="TH_R">vs Parity</th>
             <!-- Named "Priced" until it turned out to be the same number Commercial
                  already showed as "Util %" — identical to the decimal for all seven
                  competitors. One metric, one name, across both views. -->
@@ -153,7 +152,6 @@
               </span>
               <span v-else class="text-grey-300">—</span>
             </td>
-            <td :class="[TD_N, devClass(row.pi_deviation)]">{{ dev(row.pi_deviation) }}</td>
             <td class="px-4 py-3"><Bar :pct="row.priced_pct" /></td>
 
             <!-- Match coverage -->
@@ -245,13 +243,6 @@ const addressablePct = computed(() => pooled('matched', r => r.addressable))
 const freshPct = computed(() => pooled('matched_fresh', r => r.matched))
 
 function n(v) { return v == null ? '—' : Number(v).toLocaleString() }
-function dev(v) { return v == null ? '—' : `${v > 0 ? '+' : ''}${(v * 100).toFixed(1)}%` }
-function devClass(v) {
-  if (v == null) return 'text-grey-300'
-  if (Math.abs(v) <= 0.005) return 'text-grey-500'
-  // Same convention as piColor: pricier = warm, cheaper = cool.
-  return v > 0 ? 'text-red-600' : 'text-blue-600'
-}
 // Either shared mode: both narrow by brand, so both change what this column means.
 const sharedOnly = computed(() => !!props.brandScope)
 
