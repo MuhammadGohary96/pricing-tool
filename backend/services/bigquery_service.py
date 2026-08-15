@@ -137,7 +137,12 @@ SELECT
     CAST(comp_active_products AS INT64) AS comp_active_products,
     -- The same total restricted to brands we also carry, so the Shared-only
     -- brand scope can narrow this column like it narrows every other one.
-    CAST(comp_active_products_shared AS INT64) AS comp_active_products_shared
+    CAST(comp_active_products_shared AS INT64) AS comp_active_products_shared,
+    -- Marks Breadfast rows whose matched competitor product is in the live
+    -- catalogue. With competitor_product_key now populated on those rows, the
+    -- paired and unpaired halves partition the catalogue, so it can be counted
+    -- under any filter instead of only read as a per-competitor total.
+    matched_comp_in_catalogue
 FROM `{project}.{dataset}.{table}`
 """
 

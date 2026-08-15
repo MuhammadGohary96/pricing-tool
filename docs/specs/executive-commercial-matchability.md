@@ -119,11 +119,71 @@ GLOBAL/FP-scoped split as `_apply_filters`; reuse it for any new roll-up.
   `They only = 0` and `Matched fresh = 0` against 4,037 matched. Flagged with a
   "no catalogue" chip — that is a *collection* gap, not an assortment gap, and our matching
   figures for it are still valid.
-* **"Their catalogue (all)" is the one column the filters do not narrow.** For a
-  beauty-heavy competitor it reads far larger than the rest of the row (Amazon: 32,034 vs the
-  workbook's beauty-filtered 12,509). Labelled and tooltipped accordingly.
+* **"Their catalogue" now narrows like everything else.** It used to be the one column no
+  filter touched, because it was read straight off `comp_active_products` — a per-competitor
+  BigQuery scalar with no brand or category dimension. Two changes fixed that:
+  * `comp_active_products_shared` (BigQuery) — the same `COUNTIF` restricted to brands we
+    also carry. The gap is large and competitor-specific: Amazon 22.5% of catalogue in brands
+    we stock, Rabbit 65.6%.
+
+    ⚠ **This does not equal the scoped count under Shared-only**, and the difference is not a
+    bug in either. The scalar tests *their* product's brand label against our brand list. The
+    scoped count's matched half tests *our* product's brand, because that half is filtered on
+    the Breadfast rows — and the two brand strings do not always survive a match intact. They
+    diverge by 15 (Noon) to 413 (Talabat) products. Only the scoped count composes with the
+    other filters, so that is what the column shows; the scalar is kept in the export under a
+    name that says which question it answers.
+  * `competitor_product_key` populated on Breadfast rows (it was hard-coded `NULL`), plus
+    `matched_comp_in_catalogue`. The paired and unpaired halves then **partition** the active
+    catalogue — paired counted off our rows, unpaired off `comp_catalogue` — so the app can
+    `COUNT(DISTINCT ...)` it under any filter. With no filter this reproduces
+    `comp_active_products` exactly, which is the check that the partition is sound.
+
+  `COUNT(DISTINCT ...)`, not `COUNT(*)`: one of their products can be matched to several of
+  ours, and the Breadfast side is one row per (product, competitor).
+* **`paired_comp_keys` is gated on reachability, and this moved "They only".** A competitor
+  product can be matched to a Breadfast product the tool does not track — the universe is
+  `product_type='single'` inside the top 80% of revenue, so a match to a bundle or a
+  long-tail SKU is real but has no row here. Read flat, such a product was excluded from the
+  competitor-only branch (it is matched) *and* absent from the Breadfast side (no row), so it
+  fell out of the table entirely — 827 of Talabat's active products, 628 of Seoudi's, 127 of
+  Amazon's. Harmless while the catalogue was a pre-aggregated total; fatal once the two
+  halves are counted to reconcile against it, because they then summed to 94.7% of Talabat's
+  catalogue with no filter to explain the gap.
+
+  `paired_comp_keys` now `INNER JOIN`s the reachable `(product_id, competitor_id)` pairs from
+  `final_product_data`, so those products become competitor-only rows and the partition
+  closes exactly — **residual 0 for every competitor**, verified on the rebuilt table:
+
+  | Competitor | Catalogue | Paired | They only | Residual |
+  |---|---|---|---|---|
+  | Amazon | 30,822 | 1,217 | 29,605 | 0 |
+  | Talabat | 15,751 | 4,653 | 11,098 | 0 |
+  | Seoudi | 12,543 | 3,126 | 9,417 | 0 |
+  | Amazon Now | 8,788 | 1,998 | 6,790 | 0 |
+  | Rabbit | 7,176 | 2,528 | 4,648 | 0 |
+  | Noon Minutes | 6,989 | 2,491 | 4,498 | 0 |
+  | Carrefour | 0 | 0 | 0 | 0 |
+
+  **This is a deliberate number move, chosen over the alternative:** from the tool's point of
+  view a product whose only counterpart lies outside the tracked range is one we do not
+  carry. It raised "They only" across the Executive scorecard, the subcategory table and the
+  Gap tab. The rejected alternative was to let the catalogue absorb the shortfall instead,
+  which kept "They only" still but left the catalogue reading ~5% below the competitor's true
+  total — and, worse, no column would then have been wrong in a way anyone could see.
+* **Under a category or subcategory filter, unbridged competitor products are excluded**
+  (deliberate, requested). A product of theirs the category bridge cannot attribute to one of
+  our subcategories cannot be placed, so counting it would inflate whichever categories were
+  picked. It is not a rounding matter — the unbridged share of the unpaired half runs from
+  3.1% (Seoudi) to 31.4% (Amazon Now) — so the row hover states how many were excluded.
 * **Never sum "They only" across rows** — one competitor product can bridge to several of
   our subcategories.
+* **"Ours only" is a ceiling, not the mirror of "They only".** It is every SKU of ours with
+  no match at that competitor, so it counts what they genuinely do not stock together with
+  what we merely failed to match. The row hover splits it three ways — confirmed not stocked,
+  likely a matching miss (similarity ≥ 0.85), never ruled either way — because the mix
+  decides whether it is an assortment story or a matching backlog. Amazon is the cautionary
+  row: 10,198 unmatched, only 1,901 confirmed.
 
 ---
 

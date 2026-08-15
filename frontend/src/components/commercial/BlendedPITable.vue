@@ -165,7 +165,7 @@
             </td>
             <td v-if="groupBy === 'sub_category'" class="px-3 py-1.5 text-body text-center font-mono">
               <span :class="rowCompOnly(row) > 0 ? 'text-amber-700 font-semibold' : 'text-grey-300'"
-                    :title="`Competitor products with no link to anything of ours, placed here by the category bridge${selectedCompetitor ? ` (${selectedCompetitor})` : ' (all competitors)'}`">
+                    :title="`Competitor products with no link to anything in our tracked range, placed here by the category bridge${selectedCompetitor ? ` (${selectedCompetitor})` : ' (all competitors)'}.\nA few are matched, but only to Breadfast products the tool does not track, so from here they count as products we do not carry.`">
                 {{ rowCompOnly(row) > 0 ? rowCompOnly(row).toLocaleString() : '—' }}
               </span>
             </td>

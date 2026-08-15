@@ -898,10 +898,35 @@ rec_flags AS (
 -- ── NEW 6 ▸ PAIRED KEYS + PAIR FRESHNESS (both from the daily fact) ─────────
 -- Competitor products already represented on a Breadfast row, so comp-only
 -- counts are never inflated.
+--
+-- "Represented on a Breadfast row" is the operative phrase, and it is why this
+-- joins final_product_data rather than reading competitor_mapping flat. A
+-- competitor product can be matched to a Breadfast product this tool does not
+-- track -- the universe is product_type='single' inside the top 80% of revenue,
+-- so a match to a bundle or a long-tail SKU is real but has no row here. Read
+-- flat, such a product was excluded from the competitor-only branch (it is
+-- matched) while never appearing on a Breadfast row either (no row exists), so
+-- it fell out of the table entirely: 827 of Talabat's active products, 628 of
+-- Seoudi's, 127 of Amazon's.
+--
+-- That was invisible while "their catalogue" was a pre-aggregated total. Now
+-- that the paired and unpaired halves are counted to reconcile against it, the
+-- hole is load-bearing: without this gate the two halves add up to 94.7% of
+-- Talabat's catalogue and no filter can explain the missing 5.3%.
+--
+-- So the gate is reachability, and the products that fail it become competitor-only
+-- rows. That is a deliberate call: from this tool's point of view a product whose
+-- only counterpart is outside the tracked range is one we do not carry. It raises
+-- "They only" by 0.4-8.2% depending on the competitor.
 paired_comp_keys AS (
-    SELECT DISTINCT competitor_id, competitor_product_key
-    FROM competitor_mapping
-    WHERE competitor_product_key IS NOT NULL
+    SELECT DISTINCT cm.competitor_id, cm.competitor_product_key
+    FROM competitor_mapping AS cm
+    INNER JOIN (
+        SELECT DISTINCT product_id, competitor_id FROM final_product_data
+    ) AS reachable
+        ON  reachable.competitor_id = cm.competitor_id
+        AND reachable.product_id    = cm.bf_product_id
+    WHERE cm.competitor_product_key IS NOT NULL
 ),
 -- Was the matched competitor product seen recently? Uses the daily fact's own
 -- days_since_crawl gate (competitor_clean.is_recent_competitor), so freshness
@@ -940,8 +965,20 @@ SELECT
                 AND COALESCE(rf.has_false_rec, FALSE) )
       AND rf.best_similarity_in_portfolio >= 0.85 ) AS is_potential_match,
     rf.best_similarity_in_portfolio,
-    -- competitor-side columns are null on Breadfast rows
-    CAST(NULL AS STRING)  AS competitor_product_key,
+    -- The matched competitor product's key. Was hard-coded NULL, which made the
+    -- PAIRED half of a competitor's catalogue invisible to the app: comp_catalogue
+    -- holds only UNPAIRED products, so "their catalogue" could only ever be the
+    -- pre-aggregated per-competitor scalar, unnarrowable by category. With the key
+    -- present, the two sides PARTITION the active catalogue and the app can count
+    -- DISTINCT keys across whatever scope is filtered. DISTINCT matters: one of
+    -- their products can be matched to several of ours.
+    cmk.competitor_product_key AS competitor_product_key,
+    -- Is that matched product actually in the live deduped catalogue? Not the same
+    -- question as matched_comp_active_7d, which is the daily fact's freshness gate.
+    -- This one is comp_products.is_active_7d, i.e. exactly the predicate behind
+    -- comp_active_products — so counting on it is what keeps the partition adding
+    -- up to that total instead of drifting from it.
+    (COALESCE(mcp.is_active_7d, 0) = 1) AS matched_comp_in_catalogue,
     CAST(NULL AS STRING)  AS comp_brand_name,
     CAST(NULL AS STRING)  AS category_level_1,
     CAST(NULL AS STRING)  AS category_level_2,
@@ -964,6 +1001,13 @@ LEFT JOIN comp_brand           AS cb ON cb.competitor_id = f.competitor_id AND c
 LEFT JOIN bf_pair_freshness    AS fr ON fr.competitor_id = f.competitor_id AND fr.bf_product_id = f.product_id
 LEFT JOIN rec_flags            AS rf ON rf.competitor_id = f.competitor_id AND rf.bf_product_id = f.product_id
 LEFT JOIN competitor_catalogue AS cc ON cc.competitor_id = f.competitor_id
+-- Both one row per join key, so neither can fan the Breadfast grain out:
+-- competitor_mapping is GROUP BY (bf_product_id, competitor_id), and comp_products
+-- is one row per (competitor_id, competitor_product_key) after the dedup.
+LEFT JOIN competitor_mapping   AS cmk ON cmk.competitor_id = f.competitor_id
+                                     AND cmk.bf_product_id = f.product_id
+LEFT JOIN comp_products        AS mcp ON mcp.competitor_id = f.competitor_id
+                                     AND mcp.competitor_product_key = cmk.competitor_product_key
 
 UNION ALL
 
@@ -1034,6 +1078,11 @@ SELECT
     CAST(NULL AS NUMERIC) AS best_similarity_in_portfolio,
     -- competitor-side detail
     cp.competitor_product_key,
+    -- FALSE, not NULL: these rows ARE the unpaired half of the active catalogue
+    -- and are counted as such. The flag exists to pick out the paired half on
+    -- Breadfast rows, so anything counting on it here would double-count.
+    -- Same ordinal position as the Breadfast branch — UNION ALL matches by order.
+    FALSE                 AS matched_comp_in_catalogue,
     cp.comp_brand_name,
     cp.category_level_1,
     cp.category_level_2,

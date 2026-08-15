@@ -76,13 +76,13 @@
                    number changes by up to 4x between the two and the columns
                    either side of it are always category-scoped. -->
               <span class="block text-micro font-normal normal-case tracking-normal"
-                    :class="sharedOnly ? 'text-brand-primary' : 'text-grey-400'">
-                {{ sharedOnly ? 'shared brands' : 'all brands' }}
+                    :class="isNarrowed ? 'text-brand-primary' : 'text-grey-400'">
+                {{ catalogueBasis }}
               </span>
             </th>
             <th :class="TH_R">
               <span class="inline-flex items-center gap-1">They only
-                <HelpTooltip text="Their products with no link to anything of ours. Never sum across views: one competitor product can bridge to several of our subcategories." />
+                <HelpTooltip text="Their products with no link to anything in our tracked range. That last phrase is doing work: a few of these ARE matched, but only to Breadfast products the tool does not track — bundles and long-tail SKUs outside the top 80% of revenue — and from here those count as products we do not carry. Never sum across views: one competitor product can bridge to several of our subcategories." />
               </span>
             </th>
             <th :class="TH_R">
@@ -209,30 +209,52 @@ function devClass(v) {
 }
 const sharedOnly = computed(() => props.brandScope === 'shared')
 
-// The only column sourced from a competitor-level BigQuery scalar rather than
-// from the filtered rows, so it cannot honour category or vertical however it is
-// written. Under Shared-only it swaps to the shared-brand count, which IS
-// brand-scoped — so the honest caveat shrinks from "no filter narrows this" to
-// "the category filters do not narrow this", and the label has to change with it.
-const catalogueHelp = computed(() => sharedOnly.value
-  ? 'Their live catalogue restricted to brands we also carry — computed in BigQuery over their whole catalogue, so it respects the brand scope but still spans every category. Unlike the columns beside it, the category and vertical filters do not narrow it.'
-  : 'Their ENTIRE live catalogue, across every category and every brand. This is the one column no filter narrows. Turn on Shared-only to see just the part in brands we carry.')
-
+// Their catalogue is now counted from the filtered rows — the paired half off our
+// side, the unpaired half off theirs — so it narrows like every other column. No
+// prop is needed to know whether it has: if the scoped count is below the
+// competitor-level total, a filter is biting.
 function catalogueVal(row) {
-  return sharedOnly.value ? row.comp_products_shared : row.comp_products
+  return row.comp_products_in_scope ?? row.comp_products
 }
+const isNarrowed = computed(() => rows.value.some(r =>
+  r.comp_products_in_scope != null && r.comp_products > 0
+  && r.comp_products_in_scope < r.comp_products))
+
+const catalogueBasis = computed(() => {
+  if (!isNarrowed.value) return 'all brands'
+  return sharedOnly.value ? 'shared brands, in scope' : 'in current scope'
+})
+
+const catalogueHelp = computed(() => isNarrowed.value
+  ? 'Their live catalogue as narrowed by the filters above: the products of theirs we matched, plus the products of theirs we did not, both counted inside the current scope. Products of theirs that the category bridge cannot attribute to one of our subcategories are excluded as soon as you filter by category or subcategory — they cannot be placed, so counting them would inflate whichever categories you happened to pick. Hover a row for how many were excluded.'
+  : 'Their ENTIRE live catalogue, across every category and brand. Filter by category, subcategory or brand scope and this narrows with everything else.')
+
 function catalogueTitle(row) {
   const all = row.comp_products || 0
-  const shared = row.comp_products_shared || 0
+  const scope = row.comp_products_in_scope ?? all
   if (!all) return `Nothing crawled for ${row.competitor_name}`
-  const pct = Math.round((shared / all) * 1000) / 10
-  return [
+  const pct = v => `${Math.round((v / all) * 1000) / 10}%`
+  // Deliberately NOT showing comp_products_shared alongside the scoped count.
+  // The two disagree by up to 413 products because they ask different questions:
+  // the BigQuery scalar tests THEIR product's brand label against our brand list,
+  // while the scoped count's matched half tests OUR product's brand, and the two
+  // brand strings do not always survive a match intact. The scoped count is the
+  // one that composes with every other filter, so it is the one on screen; the
+  // scalar stays in the export where its column name can say what it is.
+  const lines = [
     `${row.competitor_name} live catalogue`,
-    `All brands: ${all.toLocaleString()}`,
-    `In brands we carry: ${shared.toLocaleString()} (${pct}%)`,
-    '',
-    'Spans every category regardless of the category filters.',
-  ].join('\n')
+    `All brands, all categories: ${all.toLocaleString()}`,
+  ]
+  if (scope !== all) {
+    lines.push(`In the current scope: ${scope.toLocaleString()} (${pct(scope)})`)
+    lines.push('', `${(all - scope).toLocaleString()} excluded — outside the filters, or with no`,
+               'category mapping to attribute them to one of our subcategories.')
+  } else {
+    // Worth stating plainly: with no filter this equals their true catalogue,
+    // because the matched and unmatched halves partition it exactly.
+    lines.push('', 'Matched and unmatched halves account for all of it.')
+  }
+  return lines.join('\n')
 }
 
 // "Ours only" is one number covering three very different situations, and the
@@ -315,7 +337,8 @@ function exportData() {
     'POTENTIAL MATCH': r.potential_match,
     'POTENTIAL %': r.potential_pct,
     'COMP PRODUCTS (ALL CATEGORIES)': r.comp_products,
-    'COMP PRODUCTS (SHARED BRANDS)': r.comp_products_shared,
+    'COMP PRODUCTS (THEIR BRAND IN OUR RANGE)': r.comp_products_shared,
+    'COMP PRODUCTS (CURRENT SCOPE)': r.comp_products_in_scope,
     'COMP-ONLY PRODUCTS': r.comp_only_products,
     'OURS-ONLY PRODUCTS (UNMATCHED)': r.our_only_products,
     'SHARED BRANDS': r.shared_brands,

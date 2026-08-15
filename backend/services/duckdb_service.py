@@ -475,7 +475,16 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             -- is what lets the Shared-only scope narrow the catalogue column
             -- instead of leaving it as the one figure no filter touches.
             MAX(comp_active_products)               AS comp_active_products,
-            MAX(comp_active_products_shared)        AS comp_active_products_shared
+            MAX(comp_active_products_shared)        AS comp_active_products_shared,
+            -- The matched competitor product, so their catalogue can be COUNTed
+            -- under the current filters rather than only read off the two totals
+            -- above. Constant within (product_id, competitor_id), hence ANY_VALUE.
+            -- This is the one VARCHAR added to global_base; kept because the count
+            -- has to be DISTINCT (one of their products can match several of ours)
+            -- and it must sit at the collapsed grain, where action_type is the
+            -- recomputed one.
+            ANY_VALUE(competitor_product_key)       AS competitor_product_key,
+            BOOL_OR(matched_comp_in_catalogue)      AS matched_comp_in_catalogue
             -- Deliberately NOT carried: mapped_bf_sub_category. On
             -- row_type='breadfast' rows it only echoes sub_category_name, so it
             -- adds no information, and _apply_filters materializes every
@@ -1678,6 +1687,13 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 -- returned; the UI shows this one while Shared-only is active, so
                 -- the column stops being the only figure the scope cannot narrow.
                 MAX(comp_active_products_shared)                                  AS comp_products_shared,
+                -- The PAIRED half of their live catalogue, inside the current
+                -- scope. DISTINCT is load-bearing: the source is one row per
+                -- (product, competitor), so a competitor product matched to three
+                -- of our products appears three times. Added to the unpaired half
+                -- from comp_catalogue, this is their catalogue under the filters.
+                COUNT(DISTINCT competitor_product_key) FILTER (
+                    WHERE matched_comp_in_catalogue)                              AS comp_paired_in_scope,
                 -- Price position, so one table can carry both stories. Same
                 -- quantity-weighted blend as get_executive_dashboard's
                 -- competitor_pi and get_blended_pi_by_subcategory; verified equal
@@ -1724,6 +1740,14 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             ROUND(100.0 * b.potential_match / NULLIF(b.bf_products, 0), 1)   AS potential_pct,
             CAST(COALESCE(b.comp_products, 0)        AS INTEGER) AS comp_products,
             CAST(COALESCE(b.comp_products_shared, 0) AS INTEGER) AS comp_products_shared,
+            -- Their catalogue as narrowed by the current filters: the paired half
+            -- from our side plus the unpaired half from theirs. The two partition
+            -- the active catalogue, so with no filters applied this reproduces
+            -- comp_products; with a category or subcategory filter it counts only
+            -- what the bridge can attribute, which is why unbridged products drop
+            -- out exactly when a category filter is on.
+            CAST(COALESCE(b.comp_paired_in_scope, 0)
+                 + COALESCE(c.comp_only_products, 0) AS INTEGER) AS comp_products_in_scope,
             CAST(COALESCE(c.comp_only_products, 0) AS INTEGER) AS comp_only_products,
             CAST(b.our_only_products  AS INTEGER) AS our_only_products,
             CAST(b.shared_brands      AS INTEGER) AS shared_brands,
