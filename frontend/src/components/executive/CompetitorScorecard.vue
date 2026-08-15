@@ -39,7 +39,7 @@
           <tr class="bg-grey-50 border-b border-grey-100">
             <th :class="TH_L" rowspan="2" class="sticky left-0 bg-grey-50 z-10 align-bottom">Competitor</th>
             <th :class="GROUP" colspan="3">Price position</th>
-            <th :class="[GROUP, 'border-l border-grey-200']" colspan="6">Match coverage</th>
+            <th :class="[GROUP, 'border-l border-grey-200']" colspan="8">Match coverage</th>
             <th :class="[GROUP, 'border-l border-grey-200']" colspan="4">Assortment overlap</th>
           </tr>
           <tr class="bg-grey-50 border-b border-grey-100">
@@ -58,6 +58,18 @@
               </span>
             </th>
             <th :class="[TH_R, 'border-l border-grey-200']">Our SKUs</th>
+            <th :class="TH_R">
+              <span class="inline-flex items-center gap-1">Eligible
+                <HelpTooltip text="Our products worth pricing against: the top 80% of revenue, excluding anything with no sellable price. This is the DENOMINATOR behind Util %. It reads the same on every row by construction — BigQuery emits every product×competitor pair, so the eligible set does not depend on which competitor you are looking at. It does move with the filters above." />
+              </span>
+            </th>
+            <!-- Used sits beside Eligible, not in funnel order after Fresh, so the
+                 Util % in the Price position group can be checked by eye. -->
+            <th :class="TH_R">
+              <span class="inline-flex items-center gap-1">Used
+                <HelpTooltip text="Our eligible products that actually have a usable fresh price against this competitor, so they carry a PI. The NUMERATOR behind Util % — Used ÷ Eligible is the column two to the left. A subset of Matched: a product has to be matched AND both sides priced recently to be used." />
+              </span>
+            </th>
             <th :class="TH_R">Matched</th>
             <th :class="TH_C" style="min-width: 118px">Matched %</th>
             <th :class="TH_R">
@@ -132,6 +144,8 @@
 
             <!-- Match coverage -->
             <td :class="[TD_N, 'border-l border-grey-100 text-grey-700']">{{ n(row.bf_products) }}</td>
+            <td :class="[TD_N, 'text-grey-600']">{{ n(row.eligible_products) }}</td>
+            <td :class="[TD_N, 'text-grey-700 font-semibold']" :title="usedTitle(row)">{{ n(row.used_products) }}</td>
             <td :class="[TD_N, 'text-green-600']">{{ n(row.matched) }}</td>
             <td class="px-4 py-3"><Bar :pct="row.mapping_pct" /></td>
             <td :class="[TD_N, row.matched_fresh === 0 && row.matched > 0 ? 'text-red-500 font-semibold' : 'text-grey-600']"
@@ -277,6 +291,19 @@ function ourOnlyTitle(row) {
     `They confirmably do not stock it: ${confirmed.toLocaleString()}`,
     `Likely a matching miss (similarity ≥ 0.85): ${potential.toLocaleString()}`,
     `Never ruled either way: ${unresolved.toLocaleString()}`,
+  ].join('\n')
+}
+// Used is bounded twice over — by Eligible and by Matched — and which bound is
+// binding says what to do about it: a matching problem or a freshness problem.
+function usedTitle(row) {
+  const used = row.used_products || 0
+  const elig = row.eligible_products || 0
+  const matched = row.matched || 0
+  if (!used) return `Nothing priced against ${row.competitor_name}`
+  return [
+    `${used.toLocaleString()} of our products carry a PI against ${row.competitor_name}`,
+    `${elig.toLocaleString()} eligible → Util ${elig ? Math.round((used / elig) * 1000) / 10 : 0}%`,
+    `${matched.toLocaleString()} matched → ${matched ? Math.round((used / matched) * 1000) / 10 : 0}% of matches are priced and fresh`,
   ].join('\n')
 }
 function staleTitle(row) {
