@@ -31,6 +31,7 @@
         <EmptyState v-else :icon="PieChartIcon" title="No classification data" message="No data available." />
       </div>
 
+      <!-- The marker ring needs saying out loud, or it reads as a stray arc. -->
       <!-- Summary legend -->
       <div class="w-44 shrink-0 flex flex-col justify-center gap-2 pr-4">
         <div v-for="item in legendItems" :key="item.label" class="flex items-start gap-2">
@@ -50,6 +51,17 @@
                  :title="`${item.notShared.toLocaleString()} of these ${item.count.toLocaleString()} are in brands NO competitor in scope carries. Nothing about the matcher can reach them — the brand is simply not on their shelf.`">
               {{ item.notSharedPct }}% brand not carried
             </div>
+          </div>
+        </div>
+        <div v-if="brandUnreachable > 0"
+             class="flex items-start gap-2 pt-2 mt-1 border-t border-grey-100">
+          <div class="w-2.5 h-2.5 rounded-sm shrink-0 mt-1 bg-amber-600"></div>
+          <div class="min-w-0">
+            <div class="text-micro text-grey-500 leading-tight">Outer arc</div>
+            <div class="text-caption font-semibold text-grey-800 leading-tight">
+              {{ brandUnreachable.toLocaleString() }} brand not carried
+            </div>
+            <div class="text-micro text-grey-400 leading-tight">unreachable by matching</div>
           </div>
         </div>
       </div>
@@ -120,6 +132,11 @@ const d = computed(() => {
         not_mapped_pl_no_potential: entry.no_potential_pl || 0,
         not_mapped_not_pl_no_match: entry.no_match_not_pl || 0,
         not_mapped_pl_no_match: entry.no_match_pl || 0,
+        // This remap lists every key explicitly, so anything added upstream is
+        // silently dropped here — which is exactly how the brand split showed
+        // 0% for a competitor while the API returned it correctly.
+        no_match_not_shared_brand: entry.no_match_not_shared_brand || 0,
+        no_potential_not_shared_brand: entry.no_potential_not_shared_brand || 0,
       }
     }
   }
@@ -200,6 +217,35 @@ const SEGMENT_DATA = computed(() => {
   ].filter(s => s.value > 0)
 })
 
+// Runs in lockstep with SEGMENT_DATA: same order, same total, so the marker arc
+// lands on the exact slice it annotates. Transparent everywhere the question
+// does not apply -- Mapped and Potential are reachable by definition.
+const BRAND_RING = computed(() => {
+  const v = d.value
+  const clear = '#00000000'
+  const mark = '#D97706'
+  const out = []
+  for (const seg of SEGMENT_DATA.value) {
+    const notShared =
+      seg.name === 'Confirmed no match' ? (v.no_match_not_shared_brand || 0) :
+      seg.name === 'No likely match'    ? (v.no_potential_not_shared_brand || 0) : 0
+    const capped = Math.min(notShared, seg.value)
+    if (capped > 0) {
+      out.push({ name: `${seg.name} — brand not carried`, value: capped, itemStyle: { color: mark } })
+    }
+    if (seg.value - capped > 0) {
+      out.push({ name: seg.name, value: seg.value - capped, itemStyle: { color: clear } })
+    }
+  }
+  return out
+})
+
+const brandUnreachablePct = computed(() =>
+  total.value > 0 ? Math.round(brandUnreachable.value / total.value * 1000) / 10 : 0)
+
+const brandUnreachable = computed(() =>
+  (d.value.no_match_not_shared_brand || 0) + (d.value.no_potential_not_shared_brand || 0))
+
 const chartOption = computed(() => {
   const t = total.value || 1
   return {
@@ -247,6 +293,23 @@ const chartOption = computed(() => {
           textAlign: 'center',
         },
       },
+      // The headline the outer arc is making: how much of the whole range is
+      // out of reach because the brand is not on their shelf. Sits under the
+      // centre figure so the two read as a pair -- what we can compare, and what
+      // we never will.
+      ...(brandUnreachablePct.value > 0 ? [{
+        type: 'text',
+        left: 'center',
+        top: '64%',
+        style: {
+          text: `${brandUnreachablePct.value}% brand not carried`,
+          fontSize: 10,
+          fontWeight: 600,
+          fontFamily: 'Geist, system-ui, sans-serif',
+          fill: '#D97706',
+          textAlign: 'center',
+        },
+      }] : []),
     ],
     series: [{
       type: 'pie',
@@ -263,6 +326,17 @@ const chartOption = computed(() => {
         borderColor: '#fff',
         borderWidth: 2,
       },
+    }, {
+      // Brand-unreachable marker ring.
+      type: 'pie',
+      radius: ['80%', '86%'],
+      center: ['50%', '50%'],
+      data: BRAND_RING.value,
+      label: { show: false },
+      labelLine: { show: false },
+      silent: true,                 // annotation, not a target
+      itemStyle: { borderWidth: 0 },
+      animation: false,
     }],
   }
 })
