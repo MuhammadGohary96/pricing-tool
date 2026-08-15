@@ -47,7 +47,7 @@
             </th>
             <th :class="TH_R">
               <span class="inline-flex items-center gap-1">
-                Coverage %
+                Util %
                 <HelpTooltip text="Products with a usable fresh price on both sides, over the eligible set (top 80% of revenue)." />
               </span>
             </th>

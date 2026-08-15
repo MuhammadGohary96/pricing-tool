@@ -370,24 +370,65 @@ def _portfolio_sheet(rows, competitor):
             {"field": "best_similarity", "header": "BEST_SIMILARITY_SCORE", "format": "percent2",
              "width": 18},
         ],
-        "rows": [{
-            "brand": r.get("brand_name") or r.get("comp_brand_name") or "",
-            "side": r.get("_side"),
-            "status": r.get("status") or "",
-            "bf_product_name": r.get("product_name") or "",
-            "bf_sub_category": r.get("sub_category_name") or "",
-            "mapped_bf_sub_category": r.get("mapped_bf_sub_category") or "",
-            "bridge_level": r.get("bridge_level") or "",
-            "comp_product_name": r.get("comp_product_name") or "",
-            "comp_brand_name": r.get("comp_brand_name") or "",
-            "category_level_1": r.get("category_level_1") or "",
-            "category_level_2": r.get("category_level_2") or "",
-            "category_level_3": r.get("category_level_3") or "",
-            "is_shared_brand": r.get("is_shared_brand"),
-            "matched_comp_active_7d": r.get("matched_comp_active_7d"),
-            "is_potential_match": r.get("is_potential_match"),
-            "best_similarity": r.get("best_similarity_in_portfolio"),
-        } for r in rows],
+        "rows": [_portfolio_row(r) for r in rows],
+    }
+
+
+def _portfolio_status(r: dict) -> str:
+    """The label the screen shows, reproduced for the file.
+
+    Not returned by the API -- the UI derives it -- so the export used to read a
+    key that never existed and wrote an empty STATUS column for every row.
+    """
+    if r.get("_side") == "Competitor":
+        return "They only"
+    if r.get("is_mapped"):
+        return "Mapped" if r.get("matched_comp_active_7d") else "Mapped · stale"
+    if r.get("is_confirmed_no_match"):
+        return "Confirmed no match"
+    if r.get("is_potential_match"):
+        return "Potential match"
+    return "Unresolved"
+
+
+def _portfolio_row(r: dict) -> dict:
+    """One Portfolio row, mapped SIDE-AWARE.
+
+    The two populations arrive under the SAME key names -- `product_name` is our
+    product on a Breadfast row and theirs on a competitor row, `brand_name`
+    likewise, and `sub_category_name` is our subcategory on one side and the
+    BRIDGED one on the other. Reading them blind put their product names in the
+    BF column and left MAPPED_BF_SUB_CATEGORY, COMP_PRODUCT_NAME and
+    COMP_BRAND_NAME empty, because those keys are never present under those
+    names at all.
+    """
+    theirs = r.get("_side") == "Competitor"
+    # Their brand for one of OUR products comes from the brand-variants string
+    # ("Nestle:45|Paradise:39"); take the biggest, which is first.
+    variants = _variant_names(r.get("comp_brand_variants"))
+    return {
+        # Whosever brand it is: ours on a Breadfast row, theirs on a competitor
+        # row. The SIDE column says which, so one key serves both.
+        "brand": r.get("brand_name") or "",
+        "side": r.get("_side"),
+        "status": _portfolio_status(r),
+        "bf_product_name": "" if theirs else (r.get("product_name") or ""),
+        "bf_sub_category": "" if theirs else (r.get("sub_category_name") or ""),
+        # Ours sits in its own subcategory; theirs is placed by the bridge, and
+        # the API returns that placement as sub_category_name.
+        "mapped_bf_sub_category": r.get("sub_category_name") or "",
+        "bridge_level": (r.get("bridge_level") or "") if theirs else "bf_own",
+        "comp_product_name": (r.get("product_name") if theirs
+                              else r.get("competitor_product_name")) or "",
+        "comp_brand_name": (r.get("brand_name") if theirs
+                            else (variants.split(", ")[0] if variants else "")) or "",
+        "category_level_1": r.get("category_level_1") or "",
+        "category_level_2": r.get("category_level_2") or "",
+        "category_level_3": r.get("category_level_3") or "",
+        "is_shared_brand": r.get("is_shared_brand"),
+        "matched_comp_active_7d": r.get("matched_comp_active_7d"),
+        "is_potential_match": r.get("is_potential_match"),
+        "best_similarity": r.get("best_similarity"),
     }
 
 
