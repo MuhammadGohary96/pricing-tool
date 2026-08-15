@@ -1555,7 +1555,27 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 MAX(matched_comp_active_7d)         AS matched_active,
                 MAX(best_similarity_in_portfolio)   AS best_similarity,
                 ANY_VALUE(total_revenue)            AS rev,
-                ANY_VALUE(avg_daily_quantity)       AS qty
+                ANY_VALUE(avg_daily_quantity)       AS qty,
+                -- Price, PI and action against the competitor in scope.
+                --
+                -- These are the only columns here that are NOT safe to pool. A
+                -- product has a different price, PI and action against each
+                -- competitor, so with several in scope ANY_VALUE would return an
+                -- arbitrary one. The Gap tab selects exactly one competitor --
+                -- every number on the screen is "against whom" -- so the guard
+                -- is to emit them only when that is true, rather than to show a
+                -- number whose meaning depends on which competitor DuckDB
+                -- happened to reach first.
+                CASE WHEN COUNT(DISTINCT competitor_name) = 1
+                     THEN ANY_VALUE(bf_sale_price) END          AS bf_sale_price,
+                CASE WHEN COUNT(DISTINCT competitor_name) = 1
+                     THEN ANY_VALUE(competitor_sale_price) END  AS comp_sale_price,
+                CASE WHEN COUNT(DISTINCT competitor_name) = 1
+                     THEN ANY_VALUE(sale_PI) END                AS sale_PI,
+                CASE WHEN COUNT(DISTINCT competitor_name) = 1
+                     THEN ANY_VALUE(action_type) END            AS action_type,
+                MAX(used_product)                   AS used_product,
+                MAX(eligible_product)               AS eligible_product
             FROM bf_scoped
             GROUP BY product_id
         ),
@@ -2125,15 +2145,28 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 potential     AS is_potential_match,
                 matched_active AS matched_comp_active_7d,
                 is_shared_brand,
+                shared_by_match,
+                comp_brand_variants,
                 best_similarity,
                 rev           AS total_revenue,
-                qty           AS avg_daily_quantity
+                qty           AS avg_daily_quantity,
+                bf_sale_price,
+                comp_sale_price,
+                sale_PI,
+                action_type,
+                used_product,
+                eligible_product
             FROM bf_prod
             """
             sortable = {
                 "product_name": "product_name", "brand_name": "brand_name",
                 "sub_category_name": "sub_category_name", "total_revenue": "rev",
                 "avg_daily_quantity": "qty", "best_similarity": "best_similarity",
+                # The new price columns are sortable too: "which of our products
+                # is this competitor beating us on" is the question the PI column
+                # exists to answer, and it is useless unsorted.
+                "sale_PI": "sale_PI", "bf_sale_price": "bf_sale_price",
+                "comp_sale_price": "comp_sale_price",
             }
             default_sort, search_cols = "rev", ["product_name", "brand_name"]
             source = "bf_prod"

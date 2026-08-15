@@ -88,10 +88,23 @@
           <tr>
             <th :class="TH_L">Our product</th>
             <th :class="TH_L">Brand</th>
+            <th :class="TH_L">
+              <span class="inline-flex items-center gap-1">Their brand
+                <HelpTooltip text="What this competitor calls the brand, taken from the products we actually matched. Blank where nothing of this brand is mapped here. It is how you see that our Froneri is their Nestle and Paradise, or that they spell 7up three ways." />
+              </span>
+            </th>
             <th :class="TH_L">Subcategory</th>
             <th :class="TH_L">Tier</th>
             <th :class="TH_L">Match state</th>
             <th :class="TH_R">Best similarity</th>
+            <th :class="TH_R">Our price</th>
+            <th :class="TH_R">Their price</th>
+            <th :class="TH_R" class="cursor-pointer select-none" @click="$emit('sort', 'sale_PI')">
+              <span class="inline-flex items-center gap-1">PI
+                <HelpTooltip text="Our price divided by theirs, so ABOVE 1.00 means we are more expensive. Only the mapped products have one — an unmatched product has no competitor price to compare against." />
+              </span>
+            </th>
+            <th :class="TH_L">Action</th>
             <th :class="TH_R" class="cursor-pointer select-none" @click="$emit('sort', 'total_revenue')">Revenue/day</th>
           </tr>
         </thead>
@@ -104,6 +117,29 @@
             <td class="px-4 py-3 text-body text-grey-700">
               {{ row.brand_name || '—' }}
               <span v-if="!row.is_shared_brand" class="ml-1 text-caption text-amber-600" title="The competitor does not carry this brand at all">·&nbsp;brand not stocked</span>
+              <!-- Only shown when the overlap was PROVED rather than read off the
+                   name, because that is the case a reader would otherwise
+                   dispute: the two brand strings do not match. -->
+              <span v-else-if="row.shared_by_match"
+                    class="ml-1 text-caption text-green-700"
+                    title="The brand names do not match, but at least half of this brand's products are mapped here — so they stock it under another name.">·&nbsp;by match</span>
+            </td>
+            <!-- This column is BRAND-level, not product-level: it is what the
+                 competitor calls the brand, inferred from whichever products of
+                 that brand we did match. On an unmatched row it is therefore
+                 context, not a counterpart -- our Breadfast items show "talabat"
+                 because the two private labels map to each other, not because
+                 that product was matched. Dimmed there so it cannot be misread
+                 as this product's twin. -->
+            <td class="px-4 py-3 text-caption max-w-[170px]"
+                :class="row.is_mapped ? 'text-grey-500' : 'text-grey-300 italic'">
+              <span v-if="theirBrands(row).length" :title="theirBrandTitle(row)" class="cursor-help">
+                {{ theirBrands(row).slice(0, 2).join(', ')
+                }}<span v-if="theirBrands(row).length > 2"
+                        class="ml-1 px-1 py-px rounded-full bg-grey-100 text-grey-500 font-semibold"
+                  >+{{ theirBrands(row).length - 2 }}</span>
+              </span>
+              <span v-else class="text-grey-300">—</span>
             </td>
             <td class="px-4 py-3 text-body text-grey-700">{{ row.sub_category_name }}</td>
             <td class="px-4 py-3"><TierBadge v-if="row.global_tier" :tier="row.global_tier" /></td>
@@ -112,6 +148,29 @@
             </td>
             <td class="px-4 py-3 text-right text-body font-mono text-grey-600">
               {{ row.best_similarity != null ? `${Math.round(row.best_similarity * 100)}%` : '—' }}
+            </td>
+            <td class="px-4 py-3 text-right text-body font-mono text-grey-700">{{ money(row.bf_sale_price) }}</td>
+            <td class="px-4 py-3 text-right text-body font-mono text-grey-700">{{ money(row.comp_sale_price) }}</td>
+            <td class="px-4 py-3 text-right">
+              <span v-if="row.sale_PI != null"
+                    class="font-mono text-body font-bold px-1.5 py-0.5 rounded-md"
+                    :class="piBgClass(row.sale_PI)">
+                <span :class="piTextClass(row.sale_PI)">{{ piArrow(row.sale_PI) }}</span>
+                {{ row.sale_PI.toFixed(2) }}
+              </span>
+              <span v-else class="text-grey-300">—</span>
+            </td>
+            <td class="px-4 py-3">
+              <span v-if="row.action_type" class="text-caption text-grey-600">{{ row.action_type }}</span>
+              <span v-else class="text-grey-300 text-caption">—</span>
+              <!-- Mapped but not counted in the blended PI is the state people
+                   query most: the match exists, the number does not move. -->
+              <div v-if="row.is_mapped && !row.used_product" class="text-caption text-amber-600"
+                   :title="row.eligible_product
+                     ? 'Eligible, but one side of the price is stale, so it carries no PI.'
+                     : 'Outside the eligible range (top 80% of revenue), so it never carries a PI.'">
+                not in PI
+              </div>
             </td>
             <td class="px-4 py-3 text-right text-body font-mono text-grey-900">{{ n(row.total_revenue) }}</td>
           </tr>
@@ -142,6 +201,7 @@ import ExportButton from '../shared/ExportButton.vue'
 import EmptyState from '../shared/EmptyState.vue'
 import HelpTooltip from '../shared/HelpTooltip.vue'
 import TierBadge from '../shared/TierBadge.vue'
+import { piTextClass, piBgClass, piArrow } from '../../utils/piColor'
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
@@ -180,6 +240,33 @@ function confClass(v, level) {
   if (v >= 0.4) return 'bg-amber-50 text-amber-700'
   return 'bg-grey-100 text-grey-600'
 }
+// comp_brand_variants is "Nestle:45|Paradise:39", ranked and capped upstream.
+// Same encoding the brand table parses; the counts are dropped here because on a
+// single product row the question is WHICH brand it landed on, not how many.
+function theirBrands(row) {
+  const raw = row.comp_brand_variants
+  if (!raw) return []
+  return String(raw).split('|').map(part => {
+    const i = part.lastIndexOf(':')
+    return i <= 0 ? '' : part.slice(0, i).trim()
+  }).filter(Boolean)
+}
+function theirBrandTitle(row) {
+  const v = theirBrands(row)
+  if (!v.length) return ''
+  const head = `${row.brand_name} is shelved here as:`
+  const foot = row.is_mapped
+    ? ''
+    : '\n\nBrand-level: this product itself is not matched, so this is what\nthey call the BRAND, not a counterpart for this product.'
+  return `${head}\n\n  ${v.join('\n  ')}${foot}`
+}
+
+function money(v) {
+  return v == null ? '—' : Number(v).toLocaleString(undefined, {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  })
+}
+
 function stateLabel(row) {
   if (row.is_mapped) return row.matched_comp_active_7d ? 'Matched' : 'Matched · stale'
   if (row.is_confirmed_no_match) return 'Confirmed no match'
