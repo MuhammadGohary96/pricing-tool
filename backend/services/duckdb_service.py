@@ -1680,6 +1680,63 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
     # ------------------------------------------------------------------
     # EXECUTIVE — competitor overview (one row per competitor)
     # ------------------------------------------------------------------
+    def get_category_performance(self, filters: dict | None = None) -> list[dict]:
+        """Blended PI per commercial category, on the same basis as Commercial.
+
+        Overrides the inherited pandas implementation, which read the
+        pre-materialized global_base and applied the filters AFTER the collapse.
+        That is fine for product-level filters and wrong for the competitor one:
+        `bf_sale_price` is COALESCE(bf_eod_sale_price, scd_price) per (product,
+        fp, competitor) row, so the modal chosen across ALL competitors is not
+        the modal within one of them, and filtering afterwards cannot re-choose
+        it. Tomatoes (1Kg) is 35.00 across the board and 44.00 at Talabat, which
+        alone moved "Private Label - Fresh & Frozen - Shaaban" from 1.1252 to
+        0.9945 -- Executive and Commercial disagreeing about the same category,
+        same competitor, same moment.
+
+        _collapsed_source puts the filter INSIDE the collapse, which is what
+        get_blended_pi_by_subcategory has always done. Same fix as the Gap tab.
+
+        `product_count` was also renamed to `used_product_count`, because it
+        counts products carrying a PI, not products in the category -- Beauty
+        read 5 against 311 total. Nothing renders it; it is corrected at the
+        source rather than left as a trap.
+        """
+        source, params, materialize = self._collapsed_source(filters)
+        sql = f"""
+        SELECT
+            commercial_category_name AS category_name,
+            ROUND(SUM(sale_PI * avg_daily_quantity) FILTER (WHERE used_product)
+                  / NULLIF(SUM(avg_daily_quantity) FILTER (WHERE used_product), 0), 4)
+                                                                     AS blended_pi,
+            CAST(COUNT(DISTINCT product_id) FILTER (WHERE used_product) AS INTEGER)
+                                                                     AS used_product_count
+        FROM {source}
+        WHERE commercial_category_name IS NOT NULL
+        GROUP BY 1
+        -- Matches the previous behaviour, which started from used rows only and
+        -- so never emitted a category with nothing priced.
+        HAVING COUNT(DISTINCT product_id) FILTER (WHERE used_product) > 0
+        ORDER BY blended_pi DESC NULLS LAST
+        """
+        with self._duckdb_lock:
+            if materialize:
+                self._duckdb_conn.execute(materialize, params)
+                df = self._duckdb_conn.execute(sql).df()
+            else:
+                df = self._duckdb_conn.execute(sql, params).df()
+
+        out = []
+        for r in df.itertuples(index=False):
+            pi = None if pd.isna(r.blended_pi) else float(r.blended_pi)
+            out.append({
+                "category_name": r.category_name,
+                "blended_pi": pi,
+                "pi_deviation": None if pi is None else round(pi - 1, 4),
+                "used_product_count": int(r.used_product_count),
+            })
+        return out
+
     def get_competitor_overview(self, filters: dict | None = None) -> list[dict]:
         """Matching + assortment coverage per competitor.
 
