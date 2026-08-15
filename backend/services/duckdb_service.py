@@ -1574,8 +1574,20 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                      THEN ANY_VALUE(sale_PI) END                AS sale_PI,
                 CASE WHEN COUNT(DISTINCT competitor_name) = 1
                      THEN ANY_VALUE(action_type) END            AS action_type,
-                MAX(used_product)                   AS used_product,
-                MAX(eligible_product)               AS eligible_product
+                -- The competitor product this one is matched to. Guarded like
+                -- the prices: it is per (product, competitor), and naming a
+                -- counterpart from an unspecified competitor would be worse than
+                -- naming none. Populated for exactly the mapped products.
+                CASE WHEN COUNT(DISTINCT competitor_name) = 1
+                     THEN ANY_VALUE(competitor_product_name) END AS competitor_product_name,
+                -- The three flags Commercial counts, at product grain. They form
+                -- a funnel and are most useful read as one: eligible (in the top
+                -- 80% of revenue) -> updated (both sides priced recently) ->
+                -- used (carries a PI). Whichever one first reads false is why a
+                -- mapped product contributes nothing to the blended figure.
+                MAX(eligible_product)               AS eligible_product,
+                MAX(updated)                        AS updated,
+                MAX(used_product)                   AS used_product
             FROM bf_scoped
             GROUP BY product_id
         ),
@@ -2147,15 +2159,16 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 is_shared_brand,
                 shared_by_match,
                 comp_brand_variants,
+                competitor_product_name,
                 best_similarity,
                 rev           AS total_revenue,
                 qty           AS avg_daily_quantity,
                 bf_sale_price,
                 comp_sale_price,
                 sale_PI,
-                action_type,
-                used_product,
-                eligible_product
+                eligible_product,
+                updated,
+                used_product
             FROM bf_prod
             """
             sortable = {
@@ -2168,7 +2181,10 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 "sale_PI": "sale_PI", "bf_sale_price": "bf_sale_price",
                 "comp_sale_price": "comp_sale_price",
             }
-            default_sort, search_cols = "rev", ["product_name", "brand_name"]
+            # Searching by their product name matters: when chasing a match you
+            # often know only what the competitor calls it.
+            default_sort = "rev"
+            search_cols = ["product_name", "brand_name", "competitor_product_name"]
             source = "bf_prod"
 
         where, extra = "", []

@@ -87,6 +87,11 @@
         <thead class="bg-grey-50 border-b border-grey-100">
           <tr>
             <th :class="TH_L">Our product</th>
+            <th :class="TH_L">
+              <span class="inline-flex items-center gap-1">Their product
+                <HelpTooltip text="The competitor product this one is matched to, by their name for it. Empty for anything not mapped here — there is no counterpart to name. Searchable: when chasing a match you often only know what they call it." />
+              </span>
+            </th>
             <th :class="TH_L">Brand</th>
             <th :class="TH_L">
               <span class="inline-flex items-center gap-1">Their brand
@@ -99,13 +104,16 @@
             <th :class="TH_R">Best similarity</th>
             <th :class="TH_R">Our price</th>
             <th :class="TH_R">Their price</th>
-            <th :class="TH_R" class="cursor-pointer select-none" @click="$emit('sort', 'sale_PI')">
+            <th :class="TH_C" class="cursor-pointer select-none" @click="$emit('sort', 'sale_PI')">
               <span class="inline-flex items-center gap-1">PI
                 <HelpTooltip text="Our price divided by theirs, so ABOVE 1.00 means we are more expensive. Only the mapped products have one — an unmatched product has no competitor price to compare against." />
               </span>
             </th>
-            <th :class="TH_L">Action</th>
-            <th :class="TH_R" class="cursor-pointer select-none" @click="$emit('sort', 'total_revenue')">Revenue/day</th>
+            <th :class="TH_C" style="min-width: 150px">
+              <span class="inline-flex items-center gap-1">Eligible · Updated · Used
+                <HelpTooltip text="The same three flags Commercial counts, for this one product. They are a funnel: ELIGIBLE means it sits in the top 80% of revenue and is worth pricing against; UPDATED means both our price and theirs were refreshed recently; USED means it carries a PI and feeds the blended figure. Whichever one first reads no is why a mapped product moves nothing." />
+              </span>
+            </th>
           </tr>
         </thead>
         <tbody class="divide-y divide-grey-50">
@@ -113,6 +121,13 @@
             <td class="px-4 py-3">
               <div class="text-body font-semibold text-grey-900 max-w-[320px] truncate" :title="row.product_name">{{ row.product_name }}</div>
               <div class="text-caption text-grey-400">{{ row.commercial_category_name }}</div>
+            </td>
+            <td class="px-4 py-3 max-w-[280px]">
+              <div v-if="row.competitor_product_name"
+                   class="text-body text-grey-700 truncate" :title="row.competitor_product_name">
+                {{ row.competitor_product_name }}
+              </div>
+              <span v-else class="text-grey-300">—</span>
             </td>
             <td class="px-4 py-3 text-body text-grey-700">
               {{ row.brand_name || '—' }}
@@ -151,7 +166,7 @@
             </td>
             <td class="px-4 py-3 text-right text-body font-mono text-grey-700">{{ money(row.bf_sale_price) }}</td>
             <td class="px-4 py-3 text-right text-body font-mono text-grey-700">{{ money(row.comp_sale_price) }}</td>
-            <td class="px-4 py-3 text-right">
+            <td class="px-4 py-3 text-center">
               <span v-if="row.sale_PI != null"
                     class="font-mono text-body font-bold px-1.5 py-0.5 rounded-md"
                     :class="piBgClass(row.sale_PI)">
@@ -160,19 +175,18 @@
               </span>
               <span v-else class="text-grey-300">—</span>
             </td>
+            <!-- Read left to right as a funnel; the first "no" is the reason.
+                 Deliberately three marks rather than three columns of ticks: the
+                 useful reading is where the chain breaks, not each flag alone. -->
             <td class="px-4 py-3">
-              <span v-if="row.action_type" class="text-caption text-grey-600">{{ row.action_type }}</span>
-              <span v-else class="text-grey-300 text-caption">—</span>
-              <!-- Mapped but not counted in the blended PI is the state people
-                   query most: the match exists, the number does not move. -->
-              <div v-if="row.is_mapped && !row.used_product" class="text-caption text-amber-600"
-                   :title="row.eligible_product
-                     ? 'Eligible, but one side of the price is stale, so it carries no PI.'
-                     : 'Outside the eligible range (top 80% of revenue), so it never carries a PI.'">
-                not in PI
+              <div class="flex items-center justify-center gap-1" :title="flagTitle(row)">
+                <span v-for="f in flags(row)" :key="f.key"
+                      class="px-1.5 py-0.5 rounded text-micro font-bold tracking-wide"
+                      :class="f.on ? 'bg-green-50 text-green-700' : 'bg-grey-100 text-grey-400'">
+                  {{ f.label }}
+                </span>
               </div>
             </td>
-            <td class="px-4 py-3 text-right text-body font-mono text-grey-900">{{ n(row.total_revenue) }}</td>
           </tr>
         </tbody>
       </table>
@@ -220,6 +234,7 @@ const SIDES = [
 ]
 const TH_L = 'px-4 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide'
 const TH_R = 'px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide'
+const TH_C = 'px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide'
 const PAGE_BTN = 'px-3 py-1 text-caption font-semibold rounded-lg border border-grey-200 text-grey-700 hover:bg-grey-50 disabled:opacity-40 disabled:cursor-not-allowed'
 
 const totalPages = computed(() => Math.max(1, Math.ceil(props.total / props.pageSize)))
@@ -259,6 +274,28 @@ function theirBrandTitle(row) {
     ? ''
     : '\n\nBrand-level: this product itself is not matched, so this is what\nthey call the BRAND, not a counterpart for this product.'
   return `${head}\n\n  ${v.join('\n  ')}${foot}`
+}
+
+// Eligible -> Updated -> Used, in funnel order.
+function flags(row) {
+  return [
+    { key: 'e', label: 'ELIG', on: !!row.eligible_product },
+    { key: 'u', label: 'UPD',  on: !!row.updated },
+    { key: 's', label: 'USED', on: !!row.used_product },
+  ]
+}
+
+// Names the first broken link rather than restating the three marks, because
+// that is the whole question: why does a matched product move no number?
+function flagTitle(row) {
+  if (row.used_product) return 'Carries a PI and feeds the blended figure.'
+  if (!row.eligible_product)
+    return 'Not eligible — outside the top 80% of revenue, so it never carries a PI.'
+  if (!row.updated)
+    return 'Eligible, but one side of the price is stale, so it carries no PI.'
+  if (!row.is_mapped)
+    return 'Eligible and priced, but not matched here — nothing to compare against.'
+  return 'Eligible and priced, but not used in the PI.'
 }
 
 function money(v) {
