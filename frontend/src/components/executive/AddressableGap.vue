@@ -97,9 +97,14 @@ const rows = computed(() => {
     const m = byComp.value[r.competitor_name]
     if (!m || !r.bf_products) continue
     const noMatch = (m.no_match_not_pl || 0) + (m.no_match_pl || 0)
-    const noBrand = m.no_match_not_shared_brand || 0
+    // Brand-unreachable spans BOTH dead ends, not just confirmed no-match.
+    // Counting only the first put the no-likely-match half of it into
+    // "workable backlog" and disagreed with the donut's outer arc for the same
+    // competitor — 359 products at Talabat, claimed as work that cannot be done.
+    const noBrand = (m.no_match_not_shared_brand || 0) + (m.no_potential_not_shared_brand || 0)
+    const noBrandInNoMatch = m.no_match_not_shared_brand || 0
     const oursOnly = r.our_only_products || 0
-    const backlog = Math.max(0, oursOnly - noMatch)
+    const backlog = Math.max(0, oursOnly - noMatch - (m.no_potential_not_shared_brand || 0))
     const total = r.bf_products
     const pct = v => (v / total) * 100
 
@@ -112,7 +117,7 @@ const rows = computed(() => {
           why: 'Matched to one of their products, so it carries a price comparison.' },
         { key: 'b', label: 'Workable backlog', value: backlog, pct: pct(backlog), swatch: 'bg-amber-400', ink: 'text-amber-950',
           why: 'Unmatched, and nothing rules it out — this is the queue matching work can close.' },
-        { key: 'i', label: 'They lack the item', value: noMatch - noBrand, pct: pct(noMatch - noBrand), swatch: 'bg-slate-500', ink: 'text-white',
+        { key: 'i', label: 'They lack the item', value: noMatch - noBrandInNoMatch, pct: pct(noMatch - noBrandInNoMatch), swatch: 'bg-slate-500', ink: 'text-white',
           why: 'They carry the brand but the matcher rejected every candidate for this item.' },
         { key: 'k', label: 'They lack the brand', value: noBrand, pct: pct(noBrand), swatch: 'bg-slate-200', ink: 'text-slate-700',
           why: 'They do not stock the brand at all. No amount of matching reaches these.' },
