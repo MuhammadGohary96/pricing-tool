@@ -58,7 +58,7 @@ export const useCommercialStore = defineStore('commercial', {
       // The pills stay purely client-side visibility at every other time — this
       // is the one case where they reach the server, because "shared brands"
       // is meaningless without saying shared with whom.
-      if (f.brandScope === 'shared' && f.visibleCompetitors.length) {
+      if (f.brandScope && f.visibleCompetitors.length) {
         p.competitor = f.visibleCompetitors.join(',')
       }
       return p

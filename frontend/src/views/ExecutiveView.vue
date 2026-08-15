@@ -92,7 +92,7 @@
         v-if="allCompetitors.length > 0"
         :competitors="allCompetitors"
         v-model="selectedCompetitors"
-        :scopes-brands="filters.brandScope === 'shared'"
+        :scopes-brands="!!filters.brandScope"
         :default-limit="5"
         class="animate-fade-in-up stagger-2"
       />
@@ -277,7 +277,7 @@ watchDebounced(
     filters.vertical,
     filters.brandScope,
     // Only varies when the pills actually affect the query (see Commercial).
-    filters.brandScope === 'shared' ? filters.visibleCompetitors.join(',') : '',
+    filters.brandScope ? filters.visibleCompetitors.join(',') : '',
     filters.includePrivateLabel,
     filters.priceFallback,
   ],
@@ -321,7 +321,7 @@ const selectedCompetitors = computed({
   get: () => filters.pendingVisibleCompetitors,
   set: (v) => {
     filters.pendingVisibleCompetitors = v
-    if (filters.brandScope !== 'shared') filters.visibleCompetitors = [...v]
+    if (!filters.brandScope) filters.visibleCompetitors = [...v]
   },
 })
 watch(() => filters.brandScope, (mode) => {

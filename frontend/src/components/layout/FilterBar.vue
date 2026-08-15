@@ -242,9 +242,12 @@ const filters = useFiltersStore()
 const linkCopied = ref(false)
 const expanded = ref(false)
 
+// Widening left to right. 'shared' keeps its meaning from before this control
+// grew a third state, so saved URLs and presets do not silently change scope.
 const brandScopeOptions = [
   { value: '', label: 'All', title: 'Every brand we carry' },
-  { value: 'shared', label: 'Shared only', title: 'Only products whose brand the competitor also carries — the realistic matching ceiling, since a brand they do not stock can never be matched' },
+  { value: 'shared_name', label: 'Shared', title: 'Brands the competitor carries under the SAME name. The strict reading — it misses brands we label differently, such as our Froneri against their Nestle and Paradise' },
+  { value: 'shared', label: '+ by match', title: 'The above plus brands proved shared by matching, where the two names disagree. A brand counts when at least half its products are mapped at that competitor — the realistic matching ceiling, since a brand they do not stock can never be matched' },
 ]
 
 const verticalOptions = [

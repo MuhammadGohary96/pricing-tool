@@ -32,7 +32,7 @@ export const useExecutiveStore = defineStore('executive', {
       if (!f.includePrivateLabel) p.exclude_private_label = true
       if (f.brandScope) p.brand_scope = f.brandScope
       // See the commercial store: pills only reach the server under Shared-only.
-      if (f.brandScope === 'shared' && f.visibleCompetitors.length) {
+      if (f.brandScope && f.visibleCompetitors.length) {
         p.competitor = f.visibleCompetitors.join(',')
       }
       if (f.priceFallback) p.price_fallback = true

@@ -237,9 +237,11 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             # the GLOBAL path reads the pre-built global_base and narrows it in
             # pandas; same filter-after caveat that already applies to
             # `competitor` on this path.
-            if str(filters.get("brand_scope") or "").strip().lower() == "shared" \
-                    and "is_shared_brand" in filtered.columns:
+            scope = str(filters.get("brand_scope") or "").strip().lower()
+            if scope in ("shared", "shared_name") and "is_shared_brand" in filtered.columns:
                 filtered = filtered[filtered["is_shared_brand"] == True]
+                if scope == "shared_name" and "shared_brand_by_match" in filtered.columns:
+                    filtered = filtered[filtered["shared_brand_by_match"] != True]
         return filtered
 
     # ------------------------------------------------------------------
@@ -351,8 +353,20 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         # the competitor also carries. A brand they do not stock can never be
         # matched, so this turns every mapping rate on the screen into the
         # realistic ceiling rather than a target nobody can hit.
-        if str(filters.get("brand_scope") or "").strip().lower() == "shared":
+        # Three states, widening left to right:
+        #   ''            every brand
+        #   'shared_name' brands whose NAME matches on both sides -- the original,
+        #                 strict reading of "they stock this brand"
+        #   'shared'      the above PLUS brands proved shared by matching, where
+        #                 the two names disagree (Froneri / Nestle). This is what
+        #                 'shared' has meant since the 50% rule landed, so the
+        #                 value is unchanged and no saved URL shifts meaning.
+        scope = str(filters.get("brand_scope") or "").strip().lower()
+        if scope == "shared":
             clauses.append("COALESCE(is_shared_brand, FALSE)")
+        elif scope == "shared_name":
+            clauses.append("COALESCE(is_shared_brand, FALSE) "
+                           "AND NOT COALESCE(shared_brand_by_match, FALSE)")
 
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
         return where, params
@@ -1432,7 +1446,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         where, params = self._build_where_clause(filters)
         f = filters or {}
         if (f.get("fp_names") or f.get("competitor") or f.get("action_type")
-                or str(f.get("brand_scope") or "").lower() == "shared"):
+                or str(f.get("brand_scope") or "").lower() in ("shared", "shared_name")):
             return (
                 "base_tmp",
                 params,
@@ -1662,8 +1676,12 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         # is_shared_brand means "Breadfast carries this brand", so 'shared' asks
         # "of the brands we both carry, what do they have that we don't" — the
         # actionable half of the assortment gap.
-        if str(f.get("brand_scope") or "").strip().lower() == "shared":
+        comp_scope = str(f.get("brand_scope") or "").strip().lower()
+        if comp_scope == "shared":
             where_comp += " AND COALESCE(is_shared_brand, FALSE)"
+        elif comp_scope == "shared_name":
+            where_comp += (" AND COALESCE(is_shared_brand, FALSE)"
+                           " AND NOT COALESCE(shared_brand_by_match, FALSE)")
 
         cats = [v.strip() for v in str(f.get("main_category") or "").split(",") if v.strip()]
         if cats:
@@ -1794,6 +1812,11 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 COUNT(DISTINCT product_id) FILTER (
                     WHERE is_mapped AND is_shared_brand)                          AS matched_shared_brand,
                 COUNT(DISTINCT brand_key) FILTER (WHERE is_shared_brand)          AS shared_brands,
+                -- A SUBSET of shared_brands, not a fourth bucket: brands whose
+                -- overlap was proved by matches because the two names disagree.
+                -- Froneri counts here and in shared_brands both.
+                COUNT(DISTINCT brand_key) FILTER (
+                    WHERE COALESCE(shared_brand_by_match, FALSE))                 AS shared_by_match_brands,
                 COUNT(DISTINCT brand_key) FILTER (WHERE NOT is_shared_brand)      AS bf_only_brands,
                 BOOL_OR(COALESCE(competitor_has_v2_catalogue, FALSE))             AS has_catalogue,
                 MAX(comp_active_products)                                         AS comp_products,
@@ -1865,6 +1888,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             CAST(COALESCE(c.comp_only_products, 0) AS INTEGER) AS comp_only_products,
             CAST(b.our_only_products  AS INTEGER) AS our_only_products,
             CAST(b.shared_brands      AS INTEGER) AS shared_brands,
+            CAST(b.shared_by_match_brands AS INTEGER) AS shared_by_match_brands,
             CAST(b.bf_only_brands     AS INTEGER) AS bf_only_brands,
             CAST(COALESCE(c.comp_only_brands, 0)   AS INTEGER) AS comp_only_brands,
             b.has_catalogue,

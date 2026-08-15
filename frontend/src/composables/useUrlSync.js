@@ -48,8 +48,8 @@ export function useUrlSync() {
       filters.vertical = query.vertical
       changed = true
     }
-    if (query.brands === 'shared') {
-      filters.brandScope = 'shared'
+    if (query.brands === 'shared' || query.brands === 'shared_name') {
+      filters.brandScope = query.brands
       changed = true
     }
     if (changed && query.category) {

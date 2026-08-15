@@ -105,7 +105,11 @@
                 <HelpTooltip text="Our SKUs with no match at this competitor — Our SKUs minus Mapped. The mirror of 'They only'. Read it as a CEILING: it counts what they genuinely do not stock TOGETHER WITH what we simply failed to match. Hover a row for the split into confirmed-not-stocked, likely matching miss, and never ruled either way." />
               </span>
             </th>
-            <th :class="TH_C" style="min-width: 132px">Brands s / ours / theirs</th>
+            <th :class="TH_C" style="min-width: 168px">
+              <span class="inline-flex items-center gap-1">Brands s · bm / ours / theirs
+                <HelpTooltip text="Brands we SHARE, of which BY MATCH, then brands only we carry and only they carry. The second is a SUBSET of the first, not a fourth bucket: it counts shared brands whose two names disagree, where the overlap was proved by matching products rather than read off the label — Froneri, shelved by them as Nestle and Paradise, is counted in both. Only-theirs is an upper bound: their name variants are not collapsed." />
+              </span>
+            </th>
           </tr>
         </thead>
         <tbody class="divide-y divide-grey-50">
@@ -161,6 +165,13 @@
             <td class="px-4 py-3">
               <div class="flex items-center gap-1 text-caption font-mono">
                 <span class="px-1.5 py-0.5 rounded bg-green-50 text-green-700" title="Brands both of us carry">{{ row.shared_brands }}</span>
+                <!-- Middle dot, not a slash: this one is inside the number to
+                     its left, and a slash would read as a fourth bucket. -->
+                <span class="text-grey-300">·</span>
+                <span class="px-1.5 py-0.5 rounded ring-1 ring-green-200 text-green-700"
+                      :title="`${row.shared_by_match_brands} of those ${row.shared_brands} shared brands are named differently on each side — the overlap was proved by matching products, not by the label.`">
+                  {{ row.shared_by_match_brands }}
+                </span>
                 <span class="text-grey-300">/</span>
                 <span class="px-1.5 py-0.5 rounded bg-brand-50 text-brand-primary" title="Brands only we carry">{{ row.bf_only_brands }}</span>
                 <span class="text-grey-300">/</span>
@@ -224,7 +235,8 @@ function devClass(v) {
   // Same convention as piColor: pricier = warm, cheaper = cool.
   return v > 0 ? 'text-red-600' : 'text-blue-600'
 }
-const sharedOnly = computed(() => props.brandScope === 'shared')
+// Either shared mode: both narrow by brand, so both change what this column means.
+const sharedOnly = computed(() => !!props.brandScope)
 
 // Their catalogue is now counted from the filtered rows — the paired half off our
 // side, the unpaired half off theirs — so it narrows like every other column. No
@@ -372,6 +384,7 @@ function exportData() {
     'COMP-ONLY PRODUCTS': r.comp_only_products,
     'OURS-ONLY PRODUCTS (UNMATCHED)': r.our_only_products,
     'SHARED BRANDS': r.shared_brands,
+    'SHARED BRANDS (BY MATCH)': r.shared_by_match_brands,
     'BF-ONLY BRANDS': r.bf_only_brands,
     'COMP-ONLY BRANDS': r.comp_only_brands,
     'HAS CATALOGUE': r.has_catalogue,
