@@ -42,6 +42,14 @@
               <span class="text-micro font-normal text-grey-400">({{ item.pct }}%)</span>
             </div>
             <div class="text-micro text-grey-500 leading-tight tabular-nums mt-0.5">{{ item.notPl.toLocaleString() }} non-PL · {{ item.pl.toLocaleString() }} PL</div>
+            <!-- Only on the two dead ends: it separates "nobody stocks this
+                 brand" from "we have not matched it yet", which are the same
+                 number today and completely different problems. -->
+            <div v-if="item.notSharedPct != null"
+                 class="text-micro leading-tight tabular-nums mt-0.5 text-amber-600"
+                 :title="`${item.notShared.toLocaleString()} of these ${item.count.toLocaleString()} are in brands NO competitor in scope carries. Nothing about the matcher can reach them — the brand is simply not on their shelf.`">
+              {{ item.notSharedPct }}% brand not carried
+            </div>
           </div>
         </div>
       </div>
@@ -164,7 +172,17 @@ const legendItems = computed(() => {
   ].map(t => {
     const { notPl, pl } = s[t.label]
     const count = notPl + pl
-    return { ...t, count, notPl, pl, pct: pct(count) }
+    // The brand-reachability split only makes sense for the buckets where
+    // nothing was matched; Mapped and Potential are reachable by definition.
+    const notShared = t.label === 'Confirmed no match' ? (d.value.no_match_not_shared_brand || 0)
+                    : t.label === 'No likely match'    ? (d.value.no_potential_not_shared_brand || 0)
+                    : null
+    return {
+      ...t, count, notPl, pl, pct: pct(count),
+      notShared,
+      notSharedPct: notShared != null && count > 0
+        ? Math.round(notShared / count * 1000) / 10 : null,
+    }
   })
 })
 

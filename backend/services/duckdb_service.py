@@ -1275,14 +1275,55 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         GROUP BY competitor_name
         """
 
-        # Overall classification breakdown (raw row counts, matches pandas value_counts)
+        # Overall classification breakdown, at PRODUCT grain.
+        #
+        # It used to count base_tmp rows, which are (product x competitor) pairs:
+        # the donut totalled 85,274 against a page that said 12,182 products
+        # everywhere else, and its centre read 25% mapped while the scorecard
+        # beside it read 16.6-48.9% per competitor. Both were right and no
+        # arithmetic reconciled them. Collapsing to product grain first makes the
+        # donut answer the same question as the rest of the page: of OUR
+        # products, how many can we compare anywhere in scope.
+        #
+        # The four buckets must be disjoint to be a donut, and at product grain
+        # the flags are not: a product can be confirmed-no-match at one
+        # competitor and a potential match at another. Precedence is mapped >
+        # potential > confirmed-no-match > no likely match -- potential outranks
+        # confirmed because if ANY competitor shows a likely candidate the
+        # product is still reachable, and the bucket exists to say what to work
+        # on next.
+        #
+        # not_shared_brand splits the two dead-end buckets by whether the brand
+        # is carried by any competitor in scope. A product nobody can match
+        # because nobody stocks the brand is a different problem from one we
+        # simply failed to match, and only the second is a matching backlog.
         sql_class_overall = """
+        WITH prod AS (
+            SELECT
+                product_id,
+                BOOL_OR(COALESCE(is_mapped, FALSE))              AS is_mapped,
+                BOOL_OR(COALESCE(is_potential_match, FALSE))     AS any_potential,
+                BOOL_OR(COALESCE(is_confirmed_no_match, FALSE))  AS any_no_match,
+                BOOL_OR(COALESCE(is_shared_brand, FALSE))        AS any_shared_brand,
+                ANY_VALUE(is_private_label)                      AS is_private_label
+            FROM base_tmp
+            GROUP BY product_id
+        ),
+        tagged AS (
+            SELECT *,
+                CASE WHEN is_mapped      THEN 'mapped'
+                     WHEN any_potential  THEN 'potential'
+                     WHEN any_no_match   THEN 'no_match'
+                     ELSE 'no_potential' END AS bucket
+            FROM prod
+        )
         SELECT
-            classification,
-            CAST(COUNT(*) AS INTEGER) AS cnt
-        FROM base_tmp
-        WHERE classification IS NOT NULL
-        GROUP BY classification
+            bucket,
+            CAST(COUNT(*) AS INTEGER)                                        AS cnt,
+            CAST(COUNT(*) FILTER (WHERE is_private_label) AS INTEGER)        AS pl,
+            CAST(COUNT(*) FILTER (WHERE NOT any_shared_brand) AS INTEGER)    AS not_shared_brand
+        FROM tagged
+        GROUP BY bucket
         """
 
         with self._duckdb_lock:
@@ -1366,16 +1407,27 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         mapping_progress.sort(key=lambda x: x["mapped_pct"], reverse=True)
 
         # ── classification_breakdown ─────────────────────────────────
-        classification_counts = dict(zip(class_df["classification"], class_df["cnt"]))
+        # Keys keep their old names so the component contract is unchanged; only
+        # the GRAIN changed, plus the two *_not_shared_brand additions.
+        by_bucket = {r.bucket: r for r in class_df.itertuples(index=False)}
+
+        def _b(name, field):
+            r = by_bucket.get(name)
+            return int(getattr(r, field)) if r is not None else 0
+
         classification_breakdown = {
-            "mapped_not_pl": int(classification_counts.get("Mapped - Not PL", 0)),
-            "mapped_pl": int(classification_counts.get("Mapped - PL", 0)),
-            "not_mapped_not_pl_potential": int(classification_counts.get("Not Mapped - Not PL - Potential Match", 0)),
-            "not_mapped_not_pl_no_potential": int(classification_counts.get("Not Mapped - Not PL - No Potential Match", 0)),
-            "not_mapped_pl_potential": int(classification_counts.get("Not Mapped - PL - Potential Match", 0)),
-            "not_mapped_pl_no_potential": int(classification_counts.get("Not Mapped - PL - No Potential Match", 0)),
-            "not_mapped_not_pl_no_match": int(classification_counts.get("Not Mapped - Not PL - No Match", 0)),
-            "not_mapped_pl_no_match": int(classification_counts.get("Not Mapped - PL - No Match", 0)),
+            "mapped_not_pl": _b("mapped", "cnt") - _b("mapped", "pl"),
+            "mapped_pl": _b("mapped", "pl"),
+            "not_mapped_not_pl_potential": _b("potential", "cnt") - _b("potential", "pl"),
+            "not_mapped_pl_potential": _b("potential", "pl"),
+            "not_mapped_not_pl_no_potential": _b("no_potential", "cnt") - _b("no_potential", "pl"),
+            "not_mapped_pl_no_potential": _b("no_potential", "pl"),
+            "not_mapped_not_pl_no_match": _b("no_match", "cnt") - _b("no_match", "pl"),
+            "not_mapped_pl_no_match": _b("no_match", "pl"),
+            # How much of each dead end is unreachable by brand rather than by
+            # effort: nobody in scope carries the brand at all.
+            "no_match_not_shared_brand": _b("no_match", "not_shared_brand"),
+            "no_potential_not_shared_brand": _b("no_potential", "not_shared_brand"),
         }
 
         return {

@@ -57,6 +57,16 @@
               {{ kpis.blended_pi != null ? kpis.blended_pi.toFixed(2) : '—' }}
             </span>
             <p class="text-body font-semibold mt-3.5 max-w-[44ch]" :class="piTextClass(kpis.blended_pi)">{{ piInterpretation }}</p>
+            <!-- The single blended figure averages a real spread away: 1.01
+                 overall while one competitor sits at 1.12. A leader scanning for
+                 "is anything on fire" was being shown the one number in which
+                 the fire is invisible, so the range now sits with it. -->
+            <p v-if="piSpread" class="text-caption text-grey-600 mt-1.5 max-w-[48ch]">
+              Range <span class="font-mono font-semibold" :class="piTextClass(piSpread.min.pi)">{{ piSpread.min.pi.toFixed(2) }}</span>
+              {{ piSpread.min.name }}
+              → <span class="font-mono font-semibold" :class="piTextClass(piSpread.max.pi)">{{ piSpread.max.pi.toFixed(2) }}</span>
+              {{ piSpread.max.name }}
+            </p>
             <p class="text-caption text-grey-500 mt-1 max-w-[48ch]">Quantity-weighted Breadfast price ÷ competitor price, across every tracked competitor.</p>
           </div>
 
@@ -80,6 +90,22 @@
         </div>
         </template>
       </PageHeader>
+
+      <!-- Exceptions: everything here was already on the page, as numbers inside
+           a 16-column table the reader had to find. Stating them is the whole
+           job of a leadership layer, and costs no new data. -->
+      <div v-if="exceptions.length" class="flex flex-wrap gap-2 animate-fade-in-up stagger-1">
+        <div v-for="e in exceptions" :key="e.key"
+             class="flex items-start gap-2 px-3 py-2 rounded-xl ring-1 bg-white"
+             :class="e.tone === 'bad' ? 'ring-red-200' : e.tone === 'warn' ? 'ring-amber-200' : 'ring-grey-200'">
+          <component :is="e.icon" class="w-4 h-4 mt-0.5 shrink-0"
+                     :class="e.tone === 'bad' ? 'text-red-500' : e.tone === 'warn' ? 'text-amber-500' : 'text-grey-400'" />
+          <div class="min-w-0">
+            <div class="text-body font-semibold text-grey-900 leading-tight">{{ e.headline }}</div>
+            <div class="text-caption text-grey-500 leading-tight">{{ e.detail }}</div>
+          </div>
+        </div>
+      </div>
 
       <!-- Definitions -->
       <DefinitionsPanel :sections="definitions" storage-key="defs-executive" class="animate-fade-in-up stagger-1" />
@@ -164,12 +190,12 @@
         @select-fp="onSelectFp"
       />
 
-      <!-- ═══ TIER 3 · Data coverage — how complete the mapping behind these numbers is ═══ -->
-      <div class="flex items-baseline gap-2.5 mt-3 animate-fade-in-up stagger-5">
-        <h2 class="text-caption font-semibold uppercase tracking-wide text-grey-500">Data coverage</h2>
-        <span class="text-micro text-grey-400">how much of the catalog is mapped per competitor, and the reachable headroom</span>
-      </div>
-      <MappingProgressChart :data="store.dashboard?.mapping_progress || []" class="animate-fade-in-up stagger-5" />
+      <!-- "Data coverage" was a tier holding one panel, and that panel restated
+           the scorecard's Mapped % column exactly -- same percentages and same
+           counts for all seven competitors. Both are gone: the coverage story
+           lives in the scorecard's Match coverage group, which is where a reader
+           already is when they ask the question. mapping_progress is still
+           fetched and still powers the scorecard's row hover. -->
 
     </div>
   </PageShell>
@@ -185,7 +211,6 @@ import { dataApi } from '../api/client'
 import KpiCard from '../components/layout/KpiCard.vue'
 import FilterBar from '../components/layout/FilterBar.vue'
 import CompetitorToggle from '../components/shared/CompetitorToggle.vue'
-import MappingProgressChart from '../components/executive/MappingProgressChart.vue'
 import ClassificationBreakdown from '../components/executive/ClassificationBreakdown.vue'
 import GeographicExposure from '../components/executive/GeographicExposure.vue'
 import CompetitorScorecard from '../components/executive/CompetitorScorecard.vue'
@@ -198,7 +223,7 @@ import AnimatedNumber from '../components/shared/AnimatedNumber.vue'
 import {
   Gauge, Package, Users, Clock, Layers, ArrowUp, ArrowDown,
   Scale, AlertTriangle, Target, CheckCircle, BarChart2 as BarChart2Icon, PieChart,
-  Handshake,
+  Handshake, TrendingUp, GitCompareArrows, TriangleAlert,
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -383,6 +408,60 @@ const wowCoverage = computed(() => {
 // ─── wowCoverage kept but card removed; keep for possible reuse ─
 
 // ─── PI interpretation ──────────────────────────────────────────
+// Widest and narrowest priced position across the competitors on screen.
+const piSpread = computed(() => {
+  const rows = visibleOverview.value.filter(r => r.blended_pi != null)
+  if (rows.length < 2) return null
+  const sorted = [...rows].sort((a, b) => a.blended_pi - b.blended_pi)
+  const lo = sorted[0], hi = sorted[sorted.length - 1]
+  if (Math.abs(hi.blended_pi - lo.blended_pi) < 0.02) return null   // genuinely flat
+  return {
+    min: { pi: lo.blended_pi, name: lo.competitor_name },
+    max: { pi: hi.blended_pi, name: hi.competitor_name },
+  }
+})
+
+// Three exceptions at most: worst price position, thinnest coverage, and any
+// competitor whose assortment view cannot be trusted because nothing was
+// crawled. Every figure is already elsewhere on the page -- this only saves the
+// reader from hunting for it in a 16-column table.
+const exceptions = computed(() => {
+  const rows = visibleOverview.value
+  if (!rows.length) return []
+  const out = []
+
+  const priced = rows.filter(r => r.blended_pi != null)
+  const worst = priced.length ? priced.reduce((a, b) => (b.blended_pi > a.blended_pi ? b : a)) : null
+  if (worst && worst.blended_pi > 1.02) {
+    out.push({
+      key: 'pi', tone: 'bad', icon: TrendingUp,
+      headline: `${worst.competitor_name} — we are ${Math.round((worst.blended_pi - 1) * 100)}% more expensive`,
+      detail: `PI ${worst.blended_pi.toFixed(2)} · ${worst.mapping_pct}% mapped`,
+    })
+  }
+
+  const mapped = rows.filter(r => r.mapping_pct != null && r.has_catalogue)
+  const thinnest = mapped.length ? mapped.reduce((a, b) => (b.mapping_pct < a.mapping_pct ? b : a)) : null
+  if (thinnest && (!worst || thinnest.competitor_name !== worst.competitor_name) && thinnest.mapping_pct < 35) {
+    out.push({
+      key: 'cov', tone: 'warn', icon: GitCompareArrows,
+      headline: `${thinnest.competitor_name} — only ${thinnest.mapping_pct}% of our range is mapped`,
+      detail: `${thinnest.addressable_pct}% of what can be mapped is done`,
+    })
+  }
+
+  // Not a performance problem at all, and the row of zeros does not say so.
+  const dark = rows.filter(r => !r.has_catalogue).map(r => r.competitor_name)
+  if (dark.length) {
+    out.push({
+      key: 'dark', tone: 'warn', icon: TriangleAlert,
+      headline: `${dark.join(', ')} — no live catalogue`,
+      detail: 'Their assortment columns read zero because nothing was crawled, not because the gap is nil',
+    })
+  }
+  return out.slice(0, 3)
+})
+
 const piInterpretation = computed(() => {
   const pi = kpis.value?.blended_pi
   if (pi == null) return ''

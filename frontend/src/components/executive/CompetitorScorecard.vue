@@ -22,6 +22,16 @@
                 :class="freshPct < 80 ? 'text-amber-600' : 'text-grey-900'">{{ freshPct }}%</span>
           <HelpTooltip text="Share of our matches whose competitor product was seen in the last 7 days. A match that has gone quiet is a benchmark quietly going stale." />
         </div>
+        <!-- Sixteen columns is right for the manager who lives here and hostile
+             to the leader who does not. Eight by default, the rest one click
+             away; the choice sticks so the daily reader sets it once. -->
+        <button type="button"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full ring-1 ring-grey-200 bg-white text-caption font-medium text-grey-600 hover:ring-grey-300 active:scale-[0.97] transition-[transform,box-shadow]"
+                :aria-pressed="detailed"
+                @click="toggleDetail">
+          <component :is="detailed ? ChevronLeft : Plus" class="w-3 h-3" />
+          {{ detailed ? 'Fewer columns' : 'Coverage detail' }}
+        </button>
         <ExportButton :fetcher="exportData" filename="competitor_scorecard.csv" />
       </div>
     </div>
@@ -39,7 +49,7 @@
           <tr class="bg-grey-50 border-b border-grey-100">
             <th :class="TH_L" rowspan="2" class="sticky left-0 bg-grey-50 z-10 align-bottom">Competitor</th>
             <th :class="GROUP" colspan="3">Price position</th>
-            <th :class="[GROUP, 'border-l border-grey-200']" colspan="8">Match coverage</th>
+            <th :class="[GROUP, 'border-l border-grey-200']" :colspan="detailed ? 8 : 2">Match coverage</th>
             <th :class="[GROUP, 'border-l border-grey-200']" colspan="4">Assortment overlap</th>
           </tr>
           <tr class="bg-grey-50 border-b border-grey-100">
@@ -57,22 +67,22 @@
                 <HelpTooltip text="Used ÷ Eligible. The share of our eligible range (top 80% of revenue) that has a usable fresh price against this competitor. The denominator is the eligible set as a whole and is the same for every competitor, because BigQuery emits every product×competitor pair — so read it as how much of our priced-worthy range is benchmarked here, not as a per-competitor utilisation rate. Same figure as Util % in Commercial." />
               </span>
             </th>
-            <th :class="[TH_R, 'border-l border-grey-200']">Our SKUs</th>
-            <th :class="TH_R">
+            <th v-if="detailed" :class="[TH_R, 'border-l border-grey-200']">Our SKUs</th>
+            <th v-if="detailed" :class="TH_R">
               <span class="inline-flex items-center gap-1">Eligible
                 <HelpTooltip text="Our products worth pricing against: the top 80% of revenue, excluding anything with no sellable price. This is the DENOMINATOR behind Util %. It reads the same on every row by construction — BigQuery emits every product×competitor pair, so the eligible set does not depend on which competitor you are looking at. It does move with the filters above." />
               </span>
             </th>
             <!-- Used sits beside Eligible, not in funnel order after Fresh, so the
                  Util % in the Price position group can be checked by eye. -->
-            <th :class="TH_R">
+            <th v-if="detailed" :class="TH_R">
               <span class="inline-flex items-center gap-1">Used
                 <HelpTooltip text="Our eligible products that actually have a usable fresh price against this competitor, so they carry a PI. The NUMERATOR behind Util % — Used ÷ Eligible is the column two to the left. A subset of Mapped: a product has to be mapped AND both sides priced recently to be used." />
               </span>
             </th>
-            <th :class="TH_R">Mapped</th>
+            <th v-if="detailed" :class="TH_R">Mapped</th>
             <th :class="TH_C" style="min-width: 118px">Mapped %</th>
-            <th :class="TH_R">
+            <th v-if="detailed" :class="TH_R">
               <span class="inline-flex items-center gap-1">Fresh
                 <HelpTooltip text="Mapped AND the competitor product was seen in the last 7 days." />
               </span>
@@ -82,7 +92,7 @@
                 <HelpTooltip text="Mapped divided by (our SKUs minus confirmed no-match). The honest ceiling: a competitor at 30% mapped but 100% addressable is finished, not behind." />
               </span>
             </th>
-            <th :class="TH_R">Potential</th>
+            <th v-if="detailed" :class="TH_R">Potential</th>
             <th :class="[TH_R, 'border-l border-grey-200']">
               <span class="inline-flex items-center gap-1">Their catalogue
                 <HelpTooltip :text="catalogueHelp" />
@@ -147,15 +157,15 @@
             <td class="px-4 py-3"><Bar :pct="row.priced_pct" /></td>
 
             <!-- Match coverage -->
-            <td :class="[TD_N, 'border-l border-grey-100 text-grey-700']">{{ n(row.bf_products) }}</td>
-            <td :class="[TD_N, 'text-grey-600']">{{ n(row.eligible_products) }}</td>
-            <td :class="[TD_N, 'text-grey-700 font-semibold']" :title="usedTitle(row)">{{ n(row.used_products) }}</td>
-            <td :class="[TD_N, 'text-green-600']">{{ n(row.matched) }}</td>
+            <td v-if="detailed" :class="[TD_N, 'border-l border-grey-100 text-grey-700']">{{ n(row.bf_products) }}</td>
+            <td v-if="detailed" :class="[TD_N, 'text-grey-600']">{{ n(row.eligible_products) }}</td>
+            <td v-if="detailed" :class="[TD_N, 'text-grey-700 font-semibold']" :title="usedTitle(row)">{{ n(row.used_products) }}</td>
+            <td v-if="detailed" :class="[TD_N, 'text-green-600']">{{ n(row.matched) }}</td>
             <td class="px-4 py-3"><Bar :pct="row.mapping_pct" /></td>
-            <td :class="[TD_N, row.matched_fresh === 0 && row.matched > 0 ? 'text-red-500 font-semibold' : 'text-grey-600']"
+            <td v-if="detailed" :class="[TD_N, row.matched_fresh === 0 && row.matched > 0 ? 'text-red-500 font-semibold' : 'text-grey-600']"
                 :title="staleTitle(row)">{{ n(row.matched_fresh) }}</td>
             <td class="px-4 py-3"><Bar :pct="row.addressable_pct" /></td>
-            <td :class="[TD_N, 'text-amber-600']">{{ n(row.potential_match) }}</td>
+            <td v-if="detailed" :class="[TD_N, 'text-amber-600']">{{ n(row.potential_match) }}</td>
 
             <!-- Assortment overlap -->
             <td :class="[TD_N, 'border-l border-grey-100 text-grey-600']"
@@ -187,8 +197,8 @@
 </template>
 
 <script setup>
-import { computed, h } from 'vue'
-import { LayoutList, Info } from 'lucide-vue-next'
+import { computed, h, ref } from 'vue'
+import { LayoutList, Info, Plus, ChevronLeft } from 'lucide-vue-next'
 import ExportButton from '../shared/ExportButton.vue'
 import EmptyState from '../shared/EmptyState.vue'
 import HelpTooltip from '../shared/HelpTooltip.vue'
@@ -210,6 +220,13 @@ const TH_L = 'px-4 py-2 text-left text-caption font-semibold text-grey-500 upper
 const TH_R = 'px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide'
 const TH_C = 'px-4 py-2 text-caption font-semibold text-grey-500 uppercase tracking-wide'
 const TD_N = 'px-4 py-3 text-right text-body font-mono'
+
+// Remembered, because a daily reader should not re-open it every morning.
+const detailed = ref(localStorage.getItem('exec-scorecard-detail') === '1')
+function toggleDetail() {
+  detailed.value = !detailed.value
+  try { localStorage.setItem('exec-scorecard-detail', detailed.value ? '1' : '0') } catch {}
+}
 
 const rows = computed(() => props.data || [])
 const isSupermarket = computed(() => String(props.vertical).toLowerCase() === 'supermarket')
