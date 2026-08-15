@@ -49,9 +49,12 @@
               </span>
             </th>
             <th :class="TH_R">vs Parity</th>
+            <!-- Named "Priced" until it turned out to be the same number Commercial
+                 already showed as "Util %" — identical to the decimal for all seven
+                 competitors. One metric, one name, across both views. -->
             <th :class="TH_R">
-              <span class="inline-flex items-center gap-1">Priced
-                <HelpTooltip text="Share of our eligible range (top 80% of revenue) that has a usable fresh price against this competitor. The denominator is the eligible set as a whole, so read it as how much of our priced-worthy range is benchmarked here." />
+              <span class="inline-flex items-center gap-1">Util %
+                <HelpTooltip text="Used ÷ Eligible. The share of our eligible range (top 80% of revenue) that has a usable fresh price against this competitor. The denominator is the eligible set as a whole and is the same for every competitor, because BigQuery emits every product×competitor pair — so read it as how much of our priced-worthy range is benchmarked here, not as a per-competitor utilisation rate. Same figure as Util % in Commercial." />
               </span>
             </th>
             <th :class="[TH_R, 'border-l border-grey-200']">Our SKUs</th>
@@ -323,7 +326,7 @@ function exportData() {
     COMPETITOR: r.competitor_name,
     'BLENDED PI': r.blended_pi,
     'VS PARITY': r.pi_deviation,
-    'PRICED %': r.priced_pct,
+    'UTILIZATION %': r.priced_pct,
     'USED PRODUCTS': r.used_products,
     'ELIGIBLE PRODUCTS': r.eligible_products,
     'BF PRODUCTS': r.bf_products,
