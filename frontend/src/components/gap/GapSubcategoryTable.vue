@@ -13,7 +13,7 @@
           placeholder="Filter subcategories…"
           class="text-body border border-grey-200 rounded-lg px-3 py-1.5 w-56 focus:outline-none focus:ring-1 focus:ring-brand-primary"
         />
-        <ExportButton :fetcher="exportFetcher" filename="gap_by_subcategory.csv" />
+        <ExportButton :fetcher="exportFetcher" label="Export Excel" filename="gap_by_subcategory.xlsx" />
       </div>
     </div>
 
@@ -23,18 +23,18 @@
           <tr>
             <th :class="TH_L">Subcategory</th>
             <th :class="TH_R">Our SKUs</th>
-            <th :class="TH_R">Matched</th>
-            <th :class="TH_C" style="min-width: 130px">Matched %</th>
+            <th :class="TH_R">Mapped</th>
+            <th :class="TH_C" style="min-width: 130px">Mapped %</th>
             <th :class="TH_R">
               <span class="inline-flex items-center gap-1">
                 Shared-brand %
-                <HelpTooltip text="Matched % counting only brands the competitor also carries — the realistic ceiling, since a brand they don't stock can never be matched." />
+                <HelpTooltip text="Mapped % counting only brands the competitor also carries — the realistic ceiling, since a brand they don't stock can never be matched." />
               </span>
             </th>
             <th :class="TH_R">
               <span class="inline-flex items-center gap-1">
                 Addressable %
-                <HelpTooltip text="Matched ÷ (our SKUs − confirmed no-match). Products the matcher has positively rejected are removed from the denominator." />
+                <HelpTooltip text="Mapped ÷ (our SKUs − confirmed no-match). Products the matcher has positively rejected are removed from the denominator." />
               </span>
             </th>
             <th :class="TH_R">No-match</th>

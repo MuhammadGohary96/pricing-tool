@@ -142,7 +142,13 @@ SELECT
     -- catalogue. With competitor_product_key now populated on those rows, the
     -- paired and unpaired halves partition the catalogue, so it can be counted
     -- under any filter instead of only read as a per-competitor total.
-    matched_comp_in_catalogue
+    matched_comp_in_catalogue,
+    -- Brand overlap inferred from matches rather than from the brand string, so
+    -- Froneri stops reading as ours-only at a competitor that stocks it as
+    -- Nestle. The flag says which way it was established; the variants string is
+    -- the evidence, "brand:count|brand:count", NULL when the names agree.
+    shared_brand_by_match,
+    comp_brand_variants
 FROM `{project}.{dataset}.{table}`
 """
 

@@ -38,7 +38,25 @@ async function handleExport() {
     const data = await props.fetcher()
     if (!data) return
 
-    // Multi-sheet workbook: fetcher returns { sheets: [{ name, rows }], filename }.
+    // Server-rendered file: the fetcher returns { blob, filename }. Used for
+    // styled workbooks, which cannot be produced in the browser — the community
+    // build of SheetJS writes values but no cell formatting.
+    if (data.blob) {
+      const url = URL.createObjectURL(data.blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = data.filename || props.filename
+      a.click()
+      URL.revokeObjectURL(url)
+      return
+    }
+
+    // Multi-sheet workbook: fetcher returns
+    //   { sheets: [{ name, rows, title?, note?, widths? }], filename }
+    // title/note reproduce the layout of the hand-built brand-portfolio
+    // workbook — blank row 1, title on row 2, optional note on row 3, blank,
+    // then the table — so an export can be dropped straight in beside the
+    // sheets that were made by hand.
     if (data.sheets) {
       const sheets = data.sheets.filter(s => s && s.rows && s.rows.length)
       if (!sheets.length) return
@@ -46,7 +64,26 @@ async function handleExport() {
       const wb = XLSX.utils.book_new()
       const used = new Set()
       for (const sheet of sheets) {
-        const ws = XLSX.utils.json_to_sheet(sheet.rows)
+        let ws, headerRow
+        if (sheet.title) {
+          ws = XLSX.utils.aoa_to_sheet([[], [sheet.title]])
+          if (sheet.note) XLSX.utils.sheet_add_aoa(ws, [[sheet.note]], { origin: 'A3' })
+          headerRow = sheet.note ? 5 : 4          // matches the workbook exactly
+          XLSX.utils.sheet_add_json(ws, sheet.rows, { origin: `A${headerRow}` })
+        } else {
+          ws = XLSX.utils.json_to_sheet(sheet.rows)
+          headerRow = 1
+        }
+        // Freeze above the first data row so headers stay put while scrolling.
+        ws['!freeze'] = { xSplit: 0, ySplit: headerRow }
+        ws['!autofilter'] = {
+          ref: XLSX.utils.encode_range({
+            s: { r: headerRow - 1, c: 0 },
+            e: { r: headerRow - 1 + sheet.rows.length,
+                 c: Math.max(0, Object.keys(sheet.rows[0]).length - 1) },
+          }),
+        }
+        if (sheet.widths) ws['!cols'] = sheet.widths.map(w => ({ wch: w }))
         XLSX.utils.book_append_sheet(wb, ws, safeSheetName(sheet.name, used))
       }
       XLSX.writeFile(wb, data.filename || props.filename.replace(/\.csv$/, '.xlsx'))

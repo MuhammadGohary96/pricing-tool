@@ -91,6 +91,9 @@ export const gapApi = {
   getBrands: (params) => api.get('/gap/brands', { params }),
   getProducts: (params) => api.get('/gap/products', { params }),
   exportRows: (params) => api.get('/gap/export', { params }),
+  // Styled workbook, rendered by the backend with openpyxl. Must be a blob:
+  // the response is a binary .xlsx, not JSON.
+  workbook: (params) => api.get('/gap/workbook', { params, responseType: 'blob' }),
 }
 
 export const executiveApi = {

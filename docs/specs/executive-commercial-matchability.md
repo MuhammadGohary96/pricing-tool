@@ -176,6 +176,39 @@ GLOBAL/FP-scoped split as `_apply_filters`; reuse it for any new roll-up.
   our subcategories cannot be placed, so counting it would inflate whichever categories were
   picked. It is not a rounding matter — the unbridged share of the unpaired half runs from
   3.1% (Seoudi) to 31.4% (Amazon Now) — so the row hover states how many were excluded.
+* **Brand overlap is inferred from matches, not just from the brand string.** `is_shared_brand`
+  asked one question — do the two `brand_key`s agree? — and got it wrong whenever the same
+  brand is labelled differently on each side. The worst case is a manufacturer versus a
+  consumer brand: we carry **Froneri** (the Nestlé ice-cream JV) and Talabat shelves the very
+  same products as Nestle, Paradise, Oreo, Squizz, Cadbury, KitKat and a dozen more. 59 of
+  our 62 Froneri products were mapped at Talabat while the brand read *only ours* — in the
+  column that exists to say what they stock. No slug normalisation reaches it: both sides
+  already resolve slug-first, and `froneri` shares nothing with `nestle`.
+
+  A brand now also counts as shared with a competitor when **≥50% of its products are mapped
+  there**, computed on both sides:
+  * ours → theirs: `bf_brand_shared_by_match`, over `final_product_data`
+  * theirs → ours: `comp_brand_shared_by_match`, over `comp_products` vs `paired_comp_keys`
+    (already reachability-gated, so "matched" means matched to something we actually sell)
+
+  Two properties worth keeping:
+  * **Computed over the whole range, never inside the app's filters.** If the percentage were
+    recomputed per filter, Shared-only would feed on itself — switching it on changes which
+    products are in scope, which changes each brand's mapped share, which changes which
+    brands are shared. `is_shared_brand` stays a fixed property of (product, competitor).
+  * **Evaluated per (brand, competitor).** At 50% Froneri is shared at all five competitors
+    that have matches and stays *not* shared at Amazon and Carrefour, which have none. At the
+    70% first considered, Rabbit (66.1%) would have denied a brand it demonstrably stocks.
+
+  `shared_brand_by_match` records which way the overlap was established, and
+  `comp_brand_variants` carries the evidence as `"brand:count|…"`, ranked, capped at 10 —
+  every distinct **display name** on their shelf, grouped on the name rather than the
+  `brand_key`, because the key is exactly what collapses `7Up` / `7UP` / `7up` into one. So
+  the Gap table's "Their brand" column shows both a brand we label differently (Froneri →
+  Nestle, Paradise, Oreo) and one we label the same that they spell several ways — the
+  latter being why "brands only they carry" is an upper bound. Blank names are dropped. It is deliberately **not** a fourth `brand_type`: those brands *are*
+  shared and must keep appearing under the Shared filter, so `by_match` rides alongside as a
+  cross-cutting audit view instead.
 * **Never sum "They only" across rows** — one competitor product can bridge to several of
   our subcategories.
 * **"Ours only" is a ceiling, not the mirror of "They only".** It is every SKU of ours with

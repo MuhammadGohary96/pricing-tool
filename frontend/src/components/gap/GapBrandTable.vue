@@ -24,7 +24,7 @@
           placeholder="Filter brands…"
           class="text-body border border-grey-200 rounded-lg px-3 py-1.5 w-52 focus:outline-none focus:ring-1 focus:ring-brand-primary"
         />
-        <ExportButton :fetcher="exportFetcher" filename="gap_by_brand.csv" />
+        <ExportButton :fetcher="exportFetcher" label="Export Excel" filename="gap_by_brand.xlsx" />
       </div>
     </div>
 
@@ -40,9 +40,14 @@
           <tr>
             <th :class="TH_L">Brand</th>
             <th :class="TH_L">Overlap</th>
+            <th :class="TH_L">
+              <span class="inline-flex items-center gap-1">Their brand
+                <HelpTooltip text="Every distinct spelling this brand carries on their shelf, taken from the products we actually matched, biggest first. Two things show up here. A brand we label differently: we carry Froneri, the Nestlé ice-cream JV, and they shelve the same products as Nestle, Paradise, Oreo and a dozen more — that is the evidence behind a 'by match' overlap. And a brand we label the same but they spell several ways: 7Up, 7UP and 7up are three separate brands in their catalogue, which is why 'brands only they carry' is an upper bound." />
+              </span>
+            </th>
             <th :class="TH_R">Our SKUs</th>
-            <th :class="TH_R">Matched</th>
-            <th :class="TH_C" style="min-width: 120px">Matched %</th>
+            <th :class="TH_R">Mapped</th>
+            <th :class="TH_C" style="min-width: 120px">Mapped %</th>
             <th :class="TH_R">No-match</th>
             <th :class="TH_R">Potential</th>
             <th :class="TH_R">They only</th>
@@ -56,9 +61,23 @@
           <tr v-for="row in filtered" :key="row.brand_key" class="hover:bg-brand-50 transition-colors">
             <td class="px-4 py-3 text-body font-semibold text-grey-900">{{ row.brand_name }}</td>
             <td class="px-4 py-3">
-              <span class="px-2 py-0.5 rounded-md text-caption font-semibold" :class="TYPE_STYLE[row.brand_type]">
-                {{ TYPE_LABEL[row.brand_type] }}
+              <span class="px-2 py-0.5 rounded-md text-caption font-semibold whitespace-nowrap"
+                    :class="row.shared_by_match ? 'bg-green-50 text-green-700 ring-1 ring-green-200' : TYPE_STYLE[row.brand_type]"
+                    :title="row.shared_by_match
+                      ? 'The names do not match, but at least half of this brand\'s products are mapped here — so they stock it under another name.'
+                      : undefined">
+                {{ row.shared_by_match ? 'Shared — by match' : TYPE_LABEL[row.brand_type] }}
               </span>
+            </td>
+            <td class="px-4 py-3 text-caption text-grey-500 max-w-[220px]">
+              <span v-if="variants(row).length" :title="variantTitle(row)" class="cursor-help">
+                {{ variants(row).slice(0, 3).map(v => v.name).join(', ') }}
+                <span v-if="variants(row).length > 3"
+                      class="ml-1 px-1 py-px rounded-full bg-grey-100 text-grey-500 font-semibold">
+                  +{{ variants(row).length - 3 }}
+                </span>
+              </span>
+              <span v-else class="text-grey-300">—</span>
             </td>
             <td :class="TD_N">{{ n(row.bf_products) }}</td>
             <td :class="TD_N" class="text-green-600">{{ n(row.matched) }}</td>
@@ -91,6 +110,7 @@ import { computed, ref } from 'vue'
 import { Tags, TriangleAlert } from 'lucide-vue-next'
 import ExportButton from '../shared/ExportButton.vue'
 import EmptyState from '../shared/EmptyState.vue'
+import HelpTooltip from '../shared/HelpTooltip.vue'
 
 const props = defineProps({
   rows: { type: Array, default: () => [] },
@@ -103,6 +123,9 @@ defineEmits(['type'])
 const TYPES = [
   { label: 'All', value: null },
   { label: 'Shared', value: 'shared' },
+  // Not a brand type — an audit of the rule. These brands are also returned by
+  // Shared, which is the point: they ARE shared, just established differently.
+  { label: 'By match', value: 'by_match' },
   { label: 'Only ours', value: 'bf_only' },
   { label: 'Only theirs', value: 'comp_only' },
 ]
@@ -117,6 +140,40 @@ const TH_L = 'px-4 py-2 text-left text-caption font-semibold text-grey-500 upper
 const TH_R = 'px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide'
 const TH_C = 'px-4 py-2 text-caption font-semibold text-grey-500 uppercase tracking-wide'
 const TD_N = 'px-4 py-3 text-right text-body font-mono'
+
+// comp_brand_variants arrives as "Nestle:45|Paradise:39|Oreo:28", already ranked
+// and capped at ten by the query. Encoded rather than sent as a nested array so
+// it survives the BigQuery → Parquet → DuckDB → pandas path as a plain string.
+function variants(row) {
+  const raw = row.comp_brand_variants
+  if (!raw) return []
+  return String(raw).split('|').map(part => {
+    const i = part.lastIndexOf(':')          // brand names can contain a colon
+    // i <= 0 means the name half is blank — a competitor product with an empty
+    // brand_name encodes as ":1". Drop it rather than render a bare count.
+    return i <= 0 ? { name: '', n: null }
+                  : { name: part.slice(0, i).trim(), n: Number(part.slice(i + 1)) || null }
+  }).filter(v => v.name)
+}
+
+function variantTitle(row) {
+  const v = variants(row)
+  if (!v.length) return ''
+  // Worth calling out when the only difference is spelling: it means the brand
+  // is fragmented in their catalogue, not that they label it as something else.
+  const spellingOnly = v.every(x =>
+    x.name.toLowerCase().replace(/\s+/g, '') ===
+    String(row.brand_name || '').toLowerCase().replace(/\s+/g, ''))
+  return [
+    `${row.brand_name} is shelved here as:`,
+    '',
+    ...v.map(x => `  ${x.name}${x.n ? ` — ${x.n} product${x.n === 1 ? '' : 's'}` : ''}`),
+    v.length === 10 ? '\n(top 10 shown)' : '',
+    spellingOnly && v.length > 1
+      ? '\nSame brand, spelled several ways in their catalogue.'
+      : '',
+  ].filter(Boolean).join('\n')
+}
 
 const search = ref('')
 const filtered = computed(() => {

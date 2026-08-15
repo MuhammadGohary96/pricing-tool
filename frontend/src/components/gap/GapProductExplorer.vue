@@ -23,7 +23,7 @@
           :placeholder="side === 'competitor' ? 'Search their products…' : 'Search our products…'"
           class="text-body border border-grey-200 rounded-lg px-3 py-1.5 w-56 focus:outline-none focus:ring-1 focus:ring-brand-primary"
         />
-        <ExportButton :fetcher="exportFetcher" :filename="`gap_products_${side}.csv`" />
+        <ExportButton :fetcher="exportFetcher" label="Export Excel" :filename="`gap_products_${side}.xlsx`" />
       </div>
     </div>
 

@@ -305,7 +305,7 @@ const trailingColumns = computed(() => {
     { key: 'eligible_product_count', label: 'Eligible' },
     { key: 'used_product_count', label: 'Used', dynamic: true },
     { key: 'mapped_product_count', label: 'Mapped', dynamic: true },
-    { key: 'mapping_pct', label: 'Map %', dynamic: true },
+    { key: 'mapping_pct', label: 'Mapped %', dynamic: true },
     { key: 'utilization_pct', label: 'Util %', dynamic: true },
     { key: 'addressable_pct', label: 'Addr %', dynamic: true },
   ]

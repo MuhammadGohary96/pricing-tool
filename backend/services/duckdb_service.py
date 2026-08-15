@@ -464,6 +464,11 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             -- the normalization in _gap_ctes.
             NULLIF(TRIM(ANY_VALUE(brand_key)), '')  AS brand_key,
             BOOL_OR(is_shared_brand)                AS is_shared_brand,
+            -- How the overlap was established, and the evidence behind it. Both
+            -- are constants of (brand, competitor), so BOOL_OR/ANY_VALUE only
+            -- carry the value through the collapse.
+            BOOL_OR(shared_brand_by_match)          AS shared_brand_by_match,
+            ANY_VALUE(comp_brand_variants)          AS comp_brand_variants,
             BOOL_OR(matched_comp_active_7d)         AS matched_comp_active_7d,
             BOOL_OR(is_confirmed_no_match)          AS is_confirmed_no_match,
             BOOL_OR(is_potential_match)             AS is_potential_match,
@@ -1525,6 +1530,13 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 -- the competitors currently in scope.
                 MAX(is_mapped)                      AS is_mapped,
                 MAX(is_shared_brand)                AS is_shared_brand,
+                -- MAX over competitors like is_shared_brand above: promoted by
+                -- evidence at any competitor in scope. The variants string is
+                -- the longest one seen, so a brand scoped to one competitor
+                -- shows that competitor's names rather than an arbitrary pick.
+                MAX(shared_brand_by_match)          AS shared_by_match,
+                ARG_MAX(comp_brand_variants, LENGTH(comp_brand_variants))
+                                                    AS comp_brand_variants,
                 MAX(is_confirmed_no_match)          AS no_match,
                 MAX(is_potential_match)             AS potential,
                 MAX(matched_comp_active_7d)         AS matched_active,
@@ -1971,7 +1983,10 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 COUNT(DISTINCT sub_category_name)              AS bf_subcategories,
                 ROUND(SUM(rev), 0)                             AS daily_revenue,
                 ROUND(SUM(rev) FILTER (WHERE NOT is_mapped), 0) AS unmatched_revenue,
-                BOOL_OR(is_shared_brand)                       AS is_shared_brand
+                BOOL_OR(is_shared_brand)                       AS is_shared_brand,
+                BOOL_OR(shared_by_match)                       AS shared_by_match,
+                ARG_MAX(comp_brand_variants, LENGTH(comp_brand_variants))
+                                                               AS comp_brand_variants
             FROM bf_prod
             WHERE brand_key IS NOT NULL
             GROUP BY brand_key
@@ -1981,7 +1996,14 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 brand_key,
                 ANY_VALUE(comp_brand_name)        AS comp_brand_name,
                 COUNT(*)                          AS comp_only_products,
-                COUNT(DISTINCT sub_category_name) AS comp_subcategories
+                COUNT(DISTINCT sub_category_name) AS comp_subcategories,
+                -- Carried so brand_type can see it. Without this a brand that
+                -- exists only on THEIR shelf always fell through to 'comp_only',
+                -- even after the mirror rule marked its rows shared — so Talabat's
+                -- "Halwani Bros" read "Only theirs" in this column while the
+                -- Executive comp-only-brand count excluded it and the Shared-only
+                -- filter kept its products. Same brand, three answers.
+                BOOL_OR(is_shared_brand)          AS is_shared_brand
             FROM comp_prod
             WHERE brand_key IS NOT NULL
             GROUP BY brand_key
@@ -1996,8 +2018,24 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 WHEN b.brand_key IS NOT NULL AND c.brand_key IS NOT NULL THEN 'shared'
                 WHEN b.brand_key IS NOT NULL AND COALESCE(b.is_shared_brand, FALSE) THEN 'shared'
                 WHEN b.brand_key IS NOT NULL THEN 'bf_only'
+                -- Their-side-only brand that the mirror rule promoted: we DO
+                -- carry it, under another name. Calling it 'comp_only' here
+                -- contradicted both the Shared-only filter and the Executive
+                -- brand counts, which read is_shared_brand directly.
+                WHEN COALESCE(c.is_shared_brand, FALSE) THEN 'shared'
                 ELSE 'comp_only'
             END                                                AS brand_type,
+            -- Deliberately NOT a fourth brand_type: a brand promoted on match
+            -- evidence IS shared, and the Shared filter has to keep returning it.
+            -- This rides alongside so the UI can show how the overlap was
+            -- established and filter to just those for auditing.
+            -- Either side can be the one promoted by evidence: ours when they
+            -- label our brand differently, theirs when we label theirs
+            -- differently. Halwani Bros is the second kind.
+            COALESCE(b.shared_by_match,
+                     c.is_shared_brand AND b.brand_key IS NULL, FALSE)
+                                                               AS shared_by_match,
+            b.comp_brand_variants,
             CAST(COALESCE(b.bf_products, 0)        AS INTEGER) AS bf_products,
             CAST(COALESCE(b.matched, 0)            AS INTEGER) AS matched,
             b.mapping_pct,

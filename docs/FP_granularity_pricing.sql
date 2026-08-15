@@ -939,6 +939,125 @@ bf_pair_freshness AS (
     FROM competitor_clean
     WHERE bf_product_id IS NOT NULL
     GROUP BY 1, 2
+),
+
+-- ── NEW 7 ▸ BRAND OVERLAP FROM MATCH EVIDENCE ──────────────────────────────
+-- is_shared_brand asked one question -- do the two brand_keys match? -- and got
+-- it wrong whenever the same brand is labelled differently on each side. The
+-- worst case is a manufacturer versus a consumer brand: we carry "Froneri", the
+-- Nestle ice-cream JV, and Talabat shelves the very same products as Nestle,
+-- Paradise, Oreo, Squizz, Cadbury, KitKat and a dozen more. 59 of our 62 Froneri
+-- products were matched at Talabat while the brand read "only ours" -- a brand
+-- they demonstrably stock, in the column that exists to say what they stock.
+-- No amount of slug normalisation reaches it: froneri and nestle share nothing.
+--
+-- So brand overlap is also inferred from the matches themselves, exactly as the
+-- category bridge infers subcategories from the daily fact. A brand counts as
+-- shared with a competitor when at least half its products are matched there.
+-- Both sides get the same test, read from their own end.
+--
+-- Computed over the WHOLE range, deliberately, and never inside the app's
+-- filters. If the percentage were recomputed per filter, Shared-only would feed
+-- on itself: switching it on changes which products are in scope, which changes
+-- each brand's mapped share, which changes which brands are shared. The flag
+-- stays a fixed property of (product, competitor), as it has always been.
+bf_brand_pair AS (          -- is_mapped is FP-agnostic; collapse the FP grain away
+    SELECT product_id, competitor_id, LOGICAL_OR(is_mapped) AS is_mapped
+    FROM final_product_data
+    GROUP BY product_id, competitor_id
+),
+bf_brand_evidence AS (
+    SELECT
+        p.competitor_id,
+        bu.brand_key,
+        COUNT(DISTINCT p.product_id)                            AS brand_products,
+        COUNT(DISTINCT IF(p.is_mapped, p.product_id, NULL))     AS brand_mapped
+    FROM bf_brand_pair AS p
+    JOIN bf_universe_enriched AS bu USING (product_id)
+    WHERE bu.brand_key IS NOT NULL
+    GROUP BY 1, 2
+),
+bf_brand_shared_by_match AS (
+    SELECT competitor_id, brand_key
+    FROM bf_brand_evidence
+    WHERE brand_products > 0 AND brand_mapped / brand_products >= 0.5
+),
+-- The mirror. Their "Nestle" is a brand we do carry, under the name Froneri, so
+-- counting it as theirs-only overstates the assortment gap by the same mistake
+-- read backwards. paired_comp_keys is already gated on our tracked range, so
+-- "matched" here means matched to something we actually sell.
+comp_brand_evidence AS (
+    SELECT
+        cp.competitor_id,
+        cp.brand_key,
+        COUNT(DISTINCT cp.competitor_product_key)               AS products,
+        COUNT(DISTINCT IF(pk.competitor_product_key IS NOT NULL,
+                          cp.competitor_product_key, NULL))     AS matched
+    FROM comp_products AS cp
+    LEFT JOIN paired_comp_keys AS pk
+        ON  pk.competitor_id          = cp.competitor_id
+        AND pk.competitor_product_key = cp.competitor_product_key
+    WHERE cp.is_active_7d = 1 AND cp.brand_key IS NOT NULL
+    GROUP BY 1, 2
+),
+comp_brand_shared_by_match AS (
+    SELECT competitor_id, brand_key
+    FROM comp_brand_evidence
+    WHERE products > 0 AND matched / products >= 0.5
+),
+-- What the matches actually landed on: every distinct spelling the competitor
+-- uses for this brand, so a promoted brand can be audited rather than taken on
+-- trust AND ordinary brands show their naming fragmentation. 7Up is carried as
+-- "7Up", "7UP" and "7up" in the same catalogue; grouping on the display NAME
+-- rather than brand_key is what keeps those three visible instead of collapsing
+-- them to one. Blank brand names are dropped -- they encode as ":1" downstream
+-- and read as a parsing failure.
+-- Encoded "brand:count|brand:count", ranked, capped at 10.
+brand_variants AS (
+    SELECT
+        competitor_id,
+        bf_brand_key,
+        STRING_AGG(CONCAT(comp_brand, ':', CAST(n AS STRING)), '|'
+                   ORDER BY n DESC, comp_brand) AS comp_brand_variants
+    FROM (
+        SELECT competitor_id, bf_brand_key, comp_brand,
+               COUNT(DISTINCT competitor_product_key) AS n
+        FROM (
+            SELECT
+                f.competitor_id,
+                bu.brand_key AS bf_brand_key,
+                -- The DISPLAY name, not the key: the key is exactly what
+                -- collapses 7Up / 7UP / 7up into one, and those variants are
+                -- the point of this column. '(unbranded)' rather than NULL when
+                -- they carry no brand at all, so the cell never reads blank for
+                -- a brand we demonstrably matched.
+                COALESCE(NULLIF(TRIM(cpx.comp_brand_name), ''),
+                         NULLIF(TRIM(cpx.brand_key), ''),
+                         '(unbranded)') AS comp_brand,
+                cpx.competitor_product_key
+            FROM (SELECT DISTINCT product_id, competitor_id FROM final_product_data) AS f
+            JOIN bf_universe_enriched AS bu ON bu.product_id = f.product_id
+            JOIN competitor_mapping   AS cm
+                 ON cm.competitor_id = f.competitor_id AND cm.bf_product_id = f.product_id
+            -- comp_products_RAW, not comp_products. The deduped table keeps one
+            -- row per (competitor, name, brand), so a key competitor_mapping
+            -- points at may simply not be there any more -- and it drops nothing
+            -- for being inactive either. Joining the deduped table silently lost
+            -- the variants for every match of Evian, Powerade, Roots, Lotus and
+            -- Elano Water at Talabat: mapped products, blank column.
+            JOIN comp_products_raw    AS cpx
+                 ON  cpx.competitor_id          = cm.competitor_id
+                 AND cpx.competitor_product_key = cm.competitor_product_key
+            WHERE bu.brand_key IS NOT NULL
+              -- No brand_key != bf_brand_key filter any more: a brand whose key
+              -- matches ours can still be spelled several ways on their shelf,
+              -- and seeing that is the whole point.
+        )
+        GROUP BY 1, 2, 3
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY competitor_id, bf_brand_key ORDER BY n DESC, comp_brand) <= 10
+    )
+    GROUP BY 1, 2
 )
 
 
@@ -953,8 +1072,12 @@ SELECT
     bu.is_beauty,
     bu.is_private_label,
     bu.brand_key,
-    -- brand overlap
-    (cb.brand_key IS NOT NULL)                     AS is_shared_brand,
+    -- Brand overlap: names agree, OR the matches prove they stock it anyway.
+    (cb.brand_key IS NOT NULL OR sbm.brand_key IS NOT NULL) AS is_shared_brand,
+    -- Which of the two it was, so the UI can show provenance instead of asking
+    -- anyone to take a promoted brand on faith.
+    (cb.brand_key IS NULL AND sbm.brand_key IS NOT NULL)    AS shared_brand_by_match,
+    bv.comp_brand_variants,
     -- gap family. f.is_mapped (STEP 13, daily fact) is the single match truth.
     fr.matched_comp_active_7d,
     ( NOT f.is_mapped
@@ -1004,6 +1127,10 @@ LEFT JOIN competitor_catalogue AS cc ON cc.competitor_id = f.competitor_id
 -- Both one row per join key, so neither can fan the Breadfast grain out:
 -- competitor_mapping is GROUP BY (bf_product_id, competitor_id), and comp_products
 -- is one row per (competitor_id, competitor_product_key) after the dedup.
+LEFT JOIN bf_brand_shared_by_match AS sbm
+       ON sbm.competitor_id = f.competitor_id AND sbm.brand_key = bu.brand_key
+LEFT JOIN brand_variants       AS bv
+       ON bv.competitor_id = f.competitor_id AND bv.bf_brand_key = bu.brand_key
 LEFT JOIN competitor_mapping   AS cmk ON cmk.competitor_id = f.competitor_id
                                      AND cmk.bf_product_id = f.product_id
 LEFT JOIN comp_products        AS mcp ON mcp.competitor_id = f.competitor_id
@@ -1071,7 +1198,13 @@ SELECT
     CAST(NULL AS BOOL)    AS is_beauty,
     FALSE                 AS is_private_label,
     cp.brand_key,
-    (bb.brand_key IS NOT NULL) AS is_shared_brand,   -- does BREADFAST carry this brand
+    -- Does BREADFAST carry this brand -- by name, or on the evidence that half
+    -- its products here are matched to ours under a different label.
+    (bb.brand_key IS NOT NULL OR csbm.brand_key IS NOT NULL) AS is_shared_brand,
+    (bb.brand_key IS NULL AND csbm.brand_key IS NOT NULL)    AS shared_brand_by_match,
+    -- Same ordinal slot as the Breadfast branch. Their brand IS the variant, so
+    -- there is nothing to list back at them.
+    CAST(NULL AS STRING)  AS comp_brand_variants,
     CAST(NULL AS INT64)   AS matched_comp_active_7d,
     CAST(NULL AS BOOL)    AS is_confirmed_no_match,
     CAST(NULL AS BOOL)    AS is_potential_match,
@@ -1104,6 +1237,8 @@ LEFT JOIN paired_comp_keys AS pk
     ON  pk.competitor_id          = cp.competitor_id
     AND pk.competitor_product_key = cp.competitor_product_key
 LEFT JOIN bf_brands AS bb ON bb.brand_key = cp.brand_key
+LEFT JOIN comp_brand_shared_by_match AS csbm
+       ON csbm.competitor_id = cp.competitor_id AND csbm.brand_key = cp.brand_key
 LEFT JOIN path_map_exact AS pme
     ON  pme.competitor_id = cp.competitor_id
     AND pme.l1 = IFNULL(cp.category_level_1, '(none)')

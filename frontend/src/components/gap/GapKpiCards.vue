@@ -3,7 +3,7 @@
     <KpiCard
       :value="kpis?.mapping_pct ?? 0"
       format="percent"
-      label="Matched"
+      label="Mapped"
       :subtitle="`${fmt(kpis?.matched)} of ${fmt(kpis?.bf_products)} products`"
       :icon="GitCompareArrows"
       icon-bg="bg-green-50"
@@ -72,7 +72,7 @@ const strip = computed(() => [
   { label: 'Shared brands', value: props.kpis?.shared_brands, icon: Handshake, bg: 'bg-green-50', fg: 'text-green-600' },
   { label: 'Brands only we carry', value: props.kpis?.bf_only_brands, icon: Home, bg: 'bg-brand-50', fg: 'text-brand-primary' },
   { label: 'Brands only they carry', value: props.kpis?.comp_only_brands, icon: Store, bg: 'bg-amber-50', fg: 'text-amber-600' },
-  { label: 'Matched but gone stale', value: props.kpis?.matched_but_stale, icon: Clock, bg: 'bg-grey-100', fg: 'text-grey-600' },
+  { label: 'Mapped but gone stale', value: props.kpis?.matched_but_stale, icon: Clock, bg: 'bg-grey-100', fg: 'text-grey-600' },
 ])
 
 function fmt(v) {

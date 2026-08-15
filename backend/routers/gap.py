@@ -97,13 +97,24 @@ def get_subcategories(request: Request, filters: dict = Depends(_filters)):
 def get_brands(
     request: Request,
     filters: dict = Depends(_filters),
-    brand_type: Optional[str] = Query(None, description="shared | bf_only | comp_only"),
+    brand_type: Optional[str] = Query(
+        None, description="shared | bf_only | comp_only | by_match (combinable)"),
     limit: int = Query(300, ge=1, le=5000),
 ):
     rows = _svc(request).get_gap_by_brand(filters)
     if brand_type:
         wanted = {t.strip() for t in brand_type.split(",") if t.strip()}
-        rows = [r for r in rows if r["brand_type"] in wanted]
+        # by_match is a cross-cutting view, not a brand_type: those brands ARE
+        # shared and must keep showing under 'shared'. Selecting it asks "which
+        # brands did the match evidence promote", which is an audit of the rule
+        # rather than a category of brand.
+        by_match = "by_match" in wanted
+        wanted.discard("by_match")
+        rows = [
+            r for r in rows
+            if (by_match and r.get("shared_by_match"))
+            or (wanted and r["brand_type"] in wanted)
+        ]
     return {"items": rows[:limit], "total_count": len(rows)}
 
 
@@ -140,3 +151,284 @@ def export_gap(
             filters, side=side, page=1, page_size=100_000
         )["items"]
     return svc.get_gap_by_subcategory(filters)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Styled workbook export
+# ─────────────────────────────────────────────────────────────────────────────
+# Built server-side, not in the browser: the community build of SheetJS cannot
+# write cell styling at all, so a client-side workbook can only ever be an
+# unformatted grid. openpyxl gives the house style — title, uppercase headers on
+# a light fill, zebra striping, frozen header, autofilter, threshold colours.
+#
+# Percentages are divided by 100 on the way out. The service returns 20.3 and the
+# cells carry a 0.0% number format, which multiplies by 100 for display — writing
+# 20.3 straight in would render 2030%.
+_PCT_LOW, _PCT_HIGH = 0.50, 0.80     # orange below, green at/above
+
+
+def _pct(v):
+    return None if v is None else round(float(v) / 100.0, 5)
+
+
+def _num(v):
+    return 0 if v is None else v
+
+
+def _metric(field, header, low=_PCT_LOW, high=_PCT_HIGH, width=None):
+    col = {"field": field, "header": header, "format": "percent",
+           "low_threshold": low, "high_threshold": high}
+    if width:
+        col["width"] = width
+    return col
+
+
+_TYPE_LABEL = {"shared": "Shared", "bf_only": "Only ours", "comp_only": "Only theirs"}
+
+
+def _variant_names(raw: str) -> str:
+    """"Nestle:45|Paradise:39" -> "Nestle, Paradise".
+
+    rfind, not split(':'), because a brand name can contain one. Entries whose
+    name half is blank are dropped: a competitor product with an empty (not
+    NULL) brand_name encodes as ":1", which otherwise rode along to the end of
+    the list looking like a parsing failure.
+    """
+    if not raw:
+        return ""
+    out = []
+    for part in str(raw).split("|"):
+        i = part.rfind(":")
+        name = (part[:i] if i > 0 else "").strip()
+        if name:
+            out.append(name)
+    return ", ".join(out)
+
+
+def _overview_sheet(rows):
+    return {
+        "name": "Competitor Overview",
+        "title": "Competitor Overview — matching and assortment coverage",
+        "columns": [
+            {"field": "competitor_name", "header": "COMPETITOR", "width": 16},
+            {"field": "bf_products", "header": "BF PRODUCTS", "format": "number"},
+            {"field": "matched", "header": "MAPPED", "format": "number"},
+            {"field": "matched_fresh", "header": "MAPPED FRESH", "format": "number"},
+            _metric("mapping_pct", "MAPPING %"),
+            _metric("mapping_pct_shared", "MAPPING % (SHARED BRANDS)", width=22),
+            {"field": "confirmed_no_match", "header": "CONFIRMED NO-MATCH", "format": "number"},
+            {"field": "addressable", "header": "ADDRESSABLE", "format": "number"},
+            _metric("addressable_pct", "ADDRESSABLE %"),
+            {"field": "potential_match", "header": "POTENTIAL MATCH", "format": "number"},
+            {"field": "comp_products", "header": "THEIR CATALOGUE", "format": "number"},
+            {"field": "comp_products_in_scope", "header": "THEIR CATALOGUE (IN SCOPE)",
+             "format": "number", "width": 22},
+            {"field": "comp_only_products", "header": "THEY ONLY", "format": "number"},
+            {"field": "our_only_products", "header": "OURS ONLY", "format": "number"},
+            {"field": "shared_brands", "header": "SHARED BRANDS", "format": "number"},
+            {"field": "bf_only_brands", "header": "BF-ONLY BRANDS", "format": "number"},
+            {"field": "comp_only_brands", "header": "COMP-ONLY BRANDS", "format": "number"},
+            {"field": "has_catalogue", "header": "HAS CATALOGUE", "width": 14},
+        ],
+        "rows": [{
+            "competitor_name": r.get("competitor_name"),
+            "bf_products": _num(r.get("bf_products")),
+            "matched": _num(r.get("matched")),
+            "matched_fresh": _num(r.get("matched_fresh")),
+            "mapping_pct": _pct(r.get("mapping_pct")),
+            "mapping_pct_shared": _pct(r.get("mapping_pct_shared")),
+            "confirmed_no_match": _num(r.get("confirmed_no_match")),
+            "addressable": _num(r.get("addressable")),
+            "addressable_pct": _pct(r.get("addressable_pct")),
+            "potential_match": _num(r.get("potential_match")),
+            "comp_products": _num(r.get("comp_products")),
+            "comp_products_in_scope": _num(r.get("comp_products_in_scope")),
+            "comp_only_products": _num(r.get("comp_only_products")),
+            "our_only_products": _num(r.get("our_only_products")),
+            "shared_brands": _num(r.get("shared_brands")),
+            "bf_only_brands": _num(r.get("bf_only_brands")),
+            "comp_only_brands": _num(r.get("comp_only_brands")),
+            "has_catalogue": r.get("has_catalogue"),
+        } for r in rows],
+    }
+
+
+def _brands_sheet(rows, competitor):
+    return {
+        "name": f"{competitor} Brands",
+        "title": f"{competitor} — Brand Portfolio",
+        "columns": [
+            {"field": "brand", "header": "BRAND", "width": 26},
+            {"field": "type", "header": "TYPE", "width": 14},
+            # Neither column existed in the hand-built workbook, which could not
+            # tell a name match from an evidence match: Froneri read "Only ours"
+            # there at 95% mapped. THEIR BRAND NAMES lists every spelling on
+            # their shelf, so 7Up / 7UP / 7up show as the three brands they are.
+            {"field": "evidence", "header": "OVERLAP EVIDENCE", "width": 26},
+            {"field": "their_names", "header": "THEIR BRAND NAMES", "width": 44},
+            {"field": "bf_products", "header": "BF PRODUCTS", "format": "number"},
+            {"field": "matched", "header": "MAPPED", "format": "number"},
+            _metric("mapping_pct", "MAPPING %"),
+            {"field": "confirmed_no_match", "header": "CONFIRMED NO-MATCH", "format": "number"},
+            _metric("addressable_pct", "ADDRESSABLE RATE"),
+            {"field": "potential_match", "header": "POTENTIAL MATCH", "format": "number"},
+            {"field": "bf_unmatched", "header": "BF UNMATCHED", "format": "number"},
+            {"field": "comp_only_products", "header": "COMP-ONLY PRODUCTS", "format": "number"},
+            {"field": "bf_subcategories", "header": "OUR SUBCATEGORIES", "format": "number"},
+            {"field": "comp_subcategories", "header": "THEIR SUBCATEGORIES", "format": "number"},
+            {"field": "daily_revenue", "header": "REVENUE/DAY", "format": "number"},
+            {"field": "unmatched_revenue", "header": "UNMATCHED REVENUE", "format": "number"},
+        ],
+        "rows": [{
+            "brand": r.get("brand_name"),
+            "type": _TYPE_LABEL.get(r.get("brand_type"), r.get("brand_type")),
+            "evidence": "Matched under another name" if r.get("shared_by_match") else "Brand name",
+            "their_names": _variant_names(r.get("comp_brand_variants")),
+            "bf_products": _num(r.get("bf_products")),
+            "matched": _num(r.get("matched")),
+            "mapping_pct": _pct(r.get("mapping_pct")),
+            "confirmed_no_match": _num(r.get("confirmed_no_match")),
+            "addressable_pct": _pct(r.get("addressable_pct")),
+            "potential_match": _num(r.get("potential_match")),
+            "bf_unmatched": _num(r.get("bf_products")) - _num(r.get("matched")),
+            "comp_only_products": _num(r.get("comp_only_products")),
+            "bf_subcategories": _num(r.get("bf_subcategories")),
+            "comp_subcategories": _num(r.get("comp_subcategories")),
+            "daily_revenue": _num(r.get("daily_revenue")),
+            "unmatched_revenue": _num(r.get("unmatched_revenue")),
+        } for r in rows],
+    }
+
+
+def _subcategories_sheet(rows, competitor):
+    return {
+        "name": f"{competitor} Subcategories",
+        "title": f"{competitor} — Subcategory Coverage",
+        "note": "Brand sets are WITHIN-SUBCATEGORY: a brand can be shared in one "
+                "subcategory and ours-only in another.",
+        "columns": [
+            {"field": "sub_category_name", "header": "SUBCATEGORY", "width": 30},
+            {"field": "commercial_category_name", "header": "COMMERCIAL CATEGORY", "width": 26},
+            {"field": "bf_products", "header": "BF PRODUCTS", "format": "number"},
+            {"field": "matched", "header": "MAPPED", "format": "number"},
+            _metric("mapping_pct", "MAPPING %"),
+            _metric("mapping_pct_shared", "MAPPING % (SHARED BRANDS)", width=22),
+            {"field": "confirmed_no_match", "header": "CONFIRMED NO-MATCH", "format": "number"},
+            {"field": "potential_match", "header": "POTENTIAL MATCH", "format": "number"},
+            _metric("addressable_pct", "ADDRESSABLE RATE"),
+            {"field": "matched_but_stale", "header": "MAPPED BUT STALE", "format": "number"},
+            {"field": "comp_only_products", "header": "COMP-ONLY PRODUCTS", "format": "number"},
+            {"field": "shared_brands", "header": "SHARED BRANDS #", "format": "number"},
+            {"field": "bf_only_brands", "header": "BF-ONLY BRANDS #", "format": "number"},
+            {"field": "comp_only_brands", "header": "COMP-ONLY BRANDS #", "format": "number"},
+            {"field": "daily_revenue", "header": "REVENUE/DAY", "format": "number"},
+            {"field": "unmatched_revenue", "header": "UNMATCHED REVENUE", "format": "number"},
+        ],
+        "rows": [{
+            "sub_category_name": r.get("sub_category_name"),
+            "commercial_category_name": r.get("commercial_category_name"),
+            "bf_products": _num(r.get("bf_products")),
+            "matched": _num(r.get("matched")),
+            "mapping_pct": _pct(r.get("mapping_pct")),
+            "mapping_pct_shared": _pct(r.get("mapping_pct_shared")),
+            "confirmed_no_match": _num(r.get("confirmed_no_match")),
+            "potential_match": _num(r.get("potential_match")),
+            "addressable_pct": _pct(r.get("addressable_pct")),
+            "matched_but_stale": _num(r.get("matched_but_stale")),
+            "comp_only_products": _num(r.get("comp_only_products")),
+            "shared_brands": _num(r.get("shared_brands")),
+            "bf_only_brands": _num(r.get("bf_only_brands")),
+            "comp_only_brands": _num(r.get("comp_only_brands")),
+            "daily_revenue": _num(r.get("daily_revenue")),
+            "unmatched_revenue": _num(r.get("unmatched_revenue")),
+        } for r in rows],
+    }
+
+
+def _portfolio_sheet(rows, competitor):
+    return {
+        "name": f"{competitor} Portfolio",
+        "title": f"{competitor} — Product Portfolio",
+        "note": "Both sides in one sheet: SIDE says whose shelf the row is from.",
+        "bold_first_col": False,
+        "columns": [
+            {"field": "brand", "header": "BRAND", "width": 24},
+            {"field": "side", "header": "SIDE", "width": 12},
+            {"field": "status", "header": "STATUS", "width": 22},
+            {"field": "bf_product_name", "header": "BF_PRODUCT_NAME", "width": 44},
+            {"field": "bf_sub_category", "header": "BF_SUB_CATEGORY", "width": 26},
+            {"field": "mapped_bf_sub_category", "header": "MAPPED_BF_SUB_CATEGORY", "width": 26},
+            {"field": "bridge_level", "header": "BRIDGE_LEVEL", "width": 18},
+            {"field": "comp_product_name", "header": "COMP_PRODUCT_NAME", "width": 44},
+            {"field": "comp_brand_name", "header": "COMP_BRAND_NAME", "width": 22},
+            {"field": "category_level_1", "header": "CATEGORY_LEVEL_1", "width": 22},
+            {"field": "category_level_2", "header": "CATEGORY_LEVEL_2", "width": 22},
+            {"field": "category_level_3", "header": "CATEGORY_LEVEL_3", "width": 22},
+            {"field": "is_shared_brand", "header": "IS_SHARED_BRAND", "width": 15},
+            {"field": "matched_comp_active_7d", "header": "MATCHED_COMP_ACTIVE_7D", "width": 20},
+            {"field": "is_potential_match", "header": "IS_POTENTIAL_MATCH", "width": 18},
+            {"field": "best_similarity", "header": "BEST_SIMILARITY_SCORE", "format": "percent2",
+             "width": 18},
+        ],
+        "rows": [{
+            "brand": r.get("brand_name") or r.get("comp_brand_name") or "",
+            "side": r.get("_side"),
+            "status": r.get("status") or "",
+            "bf_product_name": r.get("product_name") or "",
+            "bf_sub_category": r.get("sub_category_name") or "",
+            "mapped_bf_sub_category": r.get("mapped_bf_sub_category") or "",
+            "bridge_level": r.get("bridge_level") or "",
+            "comp_product_name": r.get("comp_product_name") or "",
+            "comp_brand_name": r.get("comp_brand_name") or "",
+            "category_level_1": r.get("category_level_1") or "",
+            "category_level_2": r.get("category_level_2") or "",
+            "category_level_3": r.get("category_level_3") or "",
+            "is_shared_brand": r.get("is_shared_brand"),
+            "matched_comp_active_7d": r.get("matched_comp_active_7d"),
+            "is_potential_match": r.get("is_potential_match"),
+            "best_similarity": r.get("best_similarity_in_portfolio"),
+        } for r in rows],
+    }
+
+
+@router.get("/workbook")
+def export_workbook(
+    request: Request,
+    filters: dict = Depends(_filters),
+    sheets: str = Query("all", description="all | brands | subcategories | products"),
+):
+    """Stream the gap analysis as a styled workbook."""
+    from fastapi.responses import StreamingResponse
+    from ..services.excel_report import build_workbook
+
+    svc = _svc(request)
+    competitor = (filters.get("competitor") or "Competitor").split(",")[0].strip()
+    wanted = sheets.strip().lower()
+    specs = []
+
+    if wanted in ("all", "overview"):
+        # Deliberately NOT competitor-scoped: this is the cross-competitor
+        # summary, and narrowing it would leave a one-row sheet.
+        all_comps = {k: v for k, v in filters.items() if k != "competitor"}
+        specs.append(_overview_sheet(svc.get_competitor_overview(all_comps)))
+    if wanted in ("all", "brands"):
+        specs.append(_brands_sheet(svc.get_gap_by_brand(filters), competitor))
+    if wanted in ("all", "subcategories"):
+        specs.append(_subcategories_sheet(svc.get_gap_by_subcategory(filters), competitor))
+    if wanted in ("all", "products"):
+        rows = []
+        for side, label in (("breadfast", "Breadfast"), ("competitor", "Competitor")):
+            page = svc.get_gap_products(filters, side=side, page=1, page_size=100_000)
+            rows += [{**r, "_side": label} for r in page["items"]]
+        specs.append(_portfolio_sheet(rows, competitor))
+
+    if not specs:
+        raise HTTPException(status_code=400, detail=f"unknown sheets value: {sheets}")
+
+    safe = "".join(ch for ch in competitor if ch.isalnum()) or "Competitor"
+    name = f"{safe}_Brand_Portfolio.xlsx" if wanted == "all" else f"{safe}_{wanted}.xlsx"
+    return StreamingResponse(
+        build_workbook(specs),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )

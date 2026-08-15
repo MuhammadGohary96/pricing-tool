@@ -58,13 +58,28 @@
       <GapKpiCards :kpis="store.kpis" />
 
       <!-- ─── View switch ─── -->
-      <div class="flex items-center gap-1 bg-white rounded-xl shadow-panel ring-1 ring-grey-200/70 p-1 self-start">
-        <button v-for="v in VIEWS" :key="v.value" @click="store.setView(v.value)"
-                class="px-4 py-1.5 rounded-lg text-body font-semibold transition-colors flex items-center gap-2"
-                :class="store.view === v.value ? 'bg-brand-primary text-white' : 'text-grey-600 hover:bg-grey-50'">
-          <component :is="v.icon" class="w-4 h-4" />
-          {{ v.label }}
-        </button>
+      <div class="flex items-center justify-between gap-3 flex-wrap">
+        <div class="flex items-center gap-1 bg-white rounded-xl shadow-panel ring-1 ring-grey-200/70 p-1">
+          <button v-for="v in VIEWS" :key="v.value" @click="store.setView(v.value)"
+                  class="px-4 py-1.5 rounded-lg text-body font-semibold transition-colors flex items-center gap-2"
+                  :class="store.view === v.value ? 'bg-brand-primary text-white' : 'text-grey-600 hover:bg-grey-50'">
+            <component :is="v.icon" class="w-4 h-4" />
+            {{ v.label }}
+          </button>
+        </div>
+
+        <!-- The whole file, not just the table on screen: the per-table buttons
+             below export one sheet each, this one builds the workbook. -->
+        <div class="flex items-center gap-2">
+          <span class="text-caption text-grey-400 hidden sm:inline">
+            Overview + Brands + Subcategories + Portfolio
+          </span>
+          <ExportButton
+            :fetcher="exportWorkbook"
+            label="Export workbook"
+            :filename="`${compFile()}_Brand_Portfolio.xlsx`"
+          />
+        </div>
       </div>
 
       <GapSubcategoryTable
@@ -107,6 +122,7 @@ import { useGapStore } from '../stores/gap'
 import { useFiltersStore } from '../stores/filters'
 import { useUrlSync } from '../composables/useUrlSync'
 import { gapApi } from '../api/client'
+import ExportButton from '../components/shared/ExportButton.vue'
 import PageShell from '../components/shared/PageShell.vue'
 import PageHeader from '../components/shared/PageHeader.vue'
 import DefinitionsPanel from '../components/shared/DefinitionsPanel.vue'
@@ -139,8 +155,8 @@ const definitions = [
   {
     title: 'Gap metrics',
     items: [
-      { term: 'Matched %', description: 'Our products linked to a competitor product, over all our products in scope. Linkage — not whether we managed to price it in a given fulfillment point.', icon: GitCompareArrows },
-      { term: 'Addressable %', description: 'Matched ÷ (our products − confirmed no-match). Products the matcher has positively rejected are removed from the denominator, so this is the honest ceiling.', icon: Target },
+      { term: 'Mapped %', description: 'Our products linked to a competitor product, over all our products in scope. Linkage — not whether we managed to price it in a given fulfillment point.', icon: GitCompareArrows },
+      { term: 'Addressable %', description: 'Mapped ÷ (our products − confirmed no-match). Products the matcher has positively rejected are removed from the denominator, so this is the honest ceiling.', icon: Target },
       { term: 'Shared-brand %', description: 'Matched % counting only brands the competitor also carries. A brand they do not stock can never be matched, so this separates a matching backlog from a genuine assortment difference.', icon: Handshake },
       { term: 'Confirmed no-match', description: 'The matcher looked and positively rejected every candidate — a real assortment gap, not a backlog item.', icon: Scale },
       { term: 'Potential match', description: 'Unmatched, with an AI candidate scoring ≥ 85% similarity that is still in the competitor portfolio. Ready for review.', icon: Sparkles },
@@ -158,12 +174,26 @@ const definitions = [
   },
 ]
 
-async function exportRows(view) {
-  const params = { ...store.filterParams, view }
-  if (view === 'products') params.side = store.productSide
-  const res = await gapApi.exportRows(params)
-  return res.data
+const compFile = () => (store.competitor || 'Competitor').replace(/[^A-Za-z0-9]+/g, '')
+
+// Both exports are rendered by the backend. A browser-built workbook cannot
+// carry the house style at all — the community build of SheetJS writes values
+// but no fills, fonts or number formats — so the styling, threshold colours and
+// frozen headers all come from openpyxl on the server.
+async function downloadWorkbook(sheets) {
+  const res = await gapApi.workbook({ ...store.filterParams, sheets })
+  const name = /filename="([^"]+)"/.exec(res.headers?.['content-disposition'] || '')?.[1]
+  return {
+    blob: res.data,
+    filename: name || `${compFile()}_${sheets === 'all' ? 'Brand_Portfolio' : sheets}.xlsx`,
+  }
 }
+
+/** One table, styled the same way, for grabbing just what is on screen. */
+const exportRows = view => downloadWorkbook(view)
+
+/** The whole file: Overview + Brands + Subcategories + Portfolio. */
+const exportWorkbook = () => downloadWorkbook('all')
 
 onMounted(() => store.init())
 

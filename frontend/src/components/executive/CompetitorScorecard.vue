@@ -14,7 +14,7 @@
         <div v-if="addressablePct != null" class="flex items-baseline gap-1.5">
           <span class="text-caption text-grey-500">Addressable</span>
           <span class="font-mono text-body font-bold text-grey-900 tabular-nums">{{ addressablePct }}%</span>
-          <HelpTooltip text="Matched over what CAN be matched, pooled across every competitor. Products the matcher positively rejected leave the denominator." />
+          <HelpTooltip text="Mapped over what CAN be mapped, pooled across every competitor. Products the matcher positively rejected leave the denominator." />
         </div>
         <div v-if="freshPct != null" class="flex items-baseline gap-1.5">
           <span class="text-caption text-grey-500">Benchmark freshness</span>
@@ -67,19 +67,19 @@
                  Util % in the Price position group can be checked by eye. -->
             <th :class="TH_R">
               <span class="inline-flex items-center gap-1">Used
-                <HelpTooltip text="Our eligible products that actually have a usable fresh price against this competitor, so they carry a PI. The NUMERATOR behind Util % — Used ÷ Eligible is the column two to the left. A subset of Matched: a product has to be matched AND both sides priced recently to be used." />
+                <HelpTooltip text="Our eligible products that actually have a usable fresh price against this competitor, so they carry a PI. The NUMERATOR behind Util % — Used ÷ Eligible is the column two to the left. A subset of Mapped: a product has to be mapped AND both sides priced recently to be used." />
               </span>
             </th>
-            <th :class="TH_R">Matched</th>
-            <th :class="TH_C" style="min-width: 118px">Matched %</th>
+            <th :class="TH_R">Mapped</th>
+            <th :class="TH_C" style="min-width: 118px">Mapped %</th>
             <th :class="TH_R">
               <span class="inline-flex items-center gap-1">Fresh
-                <HelpTooltip text="Matched AND the competitor product was seen in the last 7 days." />
+                <HelpTooltip text="Mapped AND the competitor product was seen in the last 7 days." />
               </span>
             </th>
             <th :class="TH_C" style="min-width: 118px">
               <span class="inline-flex items-center gap-1">Addressable %
-                <HelpTooltip text="Matched divided by (our SKUs minus confirmed no-match). The honest ceiling: a competitor at 30% matched but 100% addressable is finished, not behind." />
+                <HelpTooltip text="Mapped divided by (our SKUs minus confirmed no-match). The honest ceiling: a competitor at 30% mapped but 100% addressable is finished, not behind." />
               </span>
             </th>
             <th :class="TH_R">Potential</th>
@@ -102,7 +102,7 @@
             </th>
             <th :class="TH_R">
               <span class="inline-flex items-center gap-1">Ours only
-                <HelpTooltip text="Our SKUs with no match at this competitor — Our SKUs minus Matched. The mirror of 'They only'. Read it as a CEILING: it counts what they genuinely do not stock TOGETHER WITH what we simply failed to match. Hover a row for the split into confirmed-not-stocked, likely matching miss, and never ruled either way." />
+                <HelpTooltip text="Our SKUs with no match at this competitor — Our SKUs minus Mapped. The mirror of 'They only'. Read it as a CEILING: it counts what they genuinely do not stock TOGETHER WITH what we simply failed to match. Hover a row for the split into confirmed-not-stocked, likely matching miss, and never ruled either way." />
               </span>
             </th>
             <th :class="TH_C" style="min-width: 132px">Brands s / ours / theirs</th>
@@ -269,7 +269,7 @@ function catalogueTitle(row) {
   } else {
     // Worth stating plainly: with no filter this equals their true catalogue,
     // because the matched and unmatched halves partition it exactly.
-    lines.push('', 'Matched and unmatched halves account for all of it.')
+    lines.push('', 'Mapped and unmatched halves account for all of it.')
   }
   return lines.join('\n')
 }
