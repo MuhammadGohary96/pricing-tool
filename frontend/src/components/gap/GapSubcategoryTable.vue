@@ -52,14 +52,19 @@
               </span>
             </th>
             <th :class="TH_R">
-              <span class="inline-flex items-center gap-1">Their catalogue
-                <HelpTooltip text="Their catalogue attributable to this row: products of theirs we matched here, plus products of theirs we do not carry. It will NOT equal Mapped + They only, for two reasons — Mapped counts OUR products while this counts THEIRS, and one of their listings can answer several of ours; and a matched product they have stopped listing is no longer in their catalogue. Hover a number for its own arithmetic." />
+              <span class="inline-flex items-center gap-1">Mapped live
+                <HelpTooltip text="Their products that our products in this row are matched to, and that they still list. Counted on THEIR side, so it is smaller than Mapped: several of our products can share one of their listings, and a match to something they have delisted does not count. This plus They only is exactly Their catalogue." />
               </span>
             </th>
             <th :class="TH_R">
               <span class="inline-flex items-center gap-1">
                 They only
                 <HelpTooltip text="Competitor products we do not carry, placed into this subcategory by the category bridge. Never sum this column — one competitor product can bridge to several subcategories." />
+              </span>
+            </th>
+            <th :class="TH_R">
+              <span class="inline-flex items-center gap-1">Their catalogue
+                <HelpTooltip text="Their catalogue attributable to this row — Mapped live plus They only, the two columns to its left. It will not equal Mapped + They only, because Mapped counts OUR products and this counts theirs." />
               </span>
             </th>
             <th :class="TH_C" style="min-width: 178px">
@@ -102,8 +107,9 @@
               <span v-else class="text-grey-300">—</span>
             </td>
             <td :class="TD_N" class="text-grey-600">{{ pct(row.coverage_pct) }}</td>
-            <td :class="TD_N" class="text-grey-600" :title="catalogueTitle(row)">{{ n(row.comp_catalogue) }}</td>
+            <td :class="TD_N" class="text-green-700">{{ n(row.comp_mapped_live) }}</td>
             <td :class="TD_N" class="text-amber-700 font-semibold">{{ n(row.comp_only_products) }}</td>
+            <td :class="TD_N" class="text-grey-600" :title="catalogueTitle(row)">{{ n(row.comp_catalogue) }}</td>
             <td class="px-4 py-3">
               <div class="flex items-center gap-1 text-caption font-mono">
                 <span class="px-1.5 py-0.5 rounded bg-green-50 text-green-700" :title="titleList('Shared', row.shared_brand_list)">{{ row.shared_brands }}</span>

@@ -51,11 +51,16 @@
             <th :class="TH_R">No-match</th>
             <th :class="TH_R">Potential</th>
             <th :class="TH_R">
-              <span class="inline-flex items-center gap-1">Their catalogue
-                <HelpTooltip text="Their catalogue attributable to this row: products of theirs we matched here, plus products of theirs we do not carry. It will NOT equal Mapped + They only, for two reasons — Mapped counts OUR products while this counts THEIRS, and one of their listings can answer several of ours; and a matched product they have stopped listing is no longer in their catalogue. Hover a number for its own arithmetic." />
+              <span class="inline-flex items-center gap-1">Mapped live
+                <HelpTooltip text="Their products that our products in this row are matched to, and that they still list. Counted on THEIR side, so it is smaller than Mapped: several of our products can share one of their listings, and a match to something they have delisted does not count. This plus They only is exactly Their catalogue." />
               </span>
             </th>
             <th :class="TH_R">They only</th>
+            <th :class="TH_R">
+              <span class="inline-flex items-center gap-1">Their catalogue
+                <HelpTooltip text="Their catalogue attributable to this row — Mapped live plus They only, the two columns to its left. It will not equal Mapped + They only, because Mapped counts OUR products and this counts theirs." />
+              </span>
+            </th>
             <th :class="TH_R">
               <span class="inline-flex items-center gap-1">Ours only
                 <HelpTooltip text="Our products of this brand with no match at this competitor — Our SKUs minus Mapped. The mirror of They only. A CEILING, not a proven assortment gap: it counts what they genuinely do not stock together with what we simply failed to match. The No-match column beside it is the confirmed subset." />
@@ -100,8 +105,9 @@
             </td>
             <td :class="TD_N" class="text-grey-500">{{ n(row.confirmed_no_match) }}</td>
             <td :class="TD_N" class="text-amber-600">{{ n(row.potential_match) }}</td>
-            <td :class="TD_N" class="text-grey-600" :title="catalogueTitle(row)">{{ n(row.comp_catalogue) }}</td>
+            <td :class="TD_N" class="text-green-700">{{ n(row.comp_mapped_live) }}</td>
             <td :class="TD_N" class="text-amber-700 font-semibold">{{ n(row.comp_only_products) }}</td>
+            <td :class="TD_N" class="text-grey-600" :title="catalogueTitle(row)">{{ n(row.comp_catalogue) }}</td>
             <td :class="TD_N" class="text-brand-primary font-semibold">{{ n(row.our_only_products) }}</td>
             <td :class="TD_N" class="text-grey-600">{{ n(row.bf_subcategories) }}</td>
             <td :class="TD_N" class="text-grey-600">{{ n(row.comp_subcategories) }}</td>

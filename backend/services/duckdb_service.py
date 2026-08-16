@@ -2168,6 +2168,9 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             p.blended_pi,
             p.coverage_pct,
             CAST(COALESCE(c.comp_only_products, 0) AS INTEGER) AS comp_only_products,
+            -- Exposed on its own as well as inside comp_catalogue, so the
+            -- table can show the sum rather than assert the total.
+            CAST(COALESCE(b.comp_paired, 0) AS INTEGER) AS comp_mapped_live,
             -- Their catalogue attributable to this row: the products of theirs
             -- we matched, plus the products of theirs we did not. Same
             -- partition the Executive scorecard uses.
@@ -2289,6 +2292,9 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             b.addressable_pct,
             CAST(COALESCE(b.potential_match, 0)    AS INTEGER) AS potential_match,
             CAST(COALESCE(c.comp_only_products, 0) AS INTEGER) AS comp_only_products,
+            -- Exposed on its own as well as inside comp_catalogue, so the
+            -- table can show the sum rather than assert the total.
+            CAST(COALESCE(b.comp_paired, 0) AS INTEGER) AS comp_mapped_live,
             -- Their catalogue attributable to this row: the products of theirs
             -- we matched, plus the products of theirs we did not. Same
             -- partition the Executive scorecard uses.
