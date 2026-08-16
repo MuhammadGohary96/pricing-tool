@@ -98,7 +98,7 @@ export function useUrlSync() {
 
   // Watch filter changes and sync to URL
   watch(
-    () => [...FILTER_KEYS.map(k => filters[k]), filters.includePrivateLabel, filters.priceFallback, filters.vertical, filters.brandScope],
+    () => [...FILTER_KEYS.map(k => filters[k]), filters.includePrivateLabel, filters.privateLabelOnly, filters.priceFallback, filters.vertical, filters.brandScope],
     () => syncToUrl(),
     { deep: true }
   )

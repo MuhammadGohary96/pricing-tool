@@ -26,6 +26,7 @@ def _filters(
     competitor: Optional[str] = Query(None),
     vertical: Optional[str] = Query(None),
     exclude_private_label: Optional[bool] = Query(None),
+    private_label_only: Optional[bool] = Query(None),
     fp_names: Optional[str] = Query(None),
     brand_scope: Optional[str] = Query(
         None, description="'shared' = only products whose brand the competitor also carries"
@@ -50,6 +51,8 @@ def _filters(
         params["vertical"] = vertical
     if exclude_private_label:
         params["exclude_private_label"] = True
+    if private_label_only:
+        params["private_label_only"] = True
     if fp_names:
         params["fp_names"] = fp_names
     if brand_scope:

@@ -98,16 +98,24 @@
 
       <div class="h-5 w-px bg-grey-200"></div>
 
-      <!-- Include Private Label checkbox -->
-      <label class="flex items-center gap-1.5 cursor-pointer select-none group">
-        <input
-          type="checkbox"
-          :checked="pending.includePrivateLabel"
-          class="w-3.5 h-3.5 rounded border-grey-300 text-brand-primary focus:ring-brand-lightest accent-[var(--brand-primary)]"
-          @change="pending.includePrivateLabel = $event.target.checked"
-        />
-        <span class="text-body text-grey-600 group-hover:text-grey-900 transition-colors whitespace-nowrap">Include Private Label</span>
-      </label>
+      <!-- Private label — a segmented control like Vertical and Brands, rather
+           than a checkbox. A checkbox can only say include/exclude; the third
+           state, our own label ON ITS OWN, was unreachable and is the one that
+           answers "how does our own range compare". -->
+      <div class="flex items-center gap-1.5">
+        <span class="text-body text-grey-500 whitespace-nowrap">Private label</span>
+        <div class="inline-flex rounded-lg border border-grey-200 overflow-hidden text-caption font-medium">
+          <button
+            v-for="opt in privateLabelOptions"
+            :key="opt.value"
+            type="button"
+            :title="opt.title"
+            class="px-2.5 py-1.5 text-body font-medium transition-colors border-r border-grey-200 last:border-r-0"
+            :class="privateLabelState === opt.value ? 'bg-brand-primary text-white' : 'bg-white text-grey-600 hover:bg-grey-50'"
+            @click="setPrivateLabel(opt.value)"
+          >{{ opt.label }}</button>
+        </div>
+      </div>
 
       <!-- Price-fallback mode (staged like every other control until Apply). -->
       <button
@@ -209,7 +217,11 @@
           {{ fp }}
           <button class="hover:text-brand-dark" @click="removeChip('fpNames', fp)"><X class="w-3 h-3" /></button>
         </span>
-        <span v-if="!pending.includePrivateLabel" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-micro font-medium border border-amber-200">
+        <span v-if="pending.privateLabelOnly" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light/60">
+          Private label only
+          <button class="hover:text-brand-dark" @click="setPrivateLabel('')"><X class="w-3 h-3" /></button>
+        </span>
+        <span v-else-if="!pending.includePrivateLabel" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-micro font-medium border border-amber-200">
           Excl. Private Label
           <button class="hover:text-amber-900" @click="pending.includePrivateLabel = true"><X class="w-3 h-3" /></button>
         </span>
@@ -250,6 +262,20 @@ const brandScopeOptions = [
   { value: 'shared', label: '+ by match', title: 'The above plus brands proved shared by matching, where the two names disagree. A brand counts when at least half its products are mapped at that competitor — the realistic matching ceiling, since a brand they do not stock can never be matched' },
 ]
 
+// Three states over two booleans, because includePrivateLabel is already in
+// saved views and shared URLs and must keep meaning what it meant.
+const privateLabelOptions = [
+  { value: '', label: 'All', title: 'Our whole range, own label included' },
+  { value: 'exclude', label: 'Exclude', title: 'Third-party brands only — the comparable range, since competitors cannot stock our own label' },
+  { value: 'only', label: 'Only', title: 'Our own label on its own — what we sell that nobody else can' },
+]
+const privateLabelState = computed(() =>
+  pending.privateLabelOnly ? 'only' : (pending.includePrivateLabel ? '' : 'exclude'))
+function setPrivateLabel(v) {
+  pending.includePrivateLabel = v !== 'exclude'
+  pending.privateLabelOnly = v === 'only'
+}
+
 const verticalOptions = [
   { value: '', label: 'All' },
   { value: 'Beauty', label: 'Beauty' },
@@ -260,7 +286,7 @@ const verticalOptions = [
 // refetch / URL change) until Apply. subcatTier & actionType are carried through
 // even though they have no control here, so committing never wipes filters set
 // elsewhere (e.g. Master Data action cards).
-const FIELDS = ['mainCategory', 'subCategory', 'globalTier', 'subcatTier', 'actionType', 'brand', 'competitor', 'fpNames', 'vertical', 'brandScope', 'includePrivateLabel', 'priceFallback']
+const FIELDS = ['mainCategory', 'subCategory', 'globalTier', 'subcatTier', 'actionType', 'brand', 'competitor', 'fpNames', 'vertical', 'brandScope', 'includePrivateLabel', 'privateLabelOnly', 'priceFallback']
 
 function committedSnapshot() {
   const s = {}
@@ -305,7 +331,7 @@ const pendingChanges = computed(() =>
   + (pending.vertical ? 1 : 0)
   + (pending.brandScope ? 1 : 0)
   + (pillsDirty.value ? 1 : 0)
-  + (!pending.includePrivateLabel ? 1 : 0)
+  + (!pending.includePrivateLabel || pending.privateLabelOnly ? 1 : 0)
   + (pending.priceFallback ? 1 : 0)
 )
 
@@ -314,7 +340,7 @@ const pendingChanges = computed(() =>
 const pendingHasFilters = computed(() =>
   !!(pending.mainCategory.length || pending.subCategory.length || pending.globalTier.length ||
      pending.brand.length || pending.competitor.length || pending.fpNames.length ||
-     pending.vertical || pending.brandScope || !pending.includePrivateLabel)
+     pending.vertical || pending.brandScope || !pending.includePrivateLabel || pending.privateLabelOnly)
 )
 
 const activeCount = computed(() => pendingChanges.value)

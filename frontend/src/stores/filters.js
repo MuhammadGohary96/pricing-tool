@@ -15,6 +15,10 @@ export const useFiltersStore = defineStore('filters', {
     // Beauty = main_category_name 'Fragrances & Beauty'; Supermarket = the rest.
     vertical: '',
     includePrivateLabel: true,
+    // Added rather than folded into includePrivateLabel: that flag is in saved
+    // views and shared URLs, and renaming it would silently reinterpret both.
+    // The two combine into three states — all / exclude / only.
+    privateLabelOnly: false,
     // Brand scope — '' (All brands) | 'shared'. 'shared' keeps only products
     // whose brand the competitor also carries, which is the realistic ceiling:
     // a brand they do not stock can never be matched.
@@ -54,6 +58,7 @@ export const useFiltersStore = defineStore('filters', {
       if (state.fpNames.length) params.fp_names = state.fpNames.join(',')
       if (state.vertical) params.vertical = state.vertical
       if (!state.includePrivateLabel) params.exclude_private_label = true
+      if (state.privateLabelOnly) params.private_label_only = true
       if (state.brandScope) params.brand_scope = state.brandScope
       if (state.priceFallback) params.price_fallback = true
       return params
@@ -70,7 +75,8 @@ export const useFiltersStore = defineStore('filters', {
         state.fpNames.length ||
         !!state.vertical ||
         !!state.brandScope ||
-        !state.includePrivateLabel
+        !state.includePrivateLabel ||
+        state.privateLabelOnly
       )
     },
   },
@@ -171,6 +177,7 @@ export const useFiltersStore = defineStore('filters', {
       this.visibleCompetitors = []
       this.pendingVisibleCompetitors = []
       this.includePrivateLabel = true
+      this.privateLabelOnly = false
       this.fetchSubcategories()
     },
 
@@ -197,6 +204,7 @@ export const useFiltersStore = defineStore('filters', {
         this.pendingVisibleCompetitors = [...snap.visibleCompetitors]
       }
       this.includePrivateLabel = 'includePrivateLabel' in snap ? !!snap.includePrivateLabel : true
+      this.privateLabelOnly = 'privateLabelOnly' in snap ? !!snap.privateLabelOnly : false
       if ('priceFallback' in snap) this.priceFallback = !!snap.priceFallback
       this.fetchSubcategories()
     },

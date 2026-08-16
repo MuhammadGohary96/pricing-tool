@@ -33,6 +33,7 @@ def _filters(
     # Default is unscoped, matching the other two views.
     vertical: Optional[str] = Query(None, description="Beauty | Supermarket"),
     exclude_private_label: Optional[bool] = Query(None),
+    private_label_only: Optional[bool] = Query(None),
 ) -> dict:
     params: dict = {}
     if competitor:
@@ -55,6 +56,8 @@ def _filters(
         params["vertical"] = vertical
     if exclude_private_label:
         params["exclude_private_label"] = True
+    if private_label_only:
+        params["private_label_only"] = True
     return params
 
 

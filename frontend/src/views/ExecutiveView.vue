@@ -324,6 +324,7 @@ watchDebounced(
     // Only varies when the pills actually affect the query (see Commercial).
     filters.brandScope ? filters.visibleCompetitors.join(',') : '',
     filters.includePrivateLabel,
+    filters.privateLabelOnly,
     filters.priceFallback,
   ],
   async () => {

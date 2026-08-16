@@ -233,6 +233,11 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                     filtered = filtered[mc != "fragrances & beauty"]
             if filters.get("exclude_private_label"):
                 filtered = filtered[~filtered["brand_name"].str.lower().str.contains("breadfast", na=False)]
+            elif filters.get("private_label_only"):
+                # Mirror of the line above, deliberately using the SAME predicate
+                # so the two states partition the range on this path. Note the
+                # SQL path below uses a narrower test; see the comment there.
+                filtered = filtered[filtered["brand_name"].str.lower().str.contains("breadfast", na=False)]
             # Brand scope. Applied here as well as in _build_where_clause because
             # the GLOBAL path reads the pre-built global_base and narrows it in
             # pandas; same filter-after caveat that already applies to
@@ -345,9 +350,19 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         elif vertical == "supermarket":
             clauses.append("(main_category_name IS NULL OR LOWER(main_category_name) <> 'fragrances & beauty')")
 
-        # Private-label exclusion (matches pandas behavior)
+        # Private-label scope. 'exclude' is untouched, so no number that exists
+        # today moves; 'only' is its exact mirror on this path.
+        #
+        # ⚠ The two paths do NOT agree with each other, and this predates the
+        # toggle: pandas tests LOWER(brand_name) CONTAINS 'breadfast' while SQL
+        # tests brand_name != 'Breadfast'. "Breadfast Bakery" is private label to
+        # one and third-party to the other. Unifying them on the canonical
+        # is_private_label flag would move existing numbers, so it is left alone
+        # here and flagged rather than quietly changed.
         if filters.get("exclude_private_label"):
             clauses.append("brand_name != 'Breadfast'")
+        elif filters.get("private_label_only"):
+            clauses.append("brand_name = 'Breadfast'")
 
         # Brand scope — 'shared' keeps only (product, competitor) pairs whose brand
         # the competitor also carries. A brand they do not stock can never be

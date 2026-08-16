@@ -30,6 +30,7 @@ export const useExecutiveStore = defineStore('executive', {
       if (f.fpNames.length) p.fp_names = f.fpNames.join(',')
       if (f.vertical) p.vertical = f.vertical
       if (!f.includePrivateLabel) p.exclude_private_label = true
+      if (f.privateLabelOnly) p.private_label_only = true
       if (f.brandScope) p.brand_scope = f.brandScope
       // See the commercial store: pills only reach the server under Shared-only.
       if (f.brandScope && f.visibleCompetitors.length) {

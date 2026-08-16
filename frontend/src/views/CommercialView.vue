@@ -205,6 +205,7 @@ watchDebounced(
     // stays free and one Apply is one refetch rather than two.
     filters.brandScope ? filters.visibleCompetitors.join(',') : '',
     filters.includePrivateLabel,
+    filters.privateLabelOnly,
     filters.priceFallback,
   ],
   async () => {
