@@ -59,9 +59,10 @@
           <div class="min-w-0">
             <div class="text-micro text-grey-500 leading-tight">Outer arc</div>
             <div class="text-caption font-semibold text-grey-800 leading-tight">
-              {{ brandUnreachable.toLocaleString() }} brand not carried
+              {{ brandUnreachable.toLocaleString() }}
+              <span class="font-mono text-slate-600">({{ brandUnreachablePct }}%)</span>
             </div>
-            <div class="text-micro text-grey-400 leading-tight">unreachable by matching</div>
+            <div class="text-micro text-grey-400 leading-tight">brand not carried — unreachable by matching</div>
           </div>
         </div>
       </div>
@@ -293,23 +294,6 @@ const chartOption = computed(() => {
           textAlign: 'center',
         },
       },
-      // The headline the outer arc is making: how much of the whole range is
-      // out of reach because the brand is not on their shelf. Sits under the
-      // centre figure so the two read as a pair -- what we can compare, and what
-      // we never will.
-      ...(brandUnreachablePct.value > 0 ? [{
-        type: 'text',
-        left: 'center',
-        top: '64%',
-        style: {
-          text: `${brandUnreachablePct.value}% brand not carried`,
-          fontSize: 10,
-          fontWeight: 600,
-          fontFamily: 'Geist, system-ui, sans-serif',
-          fill: '#475569',
-          textAlign: 'center',
-        },
-      }] : []),
     ],
     series: [{
       type: 'pie',
