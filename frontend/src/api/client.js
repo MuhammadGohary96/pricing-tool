@@ -65,6 +65,9 @@ export const commercialApi = {
   getPivotedProducts: (params) => api.get('/commercial/products-pivoted', { params }),
   getProductFpMatrix: (productId, params) => api.get(`/commercial/products/${encodeURIComponent(productId)}/fp-matrix`, { params }),
   exportCSV: (params) => api.get('/commercial/export', { params, responseType: 'blob' }),
+  // Styled workbook, rendered by the backend with openpyxl. Must be a blob:
+  // the response is a binary .xlsx, not JSON.
+  workbook: (params) => api.get('/commercial/workbook', { params, responseType: 'blob' }),
 }
 
 export const masterDataApi = {
@@ -106,4 +109,5 @@ export const executiveApi = {
   getDashboard: (params) => api.get('/executive/dashboard', { params }),
   getFpCompetitorPi: (params) => api.get('/executive/fp-competitor-pi', { params }),
   getCompetitorOverview: (params) => api.get('/executive/competitor-overview', { params }),
+  workbook: (params) => api.get('/executive/workbook', { params, responseType: 'blob' }),
 }

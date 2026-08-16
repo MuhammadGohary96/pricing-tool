@@ -122,6 +122,7 @@ import { useGapStore } from '../stores/gap'
 import { useFiltersStore } from '../stores/filters'
 import { useUrlSync } from '../composables/useUrlSync'
 import { gapApi } from '../api/client'
+import { asDownload } from '../utils/workbook'
 import ExportButton from '../components/shared/ExportButton.vue'
 import PageShell from '../components/shared/PageShell.vue'
 import PageHeader from '../components/shared/PageHeader.vue'
@@ -180,13 +181,11 @@ const compFile = () => (store.competitor || 'Competitor').replace(/[^A-Za-z0-9]+
 // carry the house style at all — the community build of SheetJS writes values
 // but no fills, fonts or number formats — so the styling, threshold colours and
 // frozen headers all come from openpyxl on the server.
-async function downloadWorkbook(sheets) {
-  const res = await gapApi.workbook({ ...store.filterParams, sheets })
-  const name = /filename="([^"]+)"/.exec(res.headers?.['content-disposition'] || '')?.[1]
-  return {
-    blob: res.data,
-    filename: name || `${compFile()}_${sheets === 'all' ? 'Brand_Portfolio' : sheets}.xlsx`,
-  }
+function downloadWorkbook(sheets) {
+  return asDownload(
+    gapApi.workbook({ ...store.filterParams, sheets }),
+    `${compFile()}_${sheets === 'all' ? 'Brand_Portfolio' : sheets}.xlsx`,
+  )
 }
 
 /** One table, styled the same way, for grabbing just what is on screen. */

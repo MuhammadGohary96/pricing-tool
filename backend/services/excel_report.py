@@ -30,8 +30,36 @@ ZEBRA_FILL = PatternFill("solid", fgColor="F8FAFC")
 ORANGE = "EB6200"      # below low_threshold
 GREEN = "15803D"       # at/above high_threshold
 
-DEFAULT_WIDTHS = {"text": 22, "number": 16, "percent": 15, "percent2": 15, "date": 12}
-NUM_FORMATS = {"number": "#,##0", "percent": "0.0%", "percent2": "0.00%", "date": "yyyy-mm-dd"}
+# decimal2 exists for PI and prices: `number` is #,##0, which would round a
+# blended PI of 1.05 to 1 and silently destroy the column.
+DEFAULT_WIDTHS = {"text": 22, "number": 16, "percent": 15, "percent2": 15,
+                  "decimal2": 14, "date": 12}
+NUM_FORMATS = {"number": "#,##0", "percent": "0.0%", "percent2": "0.00%",
+               "decimal2": "#,##0.00", "date": "yyyy-mm-dd"}
+NUMERIC_FORMATS = ("number", "percent", "percent2", "decimal2")
+
+
+# Shared by every router that streams a workbook, so the house style is applied
+# from one place rather than re-derived per view.
+PCT_LOW, PCT_HIGH = 0.50, 0.80     # orange below, green at/above
+
+
+def pct(v):
+    """Percent as a FRACTION. The cells carry a 0.0% format, so 20.3 would
+    render 2030%."""
+    return None if v is None else round(float(v) / 100.0, 5)
+
+
+def num(v):
+    return 0 if v is None else v
+
+
+def metric_col(field, header, low=PCT_LOW, high=PCT_HIGH, width=None):
+    col = {"field": field, "header": header, "format": "percent",
+           "low_threshold": low, "high_threshold": high}
+    if width:
+        col["width"] = width
+    return col
 
 
 def _to_number(v):
@@ -46,7 +74,7 @@ def _to_number(v):
 
 def _cell_value(row: dict, col: dict):
     v = row.get(col["field"])
-    if col.get("format") in ("number", "percent", "percent2"):
+    if col.get("format") in NUMERIC_FORMATS:
         n = _to_number(v)
         return v if n is None else n
     if isinstance(v, bool):
@@ -91,7 +119,7 @@ def _build_sheet(ws, spec: dict) -> int:
             fmt = col["format"]
             if j == 1 and bold_first:
                 c.font = Font(bold=True, size=9.5, color=SLATE_900)
-            elif fmt in ("percent", "percent2", "number") and isinstance(v, (int, float)):
+            elif fmt in NUMERIC_FORMATS and isinstance(v, (int, float)):
                 color, bold = SLATE_600, False
                 low, high = col.get("low_threshold"), col.get("high_threshold")
                 if col.get("invert"):        # bad-when-high metric

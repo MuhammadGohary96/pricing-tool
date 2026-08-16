@@ -364,3 +364,226 @@ def export_products(request: Request, filters: dict = Depends(_filters)):
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=products_export.csv"},
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Styled workbook export
+# ─────────────────────────────────────────────────────────────────────────────
+# Rendered server-side for the same reason as /api/gap/workbook and
+# /api/executive/workbook: the community build of SheetJS writes values but no
+# cell formatting, so the browser cannot produce the house style at all.
+#
+# Percentages go out as FRACTIONS — the cells carry a 0.0% format, which
+# multiplies by 100 for display, so writing 20.3 straight in renders 2030%.
+from backend.services.excel_report import build_workbook, metric_col as _metric, pct as _pct
+
+
+def _pi_col(field, header, width=None):
+    """PI = BF ÷ competitor, so ABOVE 1.00 means WE ARE MORE EXPENSIVE. `invert`
+    puts orange on the high side accordingly; a ±2% dead band keeps near-parity
+    rows uncoloured instead of flipping on rounding noise."""
+    col = {"field": field, "header": header, "format": "decimal2",
+           "low_threshold": 0.98, "high_threshold": 1.02, "invert": True}
+    if width:
+        col["width"] = width
+    return col
+
+
+def _blended_rows(df, comps):
+    """The blended-PI table as plain dicts, one per group, with the per-competitor
+    dicts already resolved for `comps`."""
+    out = []
+    for _, row in df.iterrows():
+        def _d(key):
+            v = row.get(key, {})
+            return v if isinstance(v, dict) else {}
+        pis = {c: _safe(v) for c, v in _d("competitor_blended_pis").items() if c in comps}
+        vals = [v for v in pis.values() if v is not None]
+        out.append({
+            "commercial_category_name": row.get("commercial_category_name") or "",
+            "sub_category_name": row.get("sub_category_name") or "",
+            "min_pi": min(vals) if vals else None,
+            "max_pi": max(vals) if vals else None,
+            "pis": pis,
+            "total": int(row.get("total_product_count", 0) or 0),
+            "eligible": int(row.get("eligible_product_count", 0) or 0),
+            "used": _d("competitor_used_counts"),
+            "mapped": _d("competitor_mapped_counts"),
+            "addressable": _d("competitor_addressable_pcts"),
+            "no_match": _d("competitor_no_match_counts"),
+            "fresh": _d("competitor_matched_fresh_counts"),
+            "comp_only": _d("competitor_comp_only_counts"),
+            "our_only": _d("competitor_our_only_counts"),
+        })
+    # Matches the table's default sort — worst position first.
+    out.sort(key=lambda r: (r["max_pi"] is None, -(r["max_pi"] or 0)))
+    return out
+
+
+def _blended_sheets(rows, comps, group_by):
+    is_subcat = group_by == "sub_category"
+
+    def base_cols(width=26):
+        cols = [{"field": "commercial_category_name", "header": "COMMERCIAL CATEGORY", "width": width}]
+        if is_subcat:
+            cols.append({"field": "sub_category_name", "header": "SUBCATEGORY", "width": width})
+        return cols
+
+    def base_vals(r):
+        v = {"commercial_category_name": r["commercial_category_name"]}
+        if is_subcat:
+            v["sub_category_name"] = r["sub_category_name"]
+        return v
+
+    # Sheet 1 reproduces what is on screen: every competitor's PI side by side,
+    # so a row can be read across without opening seven tabs.
+    grid = {
+        "name": "Blended PI",
+        "title": "Blended PI by " + ("subcategory" if is_subcat else "commercial category"),
+        "note": "PI = Breadfast price ÷ competitor price. Above 1.00 means Breadfast is more expensive. "
+                "Blank = nothing priced on both sides in that row.",
+        "columns": [
+            *base_cols(),
+            _pi_col("min_pi", "MIN PI"),
+            _pi_col("max_pi", "MAX PI"),
+            *[_pi_col(f"pi::{c}", c.upper()) for c in comps],
+            {"field": "total", "header": "TOTAL", "format": "number"},
+            {"field": "eligible", "header": "ELIGIBLE", "format": "number"},
+        ],
+        "rows": [{
+            **base_vals(r), "min_pi": r["min_pi"], "max_pi": r["max_pi"],
+            **{f"pi::{c}": r["pis"].get(c) for c in comps},
+            "total": r["total"], "eligible": r["eligible"],
+        } for r in rows],
+    }
+
+    # Then one tab per competitor with that competitor's coverage detail — the
+    # columns the table shows for whichever competitor header is selected.
+    detail = []
+    for comp in comps:
+        detail.append({
+            "name": comp,
+            "title": f"{comp} — blended PI and coverage",
+            "columns": [
+                *base_cols(),
+                _pi_col("blended_pi", "BLENDED PI"),
+                {"field": "total", "header": "TOTAL", "format": "number"},
+                {"field": "eligible", "header": "ELIGIBLE", "format": "number"},
+                {"field": "used", "header": "USED", "format": "number"},
+                {"field": "mapped", "header": "MAPPED", "format": "number"},
+                _metric("mapping_pct", "MAPPED %"),
+                _metric("utilization_pct", "UTIL %"),
+                _metric("addressable_pct", "ADDR %", low=0.60, high=0.90),
+                {"field": "no_match", "header": "CONFIRMED NO-MATCH", "format": "number"},
+                {"field": "fresh", "header": "MAPPED FRESH", "format": "number"},
+                *([{"field": "comp_only", "header": "THEY ONLY", "format": "number"}] if is_subcat else []),
+                {"field": "our_only", "header": "OURS ONLY", "format": "number"},
+            ],
+            "rows": [{
+                **base_vals(r),
+                "blended_pi": r["pis"].get(comp),
+                "total": r["total"],
+                "eligible": r["eligible"],
+                "used": r["used"].get(comp, 0),
+                "mapped": r["mapped"].get(comp, 0),
+                # Same denominators the table uses: Mapped % over TOTAL, Util %
+                # over ELIGIBLE. Not interchangeable — eligible is the top-80%
+                # revenue head, total is the whole row.
+                "mapping_pct": _pct(round(100.0 * r["mapped"].get(comp, 0) / r["total"], 1)) if r["total"] else None,
+                "utilization_pct": _pct(round(100.0 * r["used"].get(comp, 0) / r["eligible"], 1)) if r["eligible"] else None,
+                "addressable_pct": _pct(r["addressable"].get(comp)),
+                "no_match": r["no_match"].get(comp, 0),
+                "fresh": r["fresh"].get(comp, 0),
+                "comp_only": r["comp_only"].get(comp, 0),
+                "our_only": r["our_only"].get(comp, 0),
+            } for r in rows],
+        })
+    return [grid, *detail]
+
+
+def _products_sheet(payload, comps):
+    """The pivot, one row per product, priced against every competitor."""
+    return {
+        "name": "Products",
+        "title": "Products — price position by competitor",
+        "note": "PI = Breadfast price ÷ competitor price; above 1.00 means Breadfast is more expensive. "
+                "Worst PI is the highest across competitors. Blank = no usable competitor price.",
+        "columns": [
+            {"field": "product_name", "header": "PRODUCT", "width": 46},
+            {"field": "product_id", "header": "PRODUCT ID", "width": 14},
+            {"field": "brand_name", "header": "BRAND", "width": 22},
+            {"field": "sub_category_name", "header": "SUBCATEGORY", "width": 26},
+            {"field": "global_tier", "header": "TIER", "width": 10},
+            {"field": "action_type", "header": "ACTION", "width": 20},
+            {"field": "bf_sale_price", "header": "BF SALE PRICE", "format": "decimal2"},
+            _pi_col("worst_pi", "WORST PI"),
+            {"field": "total_revenue", "header": "TOTAL REVENUE", "format": "number"},
+            *[c for comp in comps for c in (
+                {"field": f"{comp}_price", "header": f"{comp.upper()} PRICE", "format": "decimal2"},
+                _pi_col(f"{comp}_pi", f"{comp.upper()} PI"),
+            )],
+        ],
+        "rows": [{
+            "product_name": r.get("product_name"),
+            "product_id": r.get("product_id"),
+            "brand_name": r.get("brand_name"),
+            "sub_category_name": r.get("sub_category_name"),
+            "global_tier": r.get("global_tier"),
+            "action_type": r.get("action_type"),
+            "bf_sale_price": r.get("bf_sale_price"),
+            "worst_pi": r.get("worst_pi"),
+            "total_revenue": r.get("total_revenue"),
+            **{f"{comp}_{k}": r.get(f"{comp}_{k}") for comp in comps for k in ("price", "pi")},
+        } for r in payload.get("items", [])],
+    }
+
+
+@router.get("/workbook")
+def export_workbook(
+    request: Request,
+    filters: dict = Depends(_filters),
+    sheets: str = Query("blended-pi", description="blended-pi | products"),
+    group_by: str = Query("sub_category"),
+    competitors: Optional[str] = Query(
+        None, description="Comma-separated competitors to include — the pills, "
+                          "which are client-side visibility and not part of the query."
+    ),
+    sort_by: Optional[str] = Query(None),
+    sort_dir: Optional[str] = Query("desc"),
+    search: Optional[str] = Query(None),
+):
+    """Stream a Commercial table as a styled workbook."""
+    svc = request.app.state.data_service
+    wanted = sheets.strip().lower()
+    wanted_comps = [c.strip() for c in (competitors or "").split(",") if c.strip()]
+
+    if wanted == "products":
+        # Every product, not just the page on screen. The client-side CSV this
+        # replaced serialized `props.data`, which is one page of 50 — an export
+        # that silently drops 99% of the rows is worse than no export.
+        payload = svc.get_products_pivoted(
+            filters=filters, page=1, page_size=1_000_000,
+            sort_by=sort_by, sort_dir=sort_dir, search=search,
+        )
+        comps = [c for c in payload.get("competitors", []) if not wanted_comps or c in wanted_comps]
+        specs = [_products_sheet(payload, comps)]
+        name = "Products_Price_Position.xlsx"
+    else:
+        gb = group_by if group_by in ("sub_category", "commercial_category") else "sub_category"
+        df = svc.get_blended_pi_by_subcategory(filters, group_by=gb)
+        # Same competitor set the table draws columns for: the union of the
+        # per-row PI dicts, keys included even where the value is null.
+        found = set()
+        for _, row in df.iterrows():
+            d = row.get("competitor_blended_pis")
+            if isinstance(d, dict):
+                found.update(d)
+        comps = [c for c in sorted(found) if not wanted_comps or c in wanted_comps]
+        specs = _blended_sheets(_blended_rows(df, comps), comps, gb)
+        name = "Blended_PI.xlsx"
+
+    return StreamingResponse(
+        build_workbook(specs),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )

@@ -23,7 +23,7 @@
           >Commercial category</button>
         </div>
         <span class="hidden sm:inline text-micro text-grey-400">Click a row to filter · a dot to jump to a product</span>
-        <ExportButton :fetcher="exportData" label="Export Excel" filename="blended_pi.xlsx" class="shrink-0" />
+        <ExportButton :fetcher="exportData" label="Export Excel" filename="Blended_PI.xlsx" class="shrink-0" />
       </div>
     </div>
     <!-- Refreshing indicator (in-place refetch on filter change) -->
@@ -225,6 +225,9 @@ const props = defineProps({
   busy: { type: Boolean, default: false },
   // 'sub_category' (default) | 'commercial_category' — the row grain.
   groupBy: { type: String, default: 'sub_category' },
+  /** Supplied by the view, which owns the filter params. Takes the competitors
+      on screen and resolves to { blob, filename }. */
+  exportFetcher: { type: Function, default: null },
 })
 
 const emit = defineEmits(['select', 'select-product', 'select-category', 'set-group-by'])
@@ -474,61 +477,14 @@ function compPiClass(val) {
 // the active grain (commercial category, or + subcategory) with that
 // competitor's PI and coverage. Falls back to a single combined sheet if no
 // competitors are visible.
+// Built by the backend — see utils/workbook.js. The pills are client-side
+// visibility and never reach the query, so the competitor list has to be sent
+// explicitly; group_by likewise, since it is this table's own control.
 function exportData() {
-  const rows = allSortedData.value
-  const isSubcat = props.groupBy === 'sub_category'
-
-  const baseCols = (row) => {
-    const o = { 'Commercial category': row.commercial_category_name ?? '' }
-    if (isSubcat) o['Subcategory'] = row.sub_category_name ?? ''
-    return o
-  }
-
-  const comps = visibleCompetitors.value
-  if (!comps.length) {
-    return {
-      filename: 'blended_pi.xlsx',
-      sheets: [{
-        name: 'Blended PI',
-        rows: rows.map(row => ({
-          ...baseCols(row),
-          'Blended PI': row.blended_pi ?? null,
-          'Total': row.total_product_count,
-          'Eligible': row.eligible_product_count,
-        })),
-      }],
-    }
-  }
-
-  const sheets = comps.map(comp => ({
-    name: comp,
-    rows: rows.map(row => {
-      const pi = row.competitor_blended_pis?.[comp] ?? null
-      const used = row.competitor_used_counts?.[comp] ?? 0
-      const mapped = row.competitor_mapped_counts?.[comp] ?? 0
-      const total = row.total_product_count || 0
-      const eligible = row.eligible_product_count || 0
-      return {
-        ...baseCols(row),
-        'Blended PI': pi,
-        'Total': total,
-        'Eligible': eligible,
-        'Used': used,
-        'Mapped': mapped,
-        'Mapping %': total ? Math.round((mapped / total) * 100) : null,
-        'Utilization %': eligible ? Math.round((used / eligible) * 100) : null,
-        // Per-sheet-competitor, matching that sheet's other columns. (An earlier
-        // comment here still claimed these were pooled across competitors; they
-        // have not been since the per-competitor dicts landed.)
-        'Addressable %': row.competitor_addressable_pcts?.[comp] ?? null,
-        'Confirmed no-match': row.competitor_no_match_counts?.[comp] ?? 0,
-        'Matched fresh': row.competitor_matched_fresh_counts?.[comp] ?? 0,
-        ...(isSubcat ? { 'They only': row.competitor_comp_only_counts?.[comp] ?? 0 } : {}),
-        'Ours only': row.competitor_our_only_counts?.[comp] ?? 0,
-      }
-    }),
-  }))
-
-  return { filename: 'blended_pi.xlsx', sheets }
+  if (!props.exportFetcher) return []
+  return props.exportFetcher({
+    competitors: visibleCompetitors.value.join(','),
+    group_by: props.groupBy,
+  })
 }
 </script>

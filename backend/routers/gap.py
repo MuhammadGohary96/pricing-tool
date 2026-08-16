@@ -167,23 +167,9 @@ def export_gap(
 # Percentages are divided by 100 on the way out. The service returns 20.3 and the
 # cells carry a 0.0% number format, which multiplies by 100 for display — writing
 # 20.3 straight in would render 2030%.
-_PCT_LOW, _PCT_HIGH = 0.50, 0.80     # orange below, green at/above
-
-
-def _pct(v):
-    return None if v is None else round(float(v) / 100.0, 5)
-
-
-def _num(v):
-    return 0 if v is None else v
-
-
-def _metric(field, header, low=_PCT_LOW, high=_PCT_HIGH, width=None):
-    col = {"field": field, "header": header, "format": "percent",
-           "low_threshold": low, "high_threshold": high}
-    if width:
-        col["width"] = width
-    return col
+from ..services.excel_report import pct as _pct, num as _num, metric_col as _metric
+# Shared with Executive, which renders the same panel on screen.
+from ..services.report_sheets import competitor_overview_sheet
 
 
 _TYPE_LABEL = {"shared": "Shared", "bf_only": "Only ours", "comp_only": "Only theirs"}
@@ -206,54 +192,6 @@ def _variant_names(raw: str) -> str:
         if name:
             out.append(name)
     return ", ".join(out)
-
-
-def _overview_sheet(rows):
-    return {
-        "name": "Competitor Overview",
-        "title": "Competitor Overview — matching and assortment coverage",
-        "columns": [
-            {"field": "competitor_name", "header": "COMPETITOR", "width": 16},
-            {"field": "bf_products", "header": "BF PRODUCTS", "format": "number"},
-            {"field": "matched", "header": "MAPPED", "format": "number"},
-            {"field": "matched_fresh", "header": "MAPPED FRESH", "format": "number"},
-            _metric("mapping_pct", "MAPPING %"),
-            _metric("mapping_pct_shared", "MAPPING % (SHARED BRANDS)", width=22),
-            {"field": "confirmed_no_match", "header": "CONFIRMED NO-MATCH", "format": "number"},
-            {"field": "addressable", "header": "ADDRESSABLE", "format": "number"},
-            _metric("addressable_pct", "ADDRESSABLE %"),
-            {"field": "potential_match", "header": "POTENTIAL MATCH", "format": "number"},
-            {"field": "comp_products", "header": "THEIR CATALOGUE", "format": "number"},
-            {"field": "comp_products_in_scope", "header": "THEIR CATALOGUE (IN SCOPE)",
-             "format": "number", "width": 22},
-            {"field": "comp_only_products", "header": "THEY ONLY", "format": "number"},
-            {"field": "our_only_products", "header": "OURS ONLY", "format": "number"},
-            {"field": "shared_brands", "header": "SHARED BRANDS", "format": "number"},
-            {"field": "bf_only_brands", "header": "BF-ONLY BRANDS", "format": "number"},
-            {"field": "comp_only_brands", "header": "COMP-ONLY BRANDS", "format": "number"},
-            {"field": "has_catalogue", "header": "HAS CATALOGUE", "width": 14},
-        ],
-        "rows": [{
-            "competitor_name": r.get("competitor_name"),
-            "bf_products": _num(r.get("bf_products")),
-            "matched": _num(r.get("matched")),
-            "matched_fresh": _num(r.get("matched_fresh")),
-            "mapping_pct": _pct(r.get("mapping_pct")),
-            "mapping_pct_shared": _pct(r.get("mapping_pct_shared")),
-            "confirmed_no_match": _num(r.get("confirmed_no_match")),
-            "addressable": _num(r.get("addressable")),
-            "addressable_pct": _pct(r.get("addressable_pct")),
-            "potential_match": _num(r.get("potential_match")),
-            "comp_products": _num(r.get("comp_products")),
-            "comp_products_in_scope": _num(r.get("comp_products_in_scope")),
-            "comp_only_products": _num(r.get("comp_only_products")),
-            "our_only_products": _num(r.get("our_only_products")),
-            "shared_brands": _num(r.get("shared_brands")),
-            "bf_only_brands": _num(r.get("bf_only_brands")),
-            "comp_only_brands": _num(r.get("comp_only_brands")),
-            "has_catalogue": r.get("has_catalogue"),
-        } for r in rows],
-    }
 
 
 def _brands_sheet(rows, competitor):
@@ -462,7 +400,7 @@ def export_workbook(
         # Deliberately NOT competitor-scoped: this is the cross-competitor
         # summary, and narrowing it would leave a one-row sheet.
         all_comps = {k: v for k, v in filters.items() if k != "competitor"}
-        specs.append(_overview_sheet(svc.get_competitor_overview(all_comps)))
+        specs.append(competitor_overview_sheet(svc.get_competitor_overview(all_comps)))
     if wanted in ("all", "brands"):
         specs.append(_brands_sheet(svc.get_gap_by_brand(filters), competitor))
     if wanted in ("all", "subcategories"):

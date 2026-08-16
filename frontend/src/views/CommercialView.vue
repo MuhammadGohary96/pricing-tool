@@ -89,6 +89,7 @@
         :selected-competitors="selectedCompetitors"
         :busy="store.refreshingBlended"
         :group-by="store.blendedGroupBy"
+        :export-fetcher="exportBlendedPI"
         style="max-height: 420px;"
         @select="onSubcategorySelect"
         @select-category="onCategorySelect"
@@ -123,6 +124,8 @@ import { useRoute } from 'vue-router'
 import { watchDebounced } from '@vueuse/core'
 import { useFiltersStore } from '../stores/filters'
 import { useCommercialStore } from '../stores/commercial'
+import { commercialApi } from '../api/client'
+import { asDownload } from '../utils/workbook'
 import FilterBar from '../components/layout/FilterBar.vue'
 import BlendedPITable from '../components/commercial/BlendedPITable.vue'
 import ProductPivotTable from '../components/commercial/ProductPivotTable.vue'
@@ -171,6 +174,16 @@ const allCompetitors = computed(() => {
   const set = new Set([...store.pivotedCompetitors, ...store.blendedCompetitors])
   return [...set].sort()
 })
+// The blended-PI file is rendered by the backend, in the same house style as the
+// Gap workbook — the browser cannot write cell formatting. The view owns the
+// filter params; the table passes the competitors and grain it controls.
+function exportBlendedPI(opts) {
+  return asDownload(
+    commercialApi.workbook({ ...store._params(), sheets: 'blended-pi', ...opts }),
+    'Blended_PI.xlsx',
+  )
+}
+
 const filteredPivotCompetitors = computed(() => {
   if (selectedCompetitors.value.length === 0) return store.pivotedCompetitors
   return store.pivotedCompetitors.filter(c => selectedCompetitors.value.includes(c))

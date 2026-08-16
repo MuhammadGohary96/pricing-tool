@@ -144,3 +144,47 @@ def get_top_actions(request: Request, limit: int = Query(10, ge=1, le=50), filte
             "sale_PI": _safe(row.get("sale_PI")),
         })
     return {"items": items}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Styled workbook export
+# ─────────────────────────────────────────────────────────────────────────────
+# Same reasoning as /api/gap/workbook: the community build of SheetJS writes
+# values but no cell formatting, so a browser-built file can only ever be an
+# unformatted grid. openpyxl on the server gives the house style — title,
+# uppercase headers on a light fill, zebra striping, frozen header, autofilter,
+# threshold colours — and Executive, Commercial and Gap all stream the same one.
+@router.get("/workbook")
+def export_workbook(
+    request: Request,
+    filters: dict = Depends(_filters),
+    competitors: Optional[str] = Query(
+        None, description="Comma-separated rows to keep — the competitor pills, "
+                          "which are client-side visibility and not part of the query."
+    ),
+):
+    """Stream the competitor scorecard as a styled workbook."""
+    from fastapi.responses import StreamingResponse
+    from ..services.excel_report import build_workbook
+    from ..services.report_sheets import competitor_overview_sheet
+
+    svc = request.app.state.data_service
+    if svc is None or not hasattr(svc, "get_competitor_overview"):
+        raise HTTPException(
+            status_code=503,
+            detail="The scorecard export requires the DuckDB data service.",
+        )
+
+    rows = svc.get_competitor_overview(filters)
+    if competitors:
+        keep = {c.strip() for c in competitors.split(",") if c.strip()}
+        rows = [r for r in rows if r.get("competitor_name") in keep]
+
+    # price_position=True adds Blended PI / Util % / Eligible / Used: the Gap
+    # workbook mirrors a hand-built sheet that has no PI column, the Executive
+    # scorecard shows all three groups on screen.
+    return StreamingResponse(
+        build_workbook([competitor_overview_sheet(rows, price_position=True)]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="Competitor_Scorecard.xlsx"'},
+    )

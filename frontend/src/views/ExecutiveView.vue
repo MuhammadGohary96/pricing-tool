@@ -142,6 +142,7 @@
         :mapping-progress="store.dashboard?.mapping_progress || []"
         :vertical="filters.vertical"
         :brand-scope="filters.brandScope"
+        :export-fetcher="exportScorecard"
         class="animate-fade-in-up stagger-3"
         @select-competitor="navigateToCompetitor"
       />
@@ -225,7 +226,8 @@ import { useRouter } from 'vue-router'
 import { watchDebounced } from '@vueuse/core'
 import { useFiltersStore } from '../stores/filters'
 import { useExecutiveStore } from '../stores/executive'
-import { dataApi } from '../api/client'
+import { dataApi, executiveApi } from '../api/client'
+import { asDownload } from '../utils/workbook'
 import KpiCard from '../components/layout/KpiCard.vue'
 import FilterBar from '../components/layout/FilterBar.vue'
 import CompetitorToggle from '../components/shared/CompetitorToggle.vue'
@@ -511,6 +513,17 @@ const sparklinePath = computed(() => {
 // scorecard's rows client-side without changing any number.
 const visibleOverview = computed(() =>
   (store.competitorOverview || []).filter(r => compVisible(r.competitor_name)))
+
+// The scorecard's file is rendered by the backend, in the same house style as
+// the Gap workbook — the browser cannot write cell formatting at all. The view
+// owns the filter params; the panel only says which competitor rows are on
+// screen, because the pills filter it client-side.
+function exportScorecard(names) {
+  return asDownload(
+    executiveApi.workbook({ ...store._params(), competitors: (names || []).join(',') }),
+    'Competitor_Scorecard.xlsx',
+  )
+}
 
 // ─── Navigation helpers ─────────────────────────────────────────
 function navigateToCompetitor(name) {

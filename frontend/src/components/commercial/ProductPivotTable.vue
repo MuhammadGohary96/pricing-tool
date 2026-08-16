@@ -49,7 +49,7 @@
           @click="!compactMode && $emit('toggle-compact')"
         >PI only</button>
       </div>
-      <ExportButton :fetcher="exportData" filename="pivot_products.csv" class="shrink-0" />
+      <ExportButton :fetcher="exportData" label="Export Excel" filename="Products_Price_Position.xlsx" class="shrink-0" />
     </div>
 
     <!-- Refreshing indicator (in-place refetch on filter/sort/search) -->
@@ -270,6 +270,8 @@ import { Search as SearchIcon, Loader2, X, ChevronLeft, ChevronRight, ListFilter
 import { piTextClass, piBgClass, piArrow } from '../../utils/piColor'
 import { useCommercialStore } from '../../stores/commercial'
 import { useFiltersStore } from '../../stores/filters'
+import { commercialApi } from '../../api/client'
+import { asDownload } from '../../utils/workbook'
 
 const props = defineProps({
   data: { type: Array, default: () => [] },
@@ -507,24 +509,22 @@ function formatRevenue(val) {
   return val.toFixed(0)
 }
 
+// Built by the backend — see utils/workbook.js. Two things change besides the
+// styling: the file now holds EVERY product in scope rather than the 50 on the
+// current page, and the sort/search on screen are passed through so it comes out
+// in the order you are looking at.
 function exportData() {
-  return props.data.map(row => {
-    const out = {
-      product_name: row.product_name,
-      brand_name: row.brand_name,
-      sub_category_name: row.sub_category_name,
-      global_tier: row.global_tier,
-      action_type: row.action_type,
-      bf_sale_price: row.bf_sale_price,
-      worst_pi: row.worst_pi,
-      total_revenue: row.total_revenue,
-    }
-    for (const comp of props.competitors) {
-      out[`${comp}_price`] = row[`${comp}_price`]
-      out[`${comp}_pi`] = row[`${comp}_pi`]
-    }
-    return out
-  })
+  return asDownload(
+    commercialApi.workbook({
+      ...store._params(),
+      sheets: 'products',
+      competitors: props.competitors.join(','),
+      sort_by: store.sortBy,
+      sort_dir: store.sortDir,
+      ...(store.search ? { search: store.search } : {}),
+    }),
+    'Products_Price_Position.xlsx',
+  )
 }
 </script>
 

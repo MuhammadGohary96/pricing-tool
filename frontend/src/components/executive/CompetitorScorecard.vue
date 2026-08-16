@@ -41,7 +41,7 @@
           <component :is="detailed ? Minus : Plus" class="w-3.5 h-3.5" />
           {{ detailed ? `Hide ${DETAIL_COLUMNS.length} columns` : `${DETAIL_COLUMNS.length} more columns` }}
         </button>
-        <ExportButton :fetcher="exportData" filename="competitor_scorecard.csv" />
+        <ExportButton :fetcher="exportData" label="Export Excel" filename="Competitor_Scorecard.xlsx" />
       </div>
     </div>
 
@@ -225,6 +225,9 @@ const props = defineProps({
   vertical: { type: String, default: '' },
   /** '' | 'shared' — switches the catalogue column onto the shared-brand basis. */
   brandScope: { type: String, default: '' },
+  /** Supplied by the view, which owns the filter params. Takes the competitor
+      names on screen and resolves to { blob, filename }. */
+  exportFetcher: { type: Function, default: null },
 })
 defineEmits(['select-competitor'])
 
@@ -388,34 +391,11 @@ const Bar = (p) => {
   ])
 }
 
+// The file is built by the backend — see utils/workbook.js for why. All this
+// has to say is which competitors are on screen, since the pills are client-side
+// visibility and never reach the query.
 function exportData() {
-  return rows.value.map(r => ({
-    COMPETITOR: r.competitor_name,
-    'BLENDED PI': r.blended_pi,
-    'VS PARITY': r.pi_deviation,
-    'UTILIZATION %': r.priced_pct,
-    'USED PRODUCTS': r.used_products,
-    'ELIGIBLE PRODUCTS': r.eligible_products,
-    'BF PRODUCTS': r.bf_products,
-    MATCHED: r.matched,
-    'MATCHED %': r.mapping_pct,
-    'MATCHED FRESH': r.matched_fresh,
-    'MAPPING % (SHARED BRANDS)': r.mapping_pct_shared,
-    'CONFIRMED NO-MATCH': r.confirmed_no_match,
-    ADDRESSABLE: r.addressable,
-    'ADDRESSABLE %': r.addressable_pct,
-    'POTENTIAL MATCH': r.potential_match,
-    'POTENTIAL %': r.potential_pct,
-    'COMP PRODUCTS (ALL CATEGORIES)': r.comp_products,
-    'COMP PRODUCTS (THEIR BRAND IN OUR RANGE)': r.comp_products_shared,
-    'COMP PRODUCTS (CURRENT SCOPE)': r.comp_products_in_scope,
-    'COMP-ONLY PRODUCTS': r.comp_only_products,
-    'OURS-ONLY PRODUCTS (UNMATCHED)': r.our_only_products,
-    'SHARED BRANDS': r.shared_brands,
-    'SHARED BRANDS (BY MATCH)': r.shared_by_match_brands,
-    'BF-ONLY BRANDS': r.bf_only_brands,
-    'COMP-ONLY BRANDS': r.comp_only_brands,
-    'HAS CATALOGUE': r.has_catalogue,
-  }))
+  if (!props.exportFetcher) return []
+  return props.exportFetcher(rows.value.map(r => r.competitor_name))
 }
 </script>
