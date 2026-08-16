@@ -30,7 +30,7 @@
     <KpiCard
       :value="kpis?.our_only ?? 0"
       label="Ours only"
-      subtitle="our products with no match here — a ceiling, not all of it is workable"
+      subtitle="our products with no match at this competitor"
       :icon="PackageX"
       icon-bg="bg-brand-50"
       :stagger-index="3"
