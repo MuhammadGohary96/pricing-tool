@@ -28,11 +28,11 @@
       :stagger-index="2"
     />
     <KpiCard
-      :value="kpis?.unmatched_revenue ?? 0"
-      label="Unmatched daily revenue"
-      subtitle="EGP/day of our sales with no competitor benchmark"
-      :icon="Wallet"
-      icon-bg="bg-red-50"
+      :value="kpis?.our_only ?? 0"
+      label="Ours only"
+      subtitle="our products with no match here — a ceiling, not all of it is workable"
+      :icon="PackageX"
+      icon-bg="bg-brand-50"
       :stagger-index="3"
     />
   </div>
@@ -60,7 +60,7 @@
 import { computed } from 'vue'
 import KpiCard from '../layout/KpiCard.vue'
 import {
-  GitCompareArrows, Target, PackageSearch, Wallet,
+  GitCompareArrows, Target, PackageSearch, PackageX,
   Handshake, Home, Store, Sparkles,
 } from 'lucide-vue-next'
 

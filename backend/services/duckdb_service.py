@@ -1648,6 +1648,11 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 MAX(is_potential_match)             AS potential,
                 MAX(matched_comp_active_7d)         AS matched_active,
                 MAX(best_similarity_in_portfolio)   AS best_similarity,
+                -- Their side of the match, so a roll-up can count THEIR catalogue
+                -- and not just ours. ANY_VALUE is safe because this tab selects
+                -- exactly one competitor; the key is per (product, competitor).
+                ANY_VALUE(competitor_product_key)   AS competitor_product_key,
+                MAX(matched_comp_in_catalogue)      AS matched_comp_in_catalogue,
                 ANY_VALUE(total_revenue)            AS rev,
                 ANY_VALUE(avg_daily_quantity)       AS qty,
                 -- Price, PI and action against the competitor in scope.
@@ -2016,6 +2021,9 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             (SELECT ROUND(SUM(rev), 0) FROM bf_prod WHERE NOT is_mapped)          AS unmatched_revenue,
             (SELECT COUNT(*) FROM comp_prod)                                      AS comp_only_products,
             (SELECT COUNT(*) FROM comp_prod WHERE sub_category_name IS NOT NULL)  AS comp_only_bridged,
+            -- Our products with no match here. bf_products - matched, but
+            -- stated rather than left for the reader to subtract.
+            (SELECT COUNT(*) FROM bf_prod WHERE NOT COALESCE(is_mapped, FALSE)) AS our_only,
             (SELECT COUNT(DISTINCT brand_key) FROM bf_prod
               WHERE brand_key IS NOT NULL AND is_shared_brand)                    AS shared_brands,
             -- A SUBSET of shared_brands: overlap proved by matching, because
@@ -2053,6 +2061,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             "unmatched_revenue": float(r.unmatched_revenue) if pd.notna(r.unmatched_revenue) else 0.0,
             "comp_only_products": i(r.comp_only_products),
             "comp_only_bridged": i(r.comp_only_bridged),
+            "our_only": i(r.our_only),
             "shared_brands": i(r.shared_brands),
             "shared_by_match_brands": i(r.shared_by_match_brands),
             "bf_only_brands": i(r.bf_only_brands),
@@ -2089,6 +2098,11 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                       / NULLIF(COUNT(*) - COUNT(*) FILTER (WHERE no_match), 0), 1)
                                                                AS addressable_pct,
                 COUNT(DISTINCT brand_key) FILTER (WHERE is_shared_brand)     AS shared_brands,
+                -- The paired half of THEIR catalogue here: distinct products of
+                -- theirs that our products in this group matched to. DISTINCT
+                -- because one of theirs can answer several of ours.
+                COUNT(DISTINCT competitor_product_key) FILTER (
+                    WHERE matched_comp_in_catalogue)                             AS comp_paired,
                 -- A SUBSET of shared_brands, not a fourth bucket: brands whose
                 -- overlap was proved by matching because the two names disagree.
                 COUNT(DISTINCT brand_key) FILTER (WHERE shared_by_match)     AS shared_by_match_brands,
@@ -2154,6 +2168,11 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             p.blended_pi,
             p.coverage_pct,
             CAST(COALESCE(c.comp_only_products, 0) AS INTEGER) AS comp_only_products,
+            -- Their catalogue attributable to this row: the products of theirs
+            -- we matched, plus the products of theirs we did not. Same
+            -- partition the Executive scorecard uses.
+            CAST(COALESCE(b.comp_paired, 0)
+                 + COALESCE(c.comp_only_products, 0) AS INTEGER) AS comp_catalogue,
             CAST(b.shared_brands       AS INTEGER) AS shared_brands,
             CAST(b.shared_by_match_brands AS INTEGER) AS shared_by_match_brands,
             CAST(b.bf_only_brands      AS INTEGER) AS bf_only_brands,
@@ -2189,6 +2208,11 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 ANY_VALUE(brand_name)                          AS brand_name,
                 COUNT(*)                                       AS bf_products,
                 COUNT(*) FILTER (WHERE is_mapped)              AS matched,
+                -- The paired half of THEIR catalogue here: distinct products of
+                -- theirs that our products in this group matched to. DISTINCT
+                -- because one of theirs can answer several of ours.
+                COUNT(DISTINCT competitor_product_key) FILTER (
+                    WHERE matched_comp_in_catalogue)                             AS comp_paired,
                 -- The mirror of comp_only_products on this table: our products
                 -- of this brand with no match at the competitor. COALESCE rather
                 -- than a bare NOT, so a NULL is_mapped cannot drop out of both
@@ -2265,6 +2289,11 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             b.addressable_pct,
             CAST(COALESCE(b.potential_match, 0)    AS INTEGER) AS potential_match,
             CAST(COALESCE(c.comp_only_products, 0) AS INTEGER) AS comp_only_products,
+            -- Their catalogue attributable to this row: the products of theirs
+            -- we matched, plus the products of theirs we did not. Same
+            -- partition the Executive scorecard uses.
+            CAST(COALESCE(b.comp_paired, 0)
+                 + COALESCE(c.comp_only_products, 0) AS INTEGER) AS comp_catalogue,
             CAST(COALESCE(b.our_only_products, 0) AS INTEGER) AS our_only_products,
             CAST(COALESCE(b.bf_subcategories, 0)   AS INTEGER) AS bf_subcategories,
             CAST(COALESCE(c.comp_subcategories, 0) AS INTEGER) AS comp_subcategories,

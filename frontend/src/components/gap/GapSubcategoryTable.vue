@@ -52,6 +52,11 @@
               </span>
             </th>
             <th :class="TH_R">
+              <span class="inline-flex items-center gap-1">Their catalogue
+                <HelpTooltip text="Their catalogue attributable to this row: products of theirs we matched here, plus products of theirs we do not carry. The same partition the Executive scorecard uses. Not comparable to Our SKUs — one of their listings can answer several of ours, and a competitor product the bridge cannot place is absent entirely." />
+              </span>
+            </th>
+            <th :class="TH_R">
               <span class="inline-flex items-center gap-1">
                 They only
                 <HelpTooltip text="Competitor products we do not carry, placed into this subcategory by the category bridge. Never sum this column — one competitor product can bridge to several subcategories." />
@@ -62,7 +67,6 @@
                 <HelpTooltip text="Brands we SHARE in this subcategory, of which BY MATCH, then brands only we carry and only they carry. The second is a SUBSET of the first, not a fourth bucket: it counts shared brands whose two names disagree, where the overlap was proved by matching products rather than read off the label. Brand sets are WITHIN-SUBCATEGORY — a brand can be shared in one and ours-only in another." />
               </span>
             </th>
-            <th :class="TH_R">Revenue/day</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-grey-50">
@@ -98,6 +102,7 @@
               <span v-else class="text-grey-300">—</span>
             </td>
             <td :class="TD_N" class="text-grey-600">{{ pct(row.coverage_pct) }}</td>
+            <td :class="TD_N" class="text-grey-600">{{ n(row.comp_catalogue) }}</td>
             <td :class="TD_N" class="text-amber-700 font-semibold">{{ n(row.comp_only_products) }}</td>
             <td class="px-4 py-3">
               <div class="flex items-center gap-1 text-caption font-mono">
@@ -113,7 +118,6 @@
                 <span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700" :title="titleList('Only theirs', row.comp_only_brand_list)">{{ row.comp_only_brands }}</span>
               </div>
             </td>
-            <td :class="TD_N" class="text-grey-900 font-semibold">{{ n(row.daily_revenue) }}</td>
           </tr>
         </tbody>
       </table>
