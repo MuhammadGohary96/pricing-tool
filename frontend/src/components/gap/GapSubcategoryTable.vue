@@ -53,7 +53,7 @@
             </th>
             <th :class="TH_R">
               <span class="inline-flex items-center gap-1">Their catalogue
-                <HelpTooltip text="Their catalogue attributable to this row: products of theirs we matched here, plus products of theirs we do not carry. The same partition the Executive scorecard uses. Not comparable to Our SKUs — one of their listings can answer several of ours, and a competitor product the bridge cannot place is absent entirely." />
+                <HelpTooltip text="Their catalogue attributable to this row: products of theirs we matched here, plus products of theirs we do not carry. It will NOT equal Mapped + They only, for two reasons — Mapped counts OUR products while this counts THEIRS, and one of their listings can answer several of ours; and a matched product they have stopped listing is no longer in their catalogue. Hover a number for its own arithmetic." />
               </span>
             </th>
             <th :class="TH_R">
@@ -102,7 +102,7 @@
               <span v-else class="text-grey-300">—</span>
             </td>
             <td :class="TD_N" class="text-grey-600">{{ pct(row.coverage_pct) }}</td>
-            <td :class="TD_N" class="text-grey-600">{{ n(row.comp_catalogue) }}</td>
+            <td :class="TD_N" class="text-grey-600" :title="catalogueTitle(row)">{{ n(row.comp_catalogue) }}</td>
             <td :class="TD_N" class="text-amber-700 font-semibold">{{ n(row.comp_only_products) }}</td>
             <td class="px-4 py-3">
               <div class="flex items-center gap-1 text-caption font-mono">
@@ -151,6 +151,24 @@ const filtered = computed(() => {
     (r.sub_category_name || '').toLowerCase().includes(q) ||
     (r.commercial_category_name || '').toLowerCase().includes(q))
 })
+
+// The column does not equal Mapped + They only and visibly should, so the
+// breakdown belongs on the number itself rather than in a paragraph nobody
+// reads at the moment they notice the discrepancy.
+function catalogueTitle(row) {
+  const theyOnly = row.comp_only_products || 0
+  const paired = (row.comp_catalogue || 0) - theyOnly
+  return [
+    `${(row.comp_catalogue || 0).toLocaleString()} of their products land in this row:`,
+    '',
+    `  ${paired.toLocaleString()} matched to ours and still listed by them`,
+    `  ${theyOnly.toLocaleString()} they carry that we do not`,
+    '',
+    `Mapped reads ${(row.matched || 0).toLocaleString()} because it counts OUR products —`,
+    'several of ours can share one of their listings, and a match to a product',
+    'they have since delisted is not in their catalogue any more.',
+  ].join('\n')
+}
 
 function n(v) { return v == null ? '—' : Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 }) }
 function pct(v) { return v == null ? '—' : `${v}%` }
