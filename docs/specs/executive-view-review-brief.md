@@ -82,7 +82,7 @@ them will be rejected.
    "Paradise", "Oreo"). The scorecard shows the evidence-based subset as a separate figure.
 7. **Data drifts between refreshes.** Product counts move by tens or hundreds day to day. The
    page should not imply more precision than that supports.
-8. **Vocabulary was just unified** across the three views: Mapped (not Matched), Util % (not
+8. **Vocabulary was just unified** across the three views: Mapped (not Matched), Confidence % (not
    Priced or Coverage %). Do not reintroduce synonyms.
 
 ---
@@ -112,7 +112,7 @@ number *means* (as opposed to how it looks), because those need separate sign-of
 ## 6. How your work will be judged
 
 - **Specific over general.** "Reduce cognitive load" is worthless; "move Eligible and Used
-  behind a disclosure because they exist to explain Util %, which is the number people act on"
+  behind a disclosure because they exist to explain Confidence %, which is the number people act on"
   is useful.
 - **Reasoned trade-offs.** Every removal costs someone something. Say who and what.
 - **Honest about uncertainty.** Where you are guessing at user behaviour, say so and name the

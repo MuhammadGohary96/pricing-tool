@@ -47,13 +47,13 @@
             </th>
             <th :class="TH_R">
               <span class="inline-flex items-center gap-1">
-                Util %
+                Confidence %
                 <HelpTooltip text="Products with a usable fresh price on both sides, over the eligible set (top 80% of revenue)." />
               </span>
             </th>
             <th :class="TH_R">
               <span class="inline-flex items-center gap-1">Mapped live
-                <HelpTooltip text="Their products that our products in this row are matched to, and that they still list. Counted on THEIR side, so it is smaller than Mapped: several of our products can share one of their listings, and a match to something they have delisted does not count. This plus They only is exactly Their catalogue." />
+                <HelpTooltip text="Their products ours are matched to that they still list. Counted on THEIR side, so smaller than Mapped. This plus They only is exactly Their catalogue." />
               </span>
             </th>
             <th :class="TH_R">
@@ -69,7 +69,7 @@
             </th>
             <th :class="TH_C" style="min-width: 178px">
               <span class="inline-flex items-center gap-1">Brands (shared · by match / ours / theirs)
-                <HelpTooltip text="Brands we SHARE in this subcategory, of which BY MATCH, then brands only we carry and only they carry. The second is a SUBSET of the first, not a fourth bucket: it counts shared brands whose two names disagree, where the overlap was proved by matching products rather than read off the label. Brand sets are WITHIN-SUBCATEGORY — a brand can be shared in one and ours-only in another." />
+                <HelpTooltip text="Brands we share here, of which proved BY MATCH — a subset, not a fourth bucket. Then only-ours and only-theirs. Sets are WITHIN-subcategory: a brand can be shared in one and ours-only in another." />
               </span>
             </th>
           </tr>

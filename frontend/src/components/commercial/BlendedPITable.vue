@@ -4,7 +4,7 @@
     <div class="px-4 py-3 border-b border-grey-100 flex items-center justify-between gap-3 flex-wrap">
       <div class="flex items-center gap-1.5 min-w-0">
         <h2 class="text-subheading font-bold text-grey-900 tracking-tightish whitespace-nowrap">{{ title }}</h2>
-        <HelpTooltip text="Quantity-weighted price index. Formula: Σ(sale_PI × avg_daily_quantity) ÷ Σ(avg_daily_quantity), filtered to used_product=TRUE (eligible + has price + recently updated). sale_PI = BF price ÷ Competitor price → PI > 1 = BF more expensive, PI < 1 = BF cheaper." />
+        <HelpTooltip text="Quantity-weighted: Σ(sale_PI × qty) ÷ Σ(qty) over used products. sale_PI = BF ÷ competitor, so above 1.00 means BREADFAST IS MORE EXPENSIVE." />
       </div>
       <div class="flex items-center gap-3 shrink-0">
         <!-- Grain toggle: roll up to commercial category or drop to subcategory -->
@@ -309,7 +309,7 @@ const trailingColumns = computed(() => {
     { key: 'used_product_count', label: 'Used', dynamic: true },
     { key: 'mapped_product_count', label: 'Mapped', dynamic: true },
     { key: 'mapping_pct', label: 'Mapped %', dynamic: true },
-    { key: 'utilization_pct', label: 'Util %', dynamic: true },
+    { key: 'utilization_pct', label: 'Confidence %', dynamic: true },
     { key: 'addressable_pct', label: 'Addr %', dynamic: true },
   ]
   // The category bridge maps a competitor category onto one of OUR
@@ -396,7 +396,9 @@ function rowNoMatch(row) {
   return row.confirmed_no_match_count ?? 0
 }
 
-// Mapping % = mapped / total tracked; Utilization % = used / eligible.
+// Mapping % = mapped / total tracked; Confidence % = used / eligible.
+// The FIELD stays utilization_pct: it is a sort key and a wire name, and
+// renaming it would break callers for a label change.
 function rowMappingPct(row) {
   const total = row.total_product_count || 0
   return total ? Math.round((rowMapped(row) / total) * 100) : null

@@ -472,7 +472,7 @@ def _blended_sheets(rows, comps, group_by):
                 {"field": "used", "header": "USED", "format": "number"},
                 {"field": "mapped", "header": "MAPPED", "format": "number"},
                 _metric("mapping_pct", "MAPPED %"),
-                _metric("utilization_pct", "UTIL %"),
+                _metric("utilization_pct", "CONFIDENCE %"),
                 _metric("addressable_pct", "ADDR %", low=0.60, high=0.90),
                 {"field": "no_match", "header": "CONFIRMED NO-MATCH", "format": "number"},
                 {"field": "fresh", "header": "MAPPED FRESH", "format": "number"},
@@ -486,7 +486,7 @@ def _blended_sheets(rows, comps, group_by):
                 "eligible": r["eligible"],
                 "used": r["used"].get(comp, 0),
                 "mapped": r["mapped"].get(comp, 0),
-                # Same denominators the table uses: Mapped % over TOTAL, Util %
+                # Same denominators the table uses: Mapped % over TOTAL, Confidence %
                 # over ELIGIBLE. Not interchangeable — eligible is the top-80%
                 # revenue head, total is the whole row.
                 "mapping_pct": _pct(round(100.0 * r["mapped"].get(comp, 0) / r["total"], 1)) if r["total"] else None,
