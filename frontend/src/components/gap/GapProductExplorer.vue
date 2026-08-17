@@ -95,7 +95,7 @@
             <th :class="TH_L">Brand</th>
             <th :class="TH_L">
               <span class="inline-flex items-center gap-1">Their brand
-                <HelpTooltip text="What this competitor calls the brand, taken from the products we actually matched. Blank where nothing of this brand is mapped here. It is how you see that our Froneri is their Nestle and Paradise, or that they spell 7up three ways." />
+                <HelpTooltip text="What this competitor calls the brand, from products we actually matched. Blank where nothing of this brand is mapped here." />
               </span>
             </th>
             <th :class="TH_L">Subcategory</th>
@@ -111,7 +111,7 @@
             </th>
             <th :class="TH_C" style="min-width: 150px">
               <span class="inline-flex items-center gap-1">Eligible · Updated · Used
-                <HelpTooltip text="The same three flags Commercial counts, for this one product. They are a funnel: ELIGIBLE means it sits in the top 80% of revenue and is worth pricing against; UPDATED means both our price and theirs were refreshed recently; USED means it carries a PI and feeds the blended figure. Whichever one first reads no is why a mapped product moves nothing." />
+                <HelpTooltip text="A funnel: ELIGIBLE (top 80% of revenue), UPDATED (both prices refreshed recently), USED (carries a PI). Whichever first reads no is why a mapped product moves nothing." />
               </span>
             </th>
           </tr>

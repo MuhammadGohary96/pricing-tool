@@ -42,7 +42,7 @@
             <th :class="TH_L">Overlap</th>
             <th :class="TH_L">
               <span class="inline-flex items-center gap-1">Their brand
-                <HelpTooltip text="Every distinct spelling this brand carries on their shelf, taken from the products we actually matched, biggest first. Two things show up here. A brand we label differently: we carry Froneri, the Nestlé ice-cream JV, and they shelve the same products as Nestle, Paradise, Oreo and a dozen more — that is the evidence behind a 'by match' overlap. And a brand we label the same but they spell several ways: 7Up, 7UP and 7up are three separate brands in their catalogue, which is why 'brands only they carry' is an upper bound." />
+                <HelpTooltip text="Every spelling this brand has on their shelf, from products we actually matched, biggest first. Our Froneri is their Nestle; their 7Up/7UP/7up count as three brands, which is why 'only theirs' is an upper bound." />
               </span>
             </th>
             <th :class="TH_R">Our SKUs</th>
@@ -52,7 +52,7 @@
             <th :class="TH_R">Potential</th>
             <th :class="TH_R">
               <span class="inline-flex items-center gap-1">Mapped live
-                <HelpTooltip text="Their products that our products in this row are matched to, and that they still list. Counted on THEIR side, so it is smaller than Mapped: several of our products can share one of their listings, and a match to something they have delisted does not count. This plus They only is exactly Their catalogue." />
+                <HelpTooltip text="Their products ours are matched to that they still list. Counted on THEIR side, so smaller than Mapped. This plus They only is exactly Their catalogue." />
               </span>
             </th>
             <th :class="TH_R">They only</th>
@@ -63,7 +63,7 @@
             </th>
             <th :class="TH_R">
               <span class="inline-flex items-center gap-1">Ours only
-                <HelpTooltip text="Our products of this brand with no match at this competitor — Our SKUs minus Mapped. The mirror of They only. A CEILING, not a proven assortment gap: it counts what they genuinely do not stock together with what we simply failed to match. The No-match column beside it is the confirmed subset." />
+                <HelpTooltip text="Our SKUs of this brand minus Mapped — the mirror of They only. A CEILING, not a proven gap: what they do not stock plus what we failed to match. No-match beside it is the confirmed subset." />
               </span>
             </th>
             <th :class="TH_R">Our subcats</th>
