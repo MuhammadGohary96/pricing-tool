@@ -1893,9 +1893,35 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 -- summing to bf_products.
                 COUNT(DISTINCT product_id) FILTER (
                     WHERE NOT COALESCE(is_mapped, FALSE))                         AS our_only_products,
+                -- Mapped, but the competitor product is no longer in their live
+                -- catalogue. This is why our matched count and their paired count
+                -- disagree far more than many-to-one matching explains: at Talabat
+                -- 785 of the 1,008 difference is delisting, only 223 is several of
+                -- ours sharing one of their listings.
+                COUNT(DISTINCT product_id) FILTER (
+                    WHERE is_mapped
+                      AND NOT COALESCE(matched_comp_in_catalogue, FALSE))         AS mapped_comp_delisted,
                 COUNT(DISTINCT product_id) FILTER (WHERE is_shared_brand)         AS shared_brand_products,
                 COUNT(DISTINCT product_id) FILTER (
                     WHERE is_mapped AND is_shared_brand)                          AS matched_shared_brand,
+                -- Confirmed no-match WITHIN shared brands, so Addressable can be
+                -- restricted the same way Mapped % already is. Without it the
+                -- shared chain has no denominator of its own and the ceiling
+                -- would have to be read off the whole-range column, which
+                -- includes brands they do not stock.
+                COUNT(DISTINCT product_id) FILTER (
+                    WHERE is_confirmed_no_match AND is_shared_brand)              AS confirmed_no_match_shared,
+                COUNT(DISTINCT product_id) FILTER (
+                    WHERE is_potential_match AND is_shared_brand)                 AS potential_match_shared,
+                -- The shared-brand counterparts of the assortment columns, so the
+                -- table can run the same partition twice: Both + Both delisted +
+                -- Ours only = Our SKUs, and paired + They only = Their catalogue,
+                -- once over everything and once over brands they actually carry.
+                COUNT(DISTINCT product_id) FILTER (
+                    WHERE is_mapped AND is_shared_brand
+                      AND NOT COALESCE(matched_comp_in_catalogue, FALSE))         AS mapped_comp_delisted_shared,
+                COUNT(DISTINCT competitor_product_key) FILTER (
+                    WHERE matched_comp_in_catalogue AND is_shared_brand)          AS comp_paired_shared,
                 COUNT(DISTINCT brand_key) FILTER (WHERE is_shared_brand)          AS shared_brands,
                 -- A SUBSET of shared_brands, not a fourth bucket: brands whose
                 -- overlap was proved by matches because the two names disagree.
@@ -1924,7 +1950,12 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                       / NULLIF(SUM(avg_daily_quantity) FILTER (WHERE used_product), 0), 4)
                                                                                   AS blended_pi,
                 COUNT(DISTINCT product_id) FILTER (WHERE used_product)             AS used_products,
-                COUNT(DISTINCT product_id) FILTER (WHERE eligible_product)         AS eligible_products
+                COUNT(DISTINCT product_id) FILTER (WHERE eligible_product)         AS eligible_products,
+                -- The middle term of the eligible -> mapped -> used funnel. Without
+                -- it, a low Confidence % cannot be read: it says nothing about
+                -- whether the eligible range is unmatched, or matched and stale.
+                COUNT(DISTINCT product_id) FILTER (
+                    WHERE eligible_product AND is_mapped)                          AS mapped_eligible
             FROM {bf_source} AS bf
             WHERE competitor_name IS NOT NULL
             GROUP BY competitor_name
@@ -1937,6 +1968,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 -- read raw here (unlike the Breadfast side, which gets it from
                 -- pair_meta already normalized), and a blank brand_key would
                 -- otherwise count as one extra brand on every competitor.
+                COUNT(*) FILTER (WHERE is_shared_brand)                      AS comp_only_shared,
                 COUNT(DISTINCT NULLIF(TRIM(brand_key), ''))
                     FILTER (WHERE NOT is_shared_brand)                       AS comp_only_brands
             FROM comp_catalogue
@@ -1953,6 +1985,27 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             -- ceiling, since a brand they do not stock can never be matched.
             ROUND(100.0 * b.matched_shared_brand
                   / NULLIF(b.shared_brand_products, 0), 1)                   AS mapping_pct_shared,
+            -- The two terms of mapping_pct_shared, and the base as a share of our
+            -- whole range. Only the ratio was exposed, so the scorecard could say
+            -- "68% mapped in shared brands" without saying that shared brands are
+            -- only 62% of what we sell -- and the gap between Mapped % and
+            -- Mapped % shared is assortment, which is only legible with both.
+            CAST(b.shared_brand_products AS INTEGER) AS shared_brand_products,
+            CAST(b.matched_shared_brand  AS INTEGER) AS matched_shared_brand,
+            ROUND(100.0 * b.shared_brand_products
+                  / NULLIF(b.bf_products, 0), 1)                             AS shared_brand_pct,
+            -- The same Mapped / (base - rejected) chain, restricted to brands the
+            -- competitor actually carries. This is the true ceiling: it drops both
+            -- the brands they do not stock AND the items they positively rejected.
+            CAST(b.confirmed_no_match_shared AS INTEGER) AS confirmed_no_match_shared,
+            CAST(b.shared_brand_products - b.confirmed_no_match_shared AS INTEGER)
+                                                                             AS addressable_shared,
+            ROUND(100.0 * b.matched_shared_brand
+                  / NULLIF(b.shared_brand_products - b.confirmed_no_match_shared, 0), 1)
+                                                                             AS addressable_pct_shared,
+            -- Potential within shared brands closes the chain: the backlog that
+            -- is both reachable (they stock the brand) and unrejected.
+            CAST(b.potential_match_shared AS INTEGER) AS potential_match_shared,
             CAST(b.confirmed_no_match AS INTEGER) AS confirmed_no_match,
             CAST(b.bf_products - b.confirmed_no_match AS INTEGER)            AS addressable,
             -- Products the matcher positively rejected leave the denominator.
@@ -1970,6 +2023,21 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             -- out exactly when a category filter is on.
             CAST(COALESCE(b.comp_paired_in_scope, 0)
                  + COALESCE(c.comp_only_products, 0) AS INTEGER) AS comp_products_in_scope,
+            -- The paired half on its own ("Mapped live"). Only the sum was
+            -- exposed, so the scorecard could assert their catalogue but not
+            -- show the two numbers it is made of -- and Mapped will not do,
+            -- because it counts OUR products while these count THEIRS.
+            CAST(COALESCE(b.comp_paired_in_scope, 0) AS INTEGER) AS comp_paired_in_scope,
+            CAST(b.mapped_comp_delisted AS INTEGER) AS mapped_comp_delisted,
+            CAST(b.mapped_comp_delisted_shared AS INTEGER) AS mapped_comp_delisted_shared,
+            CAST(b.comp_paired_shared          AS INTEGER) AS comp_paired_shared,
+            CAST(COALESCE(c.comp_only_shared, 0) AS INTEGER) AS comp_only_shared,
+            -- Their catalogue inside brands we carry, on the SAME basis as the
+            -- all-brands column beside it: paired half from our side, unpaired
+            -- half from theirs. Deliberately not comp_products_shared, which is a
+            -- BigQuery scalar testing THEIR brand label rather than ours.
+            CAST(COALESCE(b.comp_paired_shared, 0)
+                 + COALESCE(c.comp_only_shared, 0) AS INTEGER) AS comp_catalogue_shared,
             CAST(COALESCE(c.comp_only_products, 0) AS INTEGER) AS comp_only_products,
             CAST(b.our_only_products  AS INTEGER) AS our_only_products,
             CAST(b.shared_brands      AS INTEGER) AS shared_brands,
@@ -1981,6 +2049,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             ROUND(b.blended_pi - 1, 4)             AS pi_deviation,
             CAST(b.used_products     AS INTEGER)   AS used_products,
             CAST(b.eligible_products AS INTEGER)   AS eligible_products,
+            CAST(b.mapped_eligible   AS INTEGER)   AS mapped_eligible,
             -- Share of the eligible basket we can actually price against this
             -- competitor. The denominator is the eligible set as a whole, which
             -- is the same for every competitor because BigQuery emits every

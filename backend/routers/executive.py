@@ -166,7 +166,7 @@ def export_workbook(
     """Stream the competitor scorecard as a styled workbook."""
     from fastapi.responses import StreamingResponse
     from ..services.excel_report import build_workbook
-    from ..services.report_sheets import competitor_overview_sheet
+    from ..services.report_sheets import executive_scorecard_sheets
 
     svc = request.app.state.data_service
     if svc is None or not hasattr(svc, "get_competitor_overview"):
@@ -180,11 +180,10 @@ def export_workbook(
         keep = {c.strip() for c in competitors.split(",") if c.strip()}
         rows = [r for r in rows if r.get("competitor_name") in keep]
 
-    # price_position=True adds Blended PI / Util % / Eligible / Used: the Gap
-    # workbook mirrors a hand-built sheet that has no PI column, the Executive
-    # scorecard shows all three groups on screen.
+    # One sheet per on-screen table, so a sheet can be sent on its own. The Gap
+    # workbook keeps the single combined sheet, which mirrors a hand-built file.
     return StreamingResponse(
-        build_workbook([competitor_overview_sheet(rows, price_position=True)]),
+        build_workbook(executive_scorecard_sheets(rows)),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="Competitor_Scorecard.xlsx"'},
     )
