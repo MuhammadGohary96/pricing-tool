@@ -147,18 +147,8 @@
         @select-competitor="navigateToCompetitor"
       />
 
-      <!-- Answers the question the scorecard's "Ours only" column provokes, and
-           it must sit under it: 6,226 unmatched at Talabat is 486 of work and
-           5,740 of assortment, and the column alone cannot say which. -->
-      <AddressableGap
-        v-if="visibleOverview.length"
-        :data="visibleOverview"
-        :mapping-progress="store.dashboard?.mapping_progress || []"
-        class="animate-fade-in-up stagger-3"
-      />
-
-      <!-- Pairs with the panel above: that one asks what we can DO about the gap,
-           this one asks how different the two ranges are in the first place. -->
+      <!-- How different the two ranges are in the first place. The scorecard's
+           assortment table gives the figures; this gives their shape. -->
       <AssortmentOverlap
         v-if="visibleOverview.length"
         :data="visibleOverview"
@@ -234,7 +224,6 @@ import CompetitorToggle from '../components/shared/CompetitorToggle.vue'
 import ClassificationBreakdown from '../components/executive/ClassificationBreakdown.vue'
 import GeographicExposure from '../components/executive/GeographicExposure.vue'
 import CompetitorScorecard from '../components/executive/CompetitorScorecard.vue'
-import AddressableGap from '../components/executive/AddressableGap.vue'
 import AssortmentOverlap from '../components/executive/AssortmentOverlap.vue'
 import PageShell from '../components/shared/PageShell.vue'
 import PageHeader from '../components/shared/PageHeader.vue'
