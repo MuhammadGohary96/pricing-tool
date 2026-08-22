@@ -15,6 +15,23 @@ export const useFiltersStore = defineStore('filters', {
     // Beauty = main_category_name 'Fragrances & Beauty'; Supermarket = the rest.
     vertical: '',
     includePrivateLabel: true,
+    // Added rather than folded into includePrivateLabel: that flag is in saved
+    // views and shared URLs, and renaming it would silently reinterpret both.
+    // The two combine into three states — all / exclude / only.
+    privateLabelOnly: false,
+    // Brand scope — '' (All brands) | 'shared'. 'shared' keeps only products
+    // whose brand the competitor also carries, which is the realistic ceiling:
+    // a brand they do not stock can never be matched.
+    brandScope: '',
+    // Competitor pills. Cosmetic most of the time, but under Shared-only they
+    // decide which competitors count as sharing a brand, so they move numbers —
+    // and therefore stage behind Apply like every other filter.
+    //   pendingVisibleCompetitors — what the pills are showing right now
+    //   visibleCompetitors        — what the views actually query with
+    // When Shared-only is off the two are kept in lockstep, so focusing stays
+    // instant and free.
+    visibleCompetitors: [],
+    pendingVisibleCompetitors: [],
     // Mode (not a scope filter): fill mapped-but-not-fresh prices with the
     // product×competitor modal, flagged estimated. Default OFF.
     priceFallback: false,
@@ -41,6 +58,8 @@ export const useFiltersStore = defineStore('filters', {
       if (state.fpNames.length) params.fp_names = state.fpNames.join(',')
       if (state.vertical) params.vertical = state.vertical
       if (!state.includePrivateLabel) params.exclude_private_label = true
+      if (state.privateLabelOnly) params.private_label_only = true
+      if (state.brandScope) params.brand_scope = state.brandScope
       if (state.priceFallback) params.price_fallback = true
       return params
     },
@@ -55,7 +74,9 @@ export const useFiltersStore = defineStore('filters', {
         state.competitor.length ||
         state.fpNames.length ||
         !!state.vertical ||
-        !state.includePrivateLabel
+        !!state.brandScope ||
+        !state.includePrivateLabel ||
+        state.privateLabelOnly
       )
     },
   },
@@ -152,7 +173,11 @@ export const useFiltersStore = defineStore('filters', {
       this.competitor = []
       this.fpNames = []
       this.vertical = ''
+      this.brandScope = ''
+      this.visibleCompetitors = []
+      this.pendingVisibleCompetitors = []
       this.includePrivateLabel = true
+      this.privateLabelOnly = false
       this.fetchSubcategories()
     },
 
@@ -171,7 +196,15 @@ export const useFiltersStore = defineStore('filters', {
       this.competitor = Array.isArray(snap.competitor) ? [...snap.competitor] : []
       this.fpNames = Array.isArray(snap.fpNames) ? [...snap.fpNames] : []
       this.vertical = typeof snap.vertical === 'string' ? snap.vertical : ''
+      // Must be listed here: this method assigns field by field, so anything
+      // missing is silently dropped on Apply rather than committed.
+      this.brandScope = typeof snap.brandScope === 'string' ? snap.brandScope : ''
+      if (Array.isArray(snap.visibleCompetitors)) {
+        this.visibleCompetitors = [...snap.visibleCompetitors]
+        this.pendingVisibleCompetitors = [...snap.visibleCompetitors]
+      }
       this.includePrivateLabel = 'includePrivateLabel' in snap ? !!snap.includePrivateLabel : true
+      this.privateLabelOnly = 'privateLabelOnly' in snap ? !!snap.privateLabelOnly : false
       if ('priceFallback' in snap) this.priceFallback = !!snap.priceFallback
       this.fetchSubcategories()
     },

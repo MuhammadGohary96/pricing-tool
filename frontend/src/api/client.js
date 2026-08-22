@@ -65,6 +65,9 @@ export const commercialApi = {
   getPivotedProducts: (params) => api.get('/commercial/products-pivoted', { params }),
   getProductFpMatrix: (productId, params) => api.get(`/commercial/products/${encodeURIComponent(productId)}/fp-matrix`, { params }),
   exportCSV: (params) => api.get('/commercial/export', { params, responseType: 'blob' }),
+  // Styled workbook, rendered by the backend with openpyxl. Must be a blob:
+  // the response is a binary .xlsx, not JSON.
+  workbook: (params) => api.get('/commercial/workbook', { params, responseType: 'blob' }),
 }
 
 export const masterDataApi = {
@@ -84,6 +87,18 @@ export const competitorProductsApi = {
   exportCSV: (params) => api.get('/competitor-products/export', { params }),
 }
 
+export const gapApi = {
+  getFilters: () => api.get('/gap/filters'),
+  getKPIs: (params) => api.get('/gap/kpis', { params }),
+  getSubcategories: (params) => api.get('/gap/subcategories', { params }),
+  getBrands: (params) => api.get('/gap/brands', { params }),
+  getProducts: (params) => api.get('/gap/products', { params }),
+  exportRows: (params) => api.get('/gap/export', { params }),
+  // Styled workbook, rendered by the backend with openpyxl. Must be a blob:
+  // the response is a binary .xlsx, not JSON.
+  workbook: (params) => api.get('/gap/workbook', { params, responseType: 'blob' }),
+}
+
 export const executiveApi = {
   getSummary: () => api.get('/executive/summary'),
   getPITrend: () => api.get('/executive/pi-trend'),
@@ -93,4 +108,6 @@ export const executiveApi = {
   getTopActions: (limit = 10, params = {}) => api.get('/executive/top-actions', { params: { limit, ...params } }),
   getDashboard: (params) => api.get('/executive/dashboard', { params }),
   getFpCompetitorPi: (params) => api.get('/executive/fp-competitor-pi', { params }),
+  getCompetitorOverview: (params) => api.get('/executive/competitor-overview', { params }),
+  workbook: (params) => api.get('/executive/workbook', { params, responseType: 'blob' }),
 }

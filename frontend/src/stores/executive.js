@@ -10,6 +10,9 @@ export const useExecutiveStore = defineStore('executive', {
     topActions: null,
     categoryPerformance: null,
     fpCompetitorPi: null,  // { competitors: [], cells: [] } — geographic exposure
+    // Matching + assortment coverage per competitor. Mirrors the
+    // "Competitor Overview" sheet of Brand_Portfolio_Consolidated_excl_Beauty.xlsx.
+    competitorOverview: null,
     loading: false,
     error: null,
     lastFetchedAt: null,
@@ -27,6 +30,12 @@ export const useExecutiveStore = defineStore('executive', {
       if (f.fpNames.length) p.fp_names = f.fpNames.join(',')
       if (f.vertical) p.vertical = f.vertical
       if (!f.includePrivateLabel) p.exclude_private_label = true
+      if (f.privateLabelOnly) p.private_label_only = true
+      if (f.brandScope) p.brand_scope = f.brandScope
+      // See the commercial store: pills only reach the server under Shared-only.
+      if (f.brandScope && f.visibleCompetitors.length) {
+        p.competitor = f.visibleCompetitors.join(',')
+      }
       if (f.priceFallback) p.price_fallback = true
       return p
     },
@@ -42,6 +51,7 @@ export const useExecutiveStore = defineStore('executive', {
           this.fetchTopActions(),
           this.fetchCategoryPerformance(),
           this.fetchFpCompetitorPi(),
+          this.fetchCompetitorOverview(),
         ])
       } catch (err) {
         this.error = err.message || 'Failed to load executive data'
@@ -89,6 +99,13 @@ export const useExecutiveStore = defineStore('executive', {
       try {
         const res = await executiveApi.getFpCompetitorPi(this._params())
         this.fpCompetitorPi = res.data
+      } catch { /* non-critical — panel hides if unavailable */ }
+    },
+
+    async fetchCompetitorOverview() {
+      try {
+        const res = await executiveApi.getCompetitorOverview(this._params())
+        this.competitorOverview = res.data
       } catch { /* non-critical — panel hides if unavailable */ }
     },
   },

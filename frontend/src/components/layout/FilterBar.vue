@@ -8,13 +8,16 @@
       <ChevronDown class="w-3.5 h-3.5 transition-transform" :class="expanded ? 'rotate-180' : ''" />
     </button>
 
-    <div :class="['flex items-center gap-3 flex-wrap', expanded ? '' : 'hidden lg:flex']">
-      <div class="flex items-center gap-1.5 text-subheading text-grey-500 font-semibold">
-        <FilterIcon class="w-4 h-4" />
-        Filters
-      </div>
+    <!-- Three zones, because these controls do not do the same KIND of thing.
+         SCOPE changes what every number MEANS (which vertical, whether our own
+         label counts, which brands are comparable); NARROW only filters rows.
+         Thirteen controls in one wrapping row hid that distinction. -->
+    <div :class="['space-y-2.5', expanded ? '' : 'hidden lg:block']">
 
-      <div class="h-5 w-px bg-grey-200"></div>
+      <div class="flex items-center gap-3 flex-wrap">
+        <span :class="ZONE" title="These change what the numbers MEAN, not just which rows are counted.">
+          <FilterIcon class="w-3.5 h-3.5" /> Scope
+        </span>
 
       <!-- Vertical (single-select toggle) -->
       <div class="inline-flex items-center gap-1.5">
@@ -31,7 +34,48 @@
         </div>
       </div>
 
-      <div class="h-5 w-px bg-grey-200"></div>
+      <!-- Brand scope: the realistic-ceiling switch. Shared-only answers "of the
+           brands they actually stock, how are we doing", which is a different
+           question from the raw mapping rate. -->
+      <div class="inline-flex items-center gap-1.5">
+        <span class="text-body text-grey-500 font-medium whitespace-nowrap">Brand scope</span>
+        <div class="inline-flex items-center rounded-lg border border-grey-200 overflow-hidden">
+          <button
+            v-for="opt in brandScopeOptions"
+            :key="opt.value"
+            type="button"
+            :title="opt.title"
+            class="px-2.5 py-1.5 text-body font-medium transition-colors border-r border-grey-200 last:border-r-0"
+            :class="pending.brandScope === opt.value ? 'bg-brand-primary text-white' : 'bg-white text-grey-600 hover:bg-grey-50'"
+            @click="pending.brandScope = opt.value"
+          >{{ opt.label }}</button>
+        </div>
+      </div>
+
+      <!-- Private label — a segmented control like Vertical and Brands, rather
+           than a checkbox. A checkbox can only say include/exclude; the third
+           state, our own label ON ITS OWN, was unreachable and is the one that
+           answers "how does our own range compare". -->
+      <div class="flex items-center gap-1.5">
+        <span class="text-body text-grey-500 whitespace-nowrap">Private label</span>
+        <div class="inline-flex rounded-lg border border-grey-200 overflow-hidden text-caption font-medium">
+          <button
+            v-for="opt in privateLabelOptions"
+            :key="opt.value"
+            type="button"
+            :title="opt.title"
+            class="px-2.5 py-1.5 text-body font-medium transition-colors border-r border-grey-200 last:border-r-0"
+            :class="privateLabelState === opt.value ? 'bg-brand-primary text-white' : 'bg-white text-grey-600 hover:bg-grey-50'"
+            @click="setPrivateLabel(opt.value)"
+          >{{ opt.label }}</button>
+        </div>
+      </div>
+      </div>
+
+      <div class="flex items-center gap-3 flex-wrap border-t border-grey-100 pt-2.5">
+        <span :class="ZONE" title="These filter which rows are counted. They change no definition.">
+          <Layers class="w-3.5 h-3.5" /> Narrow
+        </span>
 
       <MultiSelect
         :model-value="pending.mainCategory"
@@ -48,6 +92,7 @@
       />
 
       <MultiSelect
+        v-if="!hideTier"
         :model-value="pending.globalTier"
         :options="filters.globalTiers"
         label="Tiers"
@@ -70,24 +115,19 @@
       />
 
       <MultiSelect
+        v-if="!hideFp"
         :model-value="pending.fpNames"
         :options="filters.fps"
         label="FPs"
         @update:model-value="pending.fpNames = $event"
       />
 
-      <div class="h-5 w-px bg-grey-200"></div>
+      </div>
 
-      <!-- Include Private Label checkbox -->
-      <label class="flex items-center gap-1.5 cursor-pointer select-none group">
-        <input
-          type="checkbox"
-          :checked="pending.includePrivateLabel"
-          class="w-3.5 h-3.5 rounded border-grey-300 text-brand-primary focus:ring-brand-lightest accent-[var(--brand-primary)]"
-          @change="pending.includePrivateLabel = $event.target.checked"
-        />
-        <span class="text-body text-grey-600 group-hover:text-grey-900 transition-colors whitespace-nowrap">Include Private Label</span>
-      </label>
+      <div class="flex items-center gap-3 flex-wrap border-t border-grey-100 pt-2.5">
+        <span :class="ZONE" title="How missing competitor prices are treated when the blend is computed.">
+          <Calculator class="w-3.5 h-3.5" /> Basis
+        </span>
 
       <!-- Price-fallback mode (staged like every other control until Apply). -->
       <button
@@ -106,20 +146,28 @@
         {{ pending.priceFallback ? 'Estimating prices' : 'Estimate missing prices' }}
       </button>
 
-      <div class="h-5 w-px bg-grey-200"></div>
-
-      <!-- Apply: commits the staged selection (single refetch + URL update). -->
-      <button
-        type="button"
-        :disabled="!isDirty"
-        class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-body font-bold transition-colors active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
-        :class="isDirty ? 'bg-brand-primary text-white hover:bg-brand-dark' : 'bg-grey-100 text-grey-400'"
-        @click="applyFilters"
-      >
-        <Check class="w-3.5 h-3.5" />
-        Apply
-        <span v-if="isDirty && pendingChanges > 0" class="text-micro px-1.5 py-px rounded-full bg-white/25 font-bold">{{ pendingChanges }}</span>
-      </button>
+      <div class="ml-auto flex items-center gap-2">
+        <!-- ml-auto pins Apply to the right end of its row: it used to sit inline
+             with twelve other controls, so every reflow moved the primary action. -->
+        <span v-if="isDirty" class="hidden sm:inline text-caption text-amber-700 font-semibold whitespace-nowrap">
+          {{ pendingChanges }} unapplied
+        </span>
+        <button
+          type="button"
+          :disabled="!isDirty"
+          class="inline-flex items-center gap-2 px-5 py-2 rounded-lg text-body font-bold whitespace-nowrap transition-[background-color,box-shadow,transform] duration-200 ease-premium active:scale-[0.97] disabled:cursor-not-allowed"
+          :class="isDirty
+            ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/30 ring-2 ring-brand-primary/25 hover:bg-brand-dark'
+            : 'bg-grey-50 text-grey-400 ring-1 ring-grey-200'"
+          :title="isDirty ? `Apply ${pendingChanges} pending change(s)` : 'Filters are up to date'"
+          @click="applyFilters"
+        >
+          <Check class="w-4 h-4" />
+          {{ isDirty ? 'Apply' : 'Applied' }}
+          <span v-if="isDirty && pendingChanges > 0"
+                class="text-caption px-1.5 py-px rounded-full bg-white/25 font-bold tabular-nums">{{ pendingChanges }}</span>
+        </button>
+      </div>
 
       <Transition name="filter">
         <div v-if="loading" class="flex items-center gap-1.5 text-caption text-brand-primary font-medium">
@@ -127,6 +175,7 @@
           Updating...
         </div>
       </Transition>
+      </div>
 
       <SavedViews />
 
@@ -160,6 +209,10 @@
           {{ pending.vertical }}
           <button class="hover:text-brand-dark" @click="pending.vertical = ''"><X class="w-3 h-3" /></button>
         </span>
+        <span v-if="pending.brandScope" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
+          Shared brands only
+          <button class="hover:text-brand-dark" @click="pending.brandScope = ''"><X class="w-3 h-3" /></button>
+        </span>
         <span v-for="cat in pending.mainCategory" :key="'cat-' + cat" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
           {{ cat }}
           <button class="hover:text-brand-dark" @click="removeChip('mainCategory', cat)"><X class="w-3 h-3" /></button>
@@ -185,7 +238,11 @@
           {{ fp }}
           <button class="hover:text-brand-dark" @click="removeChip('fpNames', fp)"><X class="w-3 h-3" /></button>
         </span>
-        <span v-if="!pending.includePrivateLabel" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-micro font-medium border border-amber-200">
+        <span v-if="pending.privateLabelOnly" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light/60">
+          Private label only
+          <button class="hover:text-brand-dark" @click="setPrivateLabel('')"><X class="w-3 h-3" /></button>
+        </span>
+        <span v-else-if="!pending.includePrivateLabel" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-micro font-medium border border-amber-200">
           Excl. Private Label
           <button class="hover:text-amber-900" @click="pending.includePrivateLabel = true"><X class="w-3 h-3" /></button>
         </span>
@@ -197,7 +254,8 @@
 
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
-import { Filter as FilterIcon, Loader2, Link as LinkIcon, ChevronDown, X, Check } from 'lucide-vue-next'
+import { Filter as FilterIcon, Loader2, Link as LinkIcon, ChevronDown, X, Check,
+         Layers, Calculator } from 'lucide-vue-next'
 import MultiSelect from '../shared/MultiSelect.vue'
 import SavedViews from './SavedViews.vue'
 import CompetitorLogo from '../shared/CompetitorLogo.vue'
@@ -206,11 +264,43 @@ import { useFiltersStore } from '../../stores/filters'
 defineProps({
   loading: { type: Boolean, default: false },
   hideCompetitor: { type: Boolean, default: false },
+  // Gap Analysis hides these two. Its competitor-only rows are national and
+  // carry no tier of ours, so tier and FP could only ever narrow half that
+  // screen — a filter that silently applies to one column and not the next is
+  // worse than not offering it.
+  hideTier: { type: Boolean, default: false },
+  hideFp: { type: Boolean, default: false },
 })
 
 const filters = useFiltersStore()
 const linkCopied = ref(false)
 const expanded = ref(false)
+
+const ZONE = 'inline-flex items-center gap-1 text-micro font-bold uppercase tracking-wide '
+           + 'text-grey-400 w-[70px] shrink-0 cursor-help'
+
+
+// Widening left to right. 'shared' keeps its meaning from before this control
+// grew a third state, so saved URLs and presets do not silently change scope.
+const brandScopeOptions = [
+  { value: '', label: 'All', title: 'Every brand we carry' },
+  { value: 'shared_name', label: 'Shared', title: 'Brands the competitor carries under the SAME name. The strict reading — it misses brands we label differently, such as our Froneri against their Nestle and Paradise' },
+  { value: 'shared', label: '+ by match', title: 'The above plus brands proved shared by matching, where the two names disagree. A brand counts when at least half its products are mapped at that competitor — the realistic matching ceiling, since a brand they do not stock can never be matched' },
+]
+
+// Three states over two booleans, because includePrivateLabel is already in
+// saved views and shared URLs and must keep meaning what it meant.
+const privateLabelOptions = [
+  { value: '', label: 'All', title: 'Our whole range, own label included' },
+  { value: 'exclude', label: 'Exclude', title: 'Third-party brands only — the comparable range, since competitors cannot stock our own label' },
+  { value: 'only', label: 'Only', title: 'Our own label on its own — what we sell that nobody else can' },
+]
+const privateLabelState = computed(() =>
+  pending.privateLabelOnly ? 'only' : (pending.includePrivateLabel ? '' : 'exclude'))
+function setPrivateLabel(v) {
+  pending.includePrivateLabel = v !== 'exclude'
+  pending.privateLabelOnly = v === 'only'
+}
 
 const verticalOptions = [
   { value: '', label: 'All' },
@@ -222,7 +312,7 @@ const verticalOptions = [
 // refetch / URL change) until Apply. subcatTier & actionType are carried through
 // even though they have no control here, so committing never wipes filters set
 // elsewhere (e.g. Master Data action cards).
-const FIELDS = ['mainCategory', 'subCategory', 'globalTier', 'subcatTier', 'actionType', 'brand', 'competitor', 'fpNames', 'vertical', 'includePrivateLabel', 'priceFallback']
+const FIELDS = ['mainCategory', 'subCategory', 'globalTier', 'subcatTier', 'actionType', 'brand', 'competitor', 'fpNames', 'vertical', 'brandScope', 'includePrivateLabel', 'privateLabelOnly', 'priceFallback']
 
 function committedSnapshot() {
   const s = {}
@@ -254,20 +344,29 @@ const pendingSnapStr = computed(() => {
   for (const k of FIELDS) s[k] = Array.isArray(pending[k]) ? [...pending[k]] : pending[k]
   return JSON.stringify(s)
 })
-const isDirty = computed(() => pendingSnapStr.value !== JSON.stringify(committedSnapshot()))
+// The competitor pills live in the store rather than in `pending`, because they
+// are rendered by the views, not by this bar — but they must still gate Apply.
+const pillsDirty = computed(() =>
+  JSON.stringify(filters.pendingVisibleCompetitors) !== JSON.stringify(filters.visibleCompetitors))
+const isDirty = computed(() =>
+  pendingSnapStr.value !== JSON.stringify(committedSnapshot()) || pillsDirty.value)
 
 const pendingChanges = computed(() =>
   [pending.mainCategory, pending.subCategory, pending.globalTier, pending.brand, pending.competitor, pending.fpNames]
     .reduce((n, a) => n + a.length, 0)
   + (pending.vertical ? 1 : 0)
-  + (!pending.includePrivateLabel ? 1 : 0)
+  + (pending.brandScope ? 1 : 0)
+  + (pillsDirty.value ? 1 : 0)
+  + (!pending.includePrivateLabel || pending.privateLabelOnly ? 1 : 0)
   + (pending.priceFallback ? 1 : 0)
 )
 
+// Gates the "Selected:" chip row and Clear All, so brandScope has to be counted
+// or its chip never appears when it is the only thing set.
 const pendingHasFilters = computed(() =>
   !!(pending.mainCategory.length || pending.subCategory.length || pending.globalTier.length ||
      pending.brand.length || pending.competitor.length || pending.fpNames.length ||
-     pending.vertical || !pending.includePrivateLabel)
+     pending.vertical || pending.brandScope || !pending.includePrivateLabel || pending.privateLabelOnly)
 )
 
 const activeCount = computed(() => pendingChanges.value)
@@ -275,7 +374,9 @@ const activeCount = computed(() => pendingChanges.value)
 function applyFilters() {
   if (!isDirty.value) return
   // Atomic commit → the views' watchers refetch once and the URL syncs once.
-  filters.applySnapshot({ ...pending, mainCategory: [...pending.mainCategory], subCategory: [...pending.subCategory], globalTier: [...pending.globalTier], subcatTier: [...pending.subcatTier], actionType: [...pending.actionType], brand: [...pending.brand], competitor: [...pending.competitor], fpNames: [...pending.fpNames] })
+  // Commit the pills in the same tick, so one Apply is one refetch.
+  filters.visibleCompetitors = [...filters.pendingVisibleCompetitors]
+  filters.applySnapshot({ ...pending, visibleCompetitors: [...filters.pendingVisibleCompetitors], mainCategory: [...pending.mainCategory], subCategory: [...pending.subCategory], globalTier: [...pending.globalTier], subcatTier: [...pending.subcatTier], actionType: [...pending.actionType], brand: [...pending.brand], competitor: [...pending.competitor], fpNames: [...pending.fpNames] })
 }
 
 function clearFilters() {

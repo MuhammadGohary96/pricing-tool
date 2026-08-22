@@ -4,7 +4,7 @@
     <div class="px-4 py-3 border-b border-grey-100 flex items-center justify-between gap-3 flex-wrap">
       <div class="flex items-center gap-1.5 min-w-0">
         <h2 class="text-subheading font-bold text-grey-900 tracking-tightish whitespace-nowrap">{{ title }}</h2>
-        <HelpTooltip text="Quantity-weighted price index. Formula: Σ(sale_PI × avg_daily_quantity) ÷ Σ(avg_daily_quantity), filtered to used_product=TRUE (eligible + has price + recently updated). sale_PI = BF price ÷ Competitor price → PI > 1 = BF more expensive, PI < 1 = BF cheaper." />
+        <HelpTooltip text="Quantity-weighted: Σ(sale_PI × qty) ÷ Σ(qty) over used products. sale_PI = BF ÷ competitor, so above 1.00 means BREADFAST IS MORE EXPENSIVE." />
       </div>
       <div class="flex items-center gap-3 shrink-0">
         <!-- Grain toggle: roll up to commercial category or drop to subcategory -->
@@ -23,7 +23,7 @@
           >Commercial category</button>
         </div>
         <span class="hidden sm:inline text-micro text-grey-400">Click a row to filter · a dot to jump to a product</span>
-        <ExportButton :fetcher="exportData" label="Export Excel" filename="blended_pi.xlsx" class="shrink-0" />
+        <ExportButton :fetcher="exportData" label="Export Excel" filename="Blended_PI.xlsx" class="shrink-0" />
       </div>
     </div>
     <!-- Refreshing indicator (in-place refetch on filter change) -->
@@ -85,6 +85,10 @@
             >
               <span class="inline-flex items-center gap-1">
                 {{ col.label }}
+                <span
+                  v-if="col.dynamic && selectedCompetitor"
+                  class="px-1.5 py-px rounded-full font-bold text-[9px] bg-brand-lightest text-brand-primary"
+                >{{ selectedCompetitor }}</span>
                 <component
                   v-if="col.sortable !== false"
                   :is="sortKey === col.key ? (sortDir === 'asc' ? ArrowUp : ArrowDown) : ChevronsUpDown"
@@ -151,6 +155,26 @@
             <td class="px-3 py-1.5 text-body text-center font-mono">
               <span :class="rowUtilizationPct(row) == null ? 'text-grey-300' : 'text-grey-700'">{{ rowUtilizationPct(row) != null ? rowUtilizationPct(row) + '%' : '—' }}</span>
             </td>
+            <!-- Addressable %: matched over what CAN be matched. A subcategory at
+                 30% mapped but 100% addressable is finished, not behind. -->
+            <td class="px-3 py-1.5 text-body text-center font-mono">
+              <span :class="addrClass(rowAddressablePct(row))"
+                    :title="`${rowNoMatch(row)} products have a confirmed no-match and are excluded from the denominator${selectedCompetitor ? ` (${selectedCompetitor})` : ''}`">
+                {{ rowAddressablePct(row) != null ? rowAddressablePct(row) + '%' : '—' }}
+              </span>
+            </td>
+            <td v-if="groupBy === 'sub_category'" class="px-3 py-1.5 text-body text-center font-mono">
+              <span :class="rowCompOnly(row) > 0 ? 'text-amber-700 font-semibold' : 'text-grey-300'"
+                    :title="`Competitor products with no link to anything in our tracked range, placed here by the category bridge${selectedCompetitor ? ` (${selectedCompetitor})` : ' (all competitors)'}.\nA few are matched, but only to Breadfast products the tool does not track, so from here they count as products we do not carry.`">
+                {{ rowCompOnly(row) > 0 ? rowCompOnly(row).toLocaleString() : '—' }}
+              </span>
+            </td>
+            <td class="px-3 py-1.5 text-body text-center font-mono">
+              <span :class="rowOurOnly(row) > 0 ? 'text-brand-primary font-semibold' : 'text-grey-300'"
+                    :title="ourOnlyTitle(row)">
+                {{ rowOurOnly(row) > 0 ? rowOurOnly(row).toLocaleString() : '—' }}
+              </span>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -201,6 +225,9 @@ const props = defineProps({
   busy: { type: Boolean, default: false },
   // 'sub_category' (default) | 'commercial_category' — the row grain.
   groupBy: { type: String, default: 'sub_category' },
+  /** Supplied by the view, which owns the filter params. Takes the competitors
+      on screen and resolves to { blob, filename }. */
+  exportFetcher: { type: Function, default: null },
 })
 
 const emit = defineEmits(['select', 'select-product', 'select-category', 'set-group-by'])
@@ -275,14 +302,24 @@ const fixedColumns = computed(() => {
   return cols
 })
 
-const trailingColumns = [
-  { key: 'total_product_count', label: 'Total' },
-  { key: 'eligible_product_count', label: 'Eligible' },
-  { key: 'used_product_count', label: 'Used' },
-  { key: 'mapped_product_count', label: 'Mapped' },
-  { key: 'mapping_pct', label: 'Map %' },
-  { key: 'utilization_pct', label: 'Util %' },
-]
+const trailingColumns = computed(() => {
+  const cols = [
+    { key: 'total_product_count', label: 'Total' },
+    { key: 'eligible_product_count', label: 'Eligible' },
+    { key: 'used_product_count', label: 'Used', dynamic: true },
+    { key: 'mapped_product_count', label: 'Mapped', dynamic: true },
+    { key: 'mapping_pct', label: 'Mapped %', dynamic: true },
+    { key: 'utilization_pct', label: 'Confidence %', dynamic: true },
+    { key: 'addressable_pct', label: 'Addr %', dynamic: true },
+  ]
+  // The category bridge maps a competitor category onto one of OUR
+  // subcategories, so there is no comp-only figure at category grain.
+  if (props.groupBy === 'sub_category') cols.push({ key: 'comp_only_products', label: 'They only', dynamic: true })
+  // Ours only needs no bridge — it is our own side — so unlike They only it is
+  // valid at both grains and stays in the list either way.
+  cols.push({ key: 'our_only_count', label: 'Ours only', dynamic: true })
+  return cols
+})
 
 const sortKey = ref('max_pi')
 const sortDir = ref('desc')
@@ -321,7 +358,47 @@ function rowMapped(row) {
   return row.mapped_product_count ?? 0
 }
 
-// Mapping % = mapped / total tracked; Utilization % = used / eligible.
+// Addr % and They only follow the selected competitor header, like Used and
+// Mapped. With no competitor selected they show the pooled row value, where
+// "no-match" means no competitor carries an equivalent; with one selected they
+// show that competitor's own figures.
+function rowAddressablePct(row) {
+  if (selectedCompetitor.value)
+    return row.competitor_addressable_pcts?.[selectedCompetitor.value] ?? null
+  return row.addressable_pct ?? null
+}
+
+function rowCompOnly(row) {
+  if (selectedCompetitor.value)
+    return row.competitor_comp_only_counts?.[selectedCompetitor.value] ?? 0
+  return row.comp_only_products ?? 0
+}
+
+// Pooled means "matched at no competitor in scope"; per-competitor means "not
+// matched at that one". The pooled figure is therefore always the smaller, and
+// the two must not be read as the same measure narrowed.
+function rowOurOnly(row) {
+  if (selectedCompetitor.value)
+    return row.competitor_our_only_counts?.[selectedCompetitor.value] ?? 0
+  return row.our_only_count ?? 0
+}
+
+function ourOnlyTitle(row) {
+  const n = rowOurOnly(row)
+  const who = selectedCompetitor.value || 'any competitor in scope'
+  return `${n.toLocaleString()} of our products in this row have no match at ${who}.\n`
+    + 'Counts what they do not stock TOGETHER WITH what we failed to match, so read it as a ceiling.'
+}
+
+function rowNoMatch(row) {
+  if (selectedCompetitor.value)
+    return row.competitor_no_match_counts?.[selectedCompetitor.value] ?? 0
+  return row.confirmed_no_match_count ?? 0
+}
+
+// Mapping % = mapped / total tracked; Confidence % = used / eligible.
+// The FIELD stays utilization_pct: it is a sort key and a wire name, and
+// renaming it would break callers for a label change.
 function rowMappingPct(row) {
   const total = row.total_product_count || 0
   return total ? Math.round((rowMapped(row) / total) * 100) : null
@@ -330,6 +407,14 @@ function rowMappingPct(row) {
 function rowUtilizationPct(row) {
   const eligible = row.eligible_product_count || 0
   return eligible ? Math.round((rowUsed(row) / eligible) * 100) : null
+}
+
+// Addressable reads inversely to Map %: high is finished, low is real headroom.
+function addrClass(v) {
+  if (v == null) return 'text-grey-300'
+  if (v >= 90) return 'text-green-600'
+  if (v >= 60) return 'text-amber-600'
+  return 'text-red-500'
 }
 
 const allSortedData = computed(() => {
@@ -349,6 +434,17 @@ const allSortedData = computed(() => {
     } else if (sortKey.value === 'utilization_pct') {
       va = rowUtilizationPct(a) ?? -Infinity
       vb = rowUtilizationPct(b) ?? -Infinity
+    } else if (sortKey.value === 'addressable_pct') {
+      va = rowAddressablePct(a) ?? -Infinity
+      vb = rowAddressablePct(b) ?? -Infinity
+    } else if (sortKey.value === 'comp_only_products') {
+      va = rowCompOnly(a) ?? -Infinity
+      vb = rowCompOnly(b) ?? -Infinity
+    } else if (sortKey.value === 'our_only_count') {
+      // Needs its own branch: the generic fallback reads the pooled field off
+      // the row and would sort by that even with a competitor selected.
+      va = rowOurOnly(a) ?? -Infinity
+      vb = rowOurOnly(b) ?? -Infinity
     } else {
       va = a[sortKey.value] ?? -Infinity
       vb = b[sortKey.value] ?? -Infinity
@@ -383,53 +479,14 @@ function compPiClass(val) {
 // the active grain (commercial category, or + subcategory) with that
 // competitor's PI and coverage. Falls back to a single combined sheet if no
 // competitors are visible.
+// Built by the backend — see utils/workbook.js. The pills are client-side
+// visibility and never reach the query, so the competitor list has to be sent
+// explicitly; group_by likewise, since it is this table's own control.
 function exportData() {
-  const rows = allSortedData.value
-  const isSubcat = props.groupBy === 'sub_category'
-
-  const baseCols = (row) => {
-    const o = { 'Commercial category': row.commercial_category_name ?? '' }
-    if (isSubcat) o['Subcategory'] = row.sub_category_name ?? ''
-    return o
-  }
-
-  const comps = visibleCompetitors.value
-  if (!comps.length) {
-    return {
-      filename: 'blended_pi.xlsx',
-      sheets: [{
-        name: 'Blended PI',
-        rows: rows.map(row => ({
-          ...baseCols(row),
-          'Blended PI': row.blended_pi ?? null,
-          'Total': row.total_product_count,
-          'Eligible': row.eligible_product_count,
-        })),
-      }],
-    }
-  }
-
-  const sheets = comps.map(comp => ({
-    name: comp,
-    rows: rows.map(row => {
-      const pi = row.competitor_blended_pis?.[comp] ?? null
-      const used = row.competitor_used_counts?.[comp] ?? 0
-      const mapped = row.competitor_mapped_counts?.[comp] ?? 0
-      const total = row.total_product_count || 0
-      const eligible = row.eligible_product_count || 0
-      return {
-        ...baseCols(row),
-        'Blended PI': pi,
-        'Total': total,
-        'Eligible': eligible,
-        'Used': used,
-        'Mapped': mapped,
-        'Mapping %': total ? Math.round((mapped / total) * 100) : null,
-        'Utilization %': eligible ? Math.round((used / eligible) * 100) : null,
-      }
-    }),
-  }))
-
-  return { filename: 'blended_pi.xlsx', sheets }
+  if (!props.exportFetcher) return []
+  return props.exportFetcher({
+    competitors: visibleCompetitors.value.join(','),
+    group_by: props.groupBy,
+  })
 }
 </script>

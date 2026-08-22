@@ -57,6 +57,16 @@
               {{ kpis.blended_pi != null ? kpis.blended_pi.toFixed(2) : '—' }}
             </span>
             <p class="text-body font-semibold mt-3.5 max-w-[44ch]" :class="piTextClass(kpis.blended_pi)">{{ piInterpretation }}</p>
+            <!-- The single blended figure averages a real spread away: 1.01
+                 overall while one competitor sits at 1.12. A leader scanning for
+                 "is anything on fire" was being shown the one number in which
+                 the fire is invisible, so the range now sits with it. -->
+            <p v-if="piSpread" class="text-caption text-grey-600 mt-1.5 max-w-[48ch]">
+              Range <span class="font-mono font-semibold" :class="piTextClass(piSpread.min.pi)">{{ piSpread.min.pi.toFixed(2) }}</span>
+              {{ piSpread.min.name }}
+              → <span class="font-mono font-semibold" :class="piTextClass(piSpread.max.pi)">{{ piSpread.max.pi.toFixed(2) }}</span>
+              {{ piSpread.max.name }}
+            </p>
             <p class="text-caption text-grey-500 mt-1 max-w-[48ch]">Quantity-weighted Breadfast price ÷ competitor price, across every tracked competitor.</p>
           </div>
 
@@ -70,12 +80,32 @@
             <div class="bg-white p-5 lg:p-6 flex flex-col justify-center gap-1.5">
               <dt class="text-caption text-grey-500 font-medium">Competitors tracked</dt>
               <dd class="font-mono text-[26px] font-bold text-grey-900 tabular-nums leading-none"><AnimatedNumber :value="competitorCount" /></dd>
-              <dd class="text-micro text-grey-500">with live price data</dd>
+              <!-- Was the flat claim "with live price data", which is untrue for a
+                   competitor whose catalogue was never crawled. -->
+              <dd class="text-micro text-grey-500">
+                {{ withCatalogueCount != null ? `${withCatalogueCount} with a live catalogue` : 'benchmarked' }}
+              </dd>
             </div>
           </dl>
         </div>
         </template>
       </PageHeader>
+
+      <!-- Exceptions: everything here was already on the page, as numbers inside
+           a 16-column table the reader had to find. Stating them is the whole
+           job of a leadership layer, and costs no new data. -->
+      <div v-if="exceptions.length" class="flex flex-wrap gap-2 animate-fade-in-up stagger-1">
+        <div v-for="e in exceptions" :key="e.key"
+             class="flex items-start gap-2 px-3 py-2 rounded-xl ring-1 bg-white"
+             :class="e.tone === 'bad' ? 'ring-red-200' : e.tone === 'warn' ? 'ring-amber-200' : 'ring-grey-200'">
+          <component :is="e.icon" class="w-4 h-4 mt-0.5 shrink-0"
+                     :class="e.tone === 'bad' ? 'text-red-500' : e.tone === 'warn' ? 'text-amber-500' : 'text-grey-400'" />
+          <div class="min-w-0">
+            <div class="text-body font-semibold text-grey-900 leading-tight">{{ e.headline }}</div>
+            <div class="text-caption text-grey-500 leading-tight">{{ e.detail }}</div>
+          </div>
+        </div>
+      </div>
 
       <!-- Definitions -->
       <DefinitionsPanel :sections="definitions" storage-key="defs-executive" class="animate-fade-in-up stagger-1" />
@@ -88,6 +118,7 @@
         v-if="allCompetitors.length > 0"
         :competitors="allCompetitors"
         v-model="selectedCompetitors"
+        :scopes-brands="!!filters.brandScope"
         :default-limit="5"
         class="animate-fade-in-up stagger-2"
       />
@@ -101,14 +132,32 @@
         <PILegend />
       </div>
 
-      <!-- By competitor: blended PI table + classification donut, paired -->
+      <!-- One table per competitor: price position and assortment coverage, which
+           were two separate panels at opposite ends of this page. Same grain, so
+           the same row now answers "are we priced right against them" and "how
+           much of our range can we even compare". -->
+      <CompetitorScorecard
+        v-if="visibleOverview.length"
+        :data="visibleOverview"
+        :mapping-progress="store.dashboard?.mapping_progress || []"
+        :vertical="filters.vertical"
+        :brand-scope="filters.brandScope"
+        :export-fetcher="exportScorecard"
+        class="animate-fade-in-up stagger-3"
+        @select-competitor="navigateToCompetitor"
+      />
+
+      <!-- How different the two ranges are in the first place. The scorecard's
+           assortment table gives the figures; this gives their shape. -->
+      <AssortmentOverlap
+        v-if="visibleOverview.length"
+        :data="visibleOverview"
+        class="animate-fade-in-up stagger-3"
+      />
+
+      <!-- Classification donut keeps its place in this tier, now paired with the
+           category strip (also a pricing-position panel) so neither sits alone. -->
       <div class="flex flex-col xl:flex-row gap-4 items-start animate-fade-in-up stagger-3">
-        <div class="w-full xl:w-[58%] min-w-0">
-          <CompetitorPITable
-            :data="enrichedCompetitorPI"
-            @select-competitor="navigateToCompetitor"
-          />
-        </div>
         <div class="w-full xl:w-[42%] min-w-0">
           <ClassificationBreakdown
             :data="store.dashboard?.classification_breakdown"
@@ -116,31 +165,29 @@
             @navigate="navigateToAction"
           />
         </div>
-      </div>
-
-      <!-- By category: blended PI per category (full-width chip strip) -->
-      <div
-        v-if="store.categoryPerformance?.length"
-        class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden animate-fade-in-up stagger-4"
-      >
-        <div class="px-4 py-3 border-b border-grey-100 flex items-center gap-2">
-          <Layers class="w-4 h-4 text-brand-primary" />
-          <span class="text-subheading font-bold text-grey-900 tracking-tightish">Category PI</span>
-          <span class="text-caption text-grey-400 ml-1">click to explore</span>
-        </div>
-        <div class="flex flex-wrap gap-2 px-4 py-3">
-          <button
-            v-for="cat in store.categoryPerformance"
-            :key="cat.category_name"
-            class="flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all hover:shadow-panel-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-lightest"
-            :class="deviationBorderClass(cat.pi_deviation)"
-            @click="navigateToCategory(cat.category_name)"
-          >
-            <span class="text-body text-grey-800 font-medium">{{ cat.category_name }}</span>
-            <span class="font-mono text-body font-bold" :class="piTextClass(cat.blended_pi)">
-              {{ cat.blended_pi?.toFixed(2) ?? '—' }}
-            </span>
-          </button>
+        <div
+          v-if="store.categoryPerformance?.length"
+          class="w-full xl:w-[58%] min-w-0 bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden"
+        >
+          <div class="px-4 py-3 border-b border-grey-100 flex items-center gap-2">
+            <Layers class="w-4 h-4 text-brand-primary" />
+            <span class="text-subheading font-bold text-grey-900 tracking-tightish">Category PI</span>
+            <span class="text-caption text-grey-400 ml-1">click to explore</span>
+          </div>
+          <div class="flex flex-wrap gap-2 px-4 py-3">
+            <button
+              v-for="cat in store.categoryPerformance"
+              :key="cat.category_name"
+              class="flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all hover:shadow-panel-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-lightest"
+              :class="deviationBorderClass(cat.pi_deviation)"
+              @click="navigateToCategory(cat.category_name)"
+            >
+              <span class="text-body text-grey-800 font-medium">{{ cat.category_name }}</span>
+              <span class="font-mono text-body font-bold" :class="piTextClass(cat.blended_pi)">
+                {{ cat.blended_pi?.toFixed(2) ?? '—' }}
+              </span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -152,31 +199,32 @@
         @select-fp="onSelectFp"
       />
 
-      <!-- ═══ TIER 3 · Data coverage — how complete the mapping behind these numbers is ═══ -->
-      <div class="flex items-baseline gap-2.5 mt-3 animate-fade-in-up stagger-5">
-        <h2 class="text-caption font-semibold uppercase tracking-wide text-grey-500">Data coverage</h2>
-        <span class="text-micro text-grey-400">how much of the catalog is mapped, per competitor</span>
-      </div>
-      <MappingProgressChart :data="store.dashboard?.mapping_progress || []" class="animate-fade-in-up stagger-5" />
+      <!-- "Data coverage" was a tier holding one panel, and that panel restated
+           the scorecard's Mapped % column exactly -- same percentages and same
+           counts for all seven competitors. Both are gone: the coverage story
+           lives in the scorecard's Match coverage group, which is where a reader
+           already is when they ask the question. mapping_progress is still
+           fetched and still powers the scorecard's row hover. -->
 
     </div>
   </PageShell>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { watchDebounced } from '@vueuse/core'
 import { useFiltersStore } from '../stores/filters'
 import { useExecutiveStore } from '../stores/executive'
-import { dataApi } from '../api/client'
+import { dataApi, executiveApi } from '../api/client'
+import { asDownload } from '../utils/workbook'
 import KpiCard from '../components/layout/KpiCard.vue'
 import FilterBar from '../components/layout/FilterBar.vue'
-import CompetitorToggle from '../components/commercial/CompetitorToggle.vue'
-import CompetitorPITable from '../components/executive/CompetitorPITable.vue'
-import MappingProgressChart from '../components/executive/MappingProgressChart.vue'
+import CompetitorToggle from '../components/shared/CompetitorToggle.vue'
 import ClassificationBreakdown from '../components/executive/ClassificationBreakdown.vue'
 import GeographicExposure from '../components/executive/GeographicExposure.vue'
+import CompetitorScorecard from '../components/executive/CompetitorScorecard.vue'
+import AssortmentOverlap from '../components/executive/AssortmentOverlap.vue'
 import PageShell from '../components/shared/PageShell.vue'
 import PageHeader from '../components/shared/PageHeader.vue'
 import DefinitionsPanel from '../components/shared/DefinitionsPanel.vue'
@@ -186,6 +234,7 @@ import AnimatedNumber from '../components/shared/AnimatedNumber.vue'
 import {
   Gauge, Package, Users, Clock, Layers, ArrowUp, ArrowDown,
   Scale, AlertTriangle, Target, CheckCircle, BarChart2 as BarChart2Icon, PieChart,
+  Handshake, TrendingUp, GitCompareArrows, TriangleAlert,
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -238,6 +287,9 @@ const syncTitle = computed(() => {
 
 onMounted(() => {
   store.fetchAll()
+  // Populates filters.competitors, the stable source for the pill options (see
+  // allCompetitors). Cached for 15 minutes, so this is cheap.
+  filters.fetchFilterOptions()
   refreshSyncTime()
   // Advance the relative clock often so "X mins ago" stays accurate, but only
   // re-poll the backend status every 10 minutes (it changes at most hourly).
@@ -259,7 +311,11 @@ watchDebounced(
     filters.competitor,
     filters.fpNames,
     filters.vertical,
+    filters.brandScope,
+    // Only varies when the pills actually affect the query (see Commercial).
+    filters.brandScope ? filters.visibleCompetitors.join(',') : '',
     filters.includePrivateLabel,
+    filters.privateLabelOnly,
     filters.priceFallback,
   ],
   async () => {
@@ -281,11 +337,42 @@ function onSelectFp(fp) {
 const kpis = computed(() => store.dashboard?.kpis ?? null)
 const competitorCount = computed(() => store.dashboard?.competitor_pi?.length ?? 0)
 
+// withCatalogueCount powers the header caption "N with a live catalogue"; the
+// Addressable / freshness summaries now live inside CompetitorScorecard, beside
+// the table they describe.
+const overview = computed(() => store.competitorOverview || [])
+const withCatalogueCount = computed(() =>
+  overview.value.length ? overview.value.filter(r => r.has_catalogue).length : null)
+
 // ─── Competitor visibility (client-side, same UX as Commercial) ──
 // Empty selection = show all. The pills filter the Competitor PI table and the
 // Geographic-exposure grid client-side; they don't change the backend query.
-const selectedCompetitors = ref([])
+// The pills live in the store so _params() can read them: under Shared-only they
+// scope which competitors count as "shared". A computed proxy keeps every
+// existing `selectedCompetitors.value` usage working unchanged.
+// Pills bind to the STAGED list. Under Shared-only it commits on Apply, like
+// every other filter, so one Apply is one refetch instead of a page refresh per
+// click. When Shared-only is off it is mirrored to the committed list
+// immediately, keeping plain focusing instant and free.
+const selectedCompetitors = computed({
+  get: () => filters.pendingVisibleCompetitors,
+  set: (v) => {
+    filters.pendingVisibleCompetitors = v
+    if (!filters.brandScope) filters.visibleCompetitors = [...v]
+  },
+})
+watch(() => filters.brandScope, (mode) => {
+  // Leaving Shared-only must not strand a staged selection that will never be
+  // applied — mirror it through so visibility and query agree again.
+  if (mode !== 'shared') filters.visibleCompetitors = [...filters.pendingVisibleCompetitors]
+})
+// Pill options MUST come from a source the pills do not filter. Under Shared-only
+// they narrow the query, so deriving the list from the response made it collapse
+// to the current selection: the pill you just hid disappeared, and the "All" reset
+// hid too (selected.length == competitors.length), leaving no way back.
+// filters.competitors is loaded independently of this view's query.
 const allCompetitors = computed(() => {
+  if (filters.competitors?.length) return [...filters.competitors].sort()
   const set = new Set()
   for (const r of store.dashboard?.competitor_pi || []) if (r.competitor_name) set.add(r.competitor_name)
   for (const c of store.fpCompetitorPi?.competitors || []) set.add(c)
@@ -333,6 +420,60 @@ const wowCoverage = computed(() => {
 // ─── wowCoverage kept but card removed; keep for possible reuse ─
 
 // ─── PI interpretation ──────────────────────────────────────────
+// Widest and narrowest priced position across the competitors on screen.
+const piSpread = computed(() => {
+  const rows = visibleOverview.value.filter(r => r.blended_pi != null)
+  if (rows.length < 2) return null
+  const sorted = [...rows].sort((a, b) => a.blended_pi - b.blended_pi)
+  const lo = sorted[0], hi = sorted[sorted.length - 1]
+  if (Math.abs(hi.blended_pi - lo.blended_pi) < 0.02) return null   // genuinely flat
+  return {
+    min: { pi: lo.blended_pi, name: lo.competitor_name },
+    max: { pi: hi.blended_pi, name: hi.competitor_name },
+  }
+})
+
+// Three exceptions at most: worst price position, thinnest coverage, and any
+// competitor whose assortment view cannot be trusted because nothing was
+// crawled. Every figure is already elsewhere on the page -- this only saves the
+// reader from hunting for it in a 16-column table.
+const exceptions = computed(() => {
+  const rows = visibleOverview.value
+  if (!rows.length) return []
+  const out = []
+
+  const priced = rows.filter(r => r.blended_pi != null)
+  const worst = priced.length ? priced.reduce((a, b) => (b.blended_pi > a.blended_pi ? b : a)) : null
+  if (worst && worst.blended_pi > 1.02) {
+    out.push({
+      key: 'pi', tone: 'bad', icon: TrendingUp,
+      headline: `${worst.competitor_name} — we are ${Math.round((worst.blended_pi - 1) * 100)}% more expensive`,
+      detail: `PI ${worst.blended_pi.toFixed(2)} · ${worst.mapping_pct}% mapped`,
+    })
+  }
+
+  const mapped = rows.filter(r => r.mapping_pct != null && r.has_catalogue)
+  const thinnest = mapped.length ? mapped.reduce((a, b) => (b.mapping_pct < a.mapping_pct ? b : a)) : null
+  if (thinnest && (!worst || thinnest.competitor_name !== worst.competitor_name) && thinnest.mapping_pct < 35) {
+    out.push({
+      key: 'cov', tone: 'warn', icon: GitCompareArrows,
+      headline: `${thinnest.competitor_name} — only ${thinnest.mapping_pct}% of our range is mapped`,
+      detail: `${thinnest.addressable_pct}% of what can be mapped is done`,
+    })
+  }
+
+  // Not a performance problem at all, and the row of zeros does not say so.
+  const dark = rows.filter(r => !r.has_catalogue).map(r => r.competitor_name)
+  if (dark.length) {
+    out.push({
+      key: 'dark', tone: 'warn', icon: TriangleAlert,
+      headline: `${dark.join(', ')} — no live catalogue`,
+      detail: 'Their assortment columns read zero because nothing was crawled, not because the gap is nil',
+    })
+  }
+  return out.slice(0, 3)
+})
+
 const piInterpretation = computed(() => {
   const pi = kpis.value?.blended_pi
   if (pi == null) return ''
@@ -357,18 +498,25 @@ const sparklinePath = computed(() => {
   }).join(' ')
 })
 
-// ─── Enriched competitor PI (merge mapping data for tooltips) ───
-const enrichedCompetitorPI = computed(() => {
-  const pi = store.dashboard?.competitor_pi || []
-  const progress = store.dashboard?.mapping_progress || []
-  const progressMap = Object.fromEntries(progress.map(p => [p.competitor_name, p]))
-  return pi
-    .filter(row => compVisible(row.competitor_name))
-    .map(row => ({
-      ...row,
-      _mapping: progressMap[row.competitor_name] || null,
-    }))
-})
+// The competitor pills are visibility-only on this view, so they filter the
+// scorecard's rows client-side without changing any number.
+const visibleOverview = computed(() =>
+  (store.competitorOverview || []).filter(r => compVisible(r.competitor_name)))
+
+// The scorecard's file is rendered by the backend, in the same house style as
+// the Gap workbook — the browser cannot write cell formatting at all. The view
+// owns the filter params; the panel only says which competitor rows are on
+// screen, because the pills filter it client-side.
+function exportScorecard(names, section) {
+  return asDownload(
+    executiveApi.workbook({
+      ...store._params(),
+      competitors: (names || []).join(','),
+      ...(section ? { section } : {}),
+    }),
+    section ? `${section}.xlsx` : 'Competitor_Scorecard.xlsx',
+  )
+}
 
 // ─── Navigation helpers ─────────────────────────────────────────
 function navigateToCompetitor(name) {
@@ -419,6 +567,18 @@ const definitions = [
       { term: 'Category PI', description: 'Blended PI per category. Click a category to explore it in the Commercial view.', icon: Layers },
       { term: 'Classification', description: 'Donut of product x competitor pairs by mapping status. Use the competitor pills to filter; click a segment to navigate.', icon: PieChart },
       { term: 'Mapping Progress', description: 'Stacked bar of product status per competitor. Shows coverage now, plus the reachable headroom from potential matches.', icon: BarChart2Icon },
+      { term: 'Competitor Overview', description: 'Matching and assortment coverage per competitor — the live version of the Brand Portfolio workbook sheet. Set Vertical to Supermarket to match that sheet, which excludes beauty.', icon: BarChart2Icon },
+    ],
+  },
+  {
+    title: 'Coverage & matchability',
+    items: [
+      { term: 'Addressable %', description: 'Matched divided by (our products minus confirmed no-match). Products the matcher positively rejected leave the denominator, so this is the honest ceiling rather than a backlog. Pooled across product x competitor pairs.', icon: Target },
+      { term: 'Confirmed no-match', description: 'The matcher looked and rejected every candidate — a real assortment difference, not a queue item.', icon: PieChart },
+      { term: 'Benchmark freshness', description: 'Share of our matches whose competitor product was seen in the last 7 days. A match that has gone quiet is a price benchmark quietly going stale.', icon: BarChart2Icon },
+      { term: 'They only', description: "Competitor products with no link to anything of ours. A competitor with no crawled catalogue shows zero here — that is a collection gap, not an assortment gap, and the row is flagged.", icon: Layers },
+      { term: 'Brands: All / Shared only', description: 'Shared only keeps just the products whose brand the competitor also carries. A brand they do not stock can never be matched, so this turns every mapping rate on screen into the achievable ceiling instead of a target nobody can hit. On the competitor side it means "of the brands we both carry, what do they have that we do not".', icon: Handshake },
+      { term: 'Include Private Label', description: 'Unchecking this excludes Breadfast own-brand products. Be aware the exclusion is approximate and not yet identical across views: brands named exactly "Breadfast" always drop, while sub-brands such as "Breadfast Bakery" may still be counted on some panels. Treat small differences between screens as this, not as a data error.', icon: Scale },
     ],
   },
 ]

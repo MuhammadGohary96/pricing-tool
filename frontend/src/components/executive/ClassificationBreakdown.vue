@@ -1,10 +1,10 @@
 <template>
   <div class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden">
-    <div class="px-4 py-3 border-b border-grey-100 flex items-center gap-2">
-      <PieChartIcon class="w-4 h-4 text-brand-primary" />
+    <div class="px-4 py-3 border-b border-grey-100 flex items-center gap-2 flex-wrap">
+      <BarChart3 class="w-4 h-4 text-brand-primary shrink-0" />
       <h2 class="text-subheading font-bold text-grey-900 tracking-tightish">Product classification</h2>
+      <HelpTooltip text="Every product we track against this competitor, in one bar, ordered from done to impossible. The tick marks the reachable ceiling: everything past it is in a brand they do not stock, so no matching effort reaches it." />
 
-      <!-- Competitor toggle -->
       <div class="ml-auto flex items-center gap-1 flex-wrap justify-end">
         <button
           v-for="comp in competitorNames"
@@ -18,72 +18,113 @@
       </div>
     </div>
 
-    <div class="flex gap-0">
-      <!-- Donut chart -->
-      <div class="flex-1 min-w-0">
-        <v-chart
-          v-if="hasData"
-          :option="chartOption"
-          autoresize
-          style="height: 280px;"
-          @click="onSegmentClick"
-        />
-        <EmptyState v-else :icon="PieChartIcon" title="No classification data" message="No data available." />
-      </div>
+    <template v-if="hasData">
+      <div class="px-4 pt-4 pb-3">
+        <!-- The denominator, stated. A percentage bar without its total is what
+             made the old donut answer "25% of what?" with 85,274 pairs. -->
+        <div class="flex items-baseline justify-between mb-2">
+          <span class="text-caption text-grey-500">
+            <span class="font-mono font-bold text-grey-900 tabular-nums">{{ total.toLocaleString() }}</span>
+            products tracked at {{ selectedCompetitor || 'all competitors' }}
+          </span>
+          <span class="text-caption text-grey-500">
+            <span class="font-mono font-bold text-green-700 tabular-nums">{{ mappedPct }}%</span> mapped
+          </span>
+        </div>
 
-      <!-- Summary legend -->
-      <div class="w-44 shrink-0 flex flex-col justify-center gap-2 pr-4">
-        <div v-for="item in legendItems" :key="item.label" class="flex items-start gap-2">
-          <div class="w-2.5 h-2.5 rounded-sm shrink-0 mt-1" :style="{ background: item.color }"></div>
-          <div class="min-w-0">
-            <div class="text-micro text-grey-500 leading-tight">{{ item.label }}</div>
-            <div class="text-body font-bold text-grey-900 leading-tight">
-              {{ item.count.toLocaleString() }}
-              <span class="text-micro font-normal text-grey-400">({{ item.pct }}%)</span>
+        <!-- A bar, not a donut, for one reason: a donut has nowhere to put a
+             threshold line, and the reachable ceiling is the number that decides
+             whether the rest is work or assortment. -->
+        <div class="relative">
+          <div class="flex h-9 rounded-lg overflow-hidden ring-1 ring-grey-200">
+            <div
+              v-for="seg in segments"
+              :key="seg.label"
+              class="h-full flex items-center justify-center transition-[width] duration-500 ease-premium overflow-hidden"
+              :class="[seg.cls, seg.action ? 'cursor-pointer hover:brightness-95' : '']"
+              :style="{ width: `${seg.pct}%`, ...(seg.hatch ? { backgroundImage: HATCH } : {}) }"
+              :title="`${seg.label}: ${seg.count.toLocaleString()} (${seg.pct.toFixed(1)}%)\n${seg.why}`"
+              @click="seg.action && emit('navigate', { action_type: seg.action })"
+            >
+              <span v-if="seg.pct >= 6"
+                    class="font-mono text-caption font-bold tabular-nums whitespace-nowrap px-1"
+                    :class="seg.ink">{{ seg.count.toLocaleString() }}</span>
             </div>
-            <div class="text-micro text-grey-500 leading-tight tabular-nums mt-0.5">{{ item.notPl.toLocaleString() }} non-PL · {{ item.pl.toLocaleString() }} PL</div>
+          </div>
+
+          <!-- The reachable ceiling. Sits exactly on the boundary before
+               "not shared brand", because the segments are ordered so that
+               everything unreachable is last. -->
+          <div v-if="reachablePct < 99.95"
+               class="absolute -top-1 -bottom-1 w-0.5 bg-grey-900 rounded-full pointer-events-none"
+               :style="{ left: `${reachablePct}%` }"></div>
+          <div v-if="reachablePct < 99.95"
+               class="absolute top-full mt-1.5 -translate-x-1/2 whitespace-nowrap pointer-events-none"
+               :style="{ left: `${reachablePct}%` }">
+            <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-grey-900 text-white text-micro font-bold tabular-nums">
+              reachable {{ reachablePct.toFixed(1) }}%
+            </span>
           </div>
         </div>
+
+        <div :class="reachablePct < 99.95 ? 'mt-8' : 'mt-3'">
+          <!-- Legend as a row, which a bar affords and a donut did not: each
+               entry sits under the segment it names. -->
+          <div class="flex flex-wrap gap-x-5 gap-y-2">
+            <div v-for="seg in segments" :key="'k-' + seg.label" class="flex items-start gap-1.5 min-w-0">
+              <span class="w-2.5 h-2.5 rounded-sm shrink-0 mt-1 ring-1 ring-black/5"
+                    :class="seg.cls"
+                    :style="seg.hatch ? { backgroundImage: HATCH } : {}"></span>
+              <div class="min-w-0">
+                <div class="text-caption text-grey-600 leading-tight">{{ seg.label }}</div>
+                <div class="text-body font-bold text-grey-900 leading-tight tabular-nums">
+                  {{ seg.count.toLocaleString() }}
+                  <span class="text-micro font-normal text-grey-400">{{ seg.pct.toFixed(1) }}%</span>
+                </div>
+                <div v-if="seg.pl != null" class="text-micro text-grey-400 leading-tight tabular-nums">
+                  {{ seg.notPl.toLocaleString() }} non-PL · {{ seg.pl.toLocaleString() }} PL
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <p class="text-caption text-grey-500 mt-3">
+            <strong class="text-grey-700">{{ reachable.toLocaleString() }}</strong> of
+            {{ total.toLocaleString() }} products are reachable —
+            {{ brandUnreachable.toLocaleString() }} sit in brands
+            {{ selectedCompetitor || 'these competitors' }} does not stock, so matching cannot touch them.
+            Of the reachable set, <strong class="text-green-700">{{ reachableMappedPct }}%</strong> is mapped.
+          </p>
+        </div>
       </div>
-    </div>
+    </template>
+    <EmptyState v-else :icon="BarChart3" title="No classification data" message="No data available." />
   </div>
 </template>
 
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { prefersReducedMotion } from '../../utils/motion'
-import { PieChart as PieChartIcon } from 'lucide-vue-next'
-import VChart from 'vue-echarts'
+import { BarChart3 } from 'lucide-vue-next'
 import EmptyState from '../shared/EmptyState.vue'
+import HelpTooltip from '../shared/HelpTooltip.vue'
 import CompetitorLogo from '../shared/CompetitorLogo.vue'
-import { use } from 'echarts/core'
-import { PieChart } from 'echarts/charts'
-import { TooltipComponent, GraphicComponent } from 'echarts/components'
-import { CanvasRenderer } from 'echarts/renderers'
-
-use([PieChart, TooltipComponent, GraphicComponent, CanvasRenderer])
 
 const props = defineProps({
-  data: {
-    type: Object,
-    default: () => ({}),
-  },
-  mappingProgress: {
-    type: Array,
-    default: () => [],
-  },
+  data: { type: Object, default: () => ({}) },
+  mappingProgress: { type: Array, default: () => [] },
 })
-
 const emit = defineEmits(['navigate'])
+
+// Same hatch as the delisted band in Portfolio comparison, and deliberately so:
+// hatched means "outside what any effort reaches". One texture, one meaning.
+const HATCH = "repeating-linear-gradient(45deg, rgb(203 213 225) 0 3px, rgb(241 245 249) 3px 6px)"
 
 const LS_KEY = 'bf_selected_competitor_classification'
 const selectedCompetitor = ref(null)
 
 const competitorNames = computed(() =>
-  props.mappingProgress.map(r => r.competitor_name).sort()
-)
+  props.mappingProgress.map(r => r.competitor_name).sort())
 
-// Auto-select Talabat by default; fall back to first competitor. Persisted in localStorage.
 watch(competitorNames, (names) => {
   if (!names.length) return
   if (selectedCompetitor.value && names.includes(selectedCompetitor.value)) return
@@ -98,20 +139,24 @@ function selectCompetitor(comp) {
   localStorage.setItem(LS_KEY, comp)
 }
 
-// Resolve classification counts
+// Every key listed explicitly. An earlier version rebuilt this object from a
+// hand-written list and silently dropped the brand split, which then read 0%
+// on screen while the API returned it correctly.
 const d = computed(() => {
   if (selectedCompetitor.value && props.mappingProgress.length) {
-    const entry = props.mappingProgress.find(r => r.competitor_name === selectedCompetitor.value)
-    if (entry) {
+    const e = props.mappingProgress.find(r => r.competitor_name === selectedCompetitor.value)
+    if (e) {
       return {
-        mapped_not_pl: entry.mapped_not_pl || 0,
-        mapped_pl: entry.mapped_pl || 0,
-        not_mapped_not_pl_potential: entry.potential_not_pl || 0,
-        not_mapped_not_pl_no_potential: entry.no_potential_not_pl || 0,
-        not_mapped_pl_potential: entry.potential_pl || 0,
-        not_mapped_pl_no_potential: entry.no_potential_pl || 0,
-        not_mapped_not_pl_no_match: entry.no_match_not_pl || 0,
-        not_mapped_pl_no_match: entry.no_match_pl || 0,
+        mapped_not_pl: e.mapped_not_pl || 0,
+        mapped_pl: e.mapped_pl || 0,
+        not_mapped_not_pl_potential: e.potential_not_pl || 0,
+        not_mapped_pl_potential: e.potential_pl || 0,
+        not_mapped_not_pl_no_potential: e.no_potential_not_pl || 0,
+        not_mapped_pl_no_potential: e.no_potential_pl || 0,
+        not_mapped_not_pl_no_match: e.no_match_not_pl || 0,
+        not_mapped_pl_no_match: e.no_match_pl || 0,
+        no_match_not_shared_brand: e.no_match_not_shared_brand || 0,
+        no_potential_not_shared_brand: e.no_potential_not_shared_brand || 0,
       }
     }
   }
@@ -120,145 +165,51 @@ const d = computed(() => {
 
 const total = computed(() => {
   const v = d.value
-  return (
-    (v.mapped_not_pl || 0) + (v.mapped_pl || 0) +
-    (v.not_mapped_not_pl_potential || 0) + (v.not_mapped_not_pl_no_potential || 0) +
-    (v.not_mapped_pl_potential || 0) + (v.not_mapped_pl_no_potential || 0) +
-    (v.not_mapped_not_pl_no_match || 0) + (v.not_mapped_pl_no_match || 0)
-  )
+  return (v.mapped_not_pl || 0) + (v.mapped_pl || 0)
+       + (v.not_mapped_not_pl_potential || 0) + (v.not_mapped_pl_potential || 0)
+       + (v.not_mapped_not_pl_no_potential || 0) + (v.not_mapped_pl_no_potential || 0)
+       + (v.not_mapped_not_pl_no_match || 0) + (v.not_mapped_pl_no_match || 0)
 })
-
-// The mapped buckets are now driven by is_mapped on the backend (same definition
-// as "Blended PI by competitor" → Mapping Coverage), so mapped_not_pl + mapped_pl
-// equals mapped_products and the donut center matches both its own green arcs and
-// that table.
-const mappedTotal = computed(() => (d.value.mapped_not_pl || 0) + (d.value.mapped_pl || 0))
-const mappedPct = computed(() => total.value > 0 ? Math.round(mappedTotal.value / total.value * 100) : 0)
-
 const hasData = computed(() => total.value > 0)
 
-function pct(val) {
-  if (!val || !total.value) return 0
-  return Math.round(val / total.value * 1000) / 10
-}
+const mappedTotal = computed(() => (d.value.mapped_not_pl || 0) + (d.value.mapped_pl || 0))
+const mappedPct = computed(() => total.value ? Math.round(mappedTotal.value / total.value * 1000) / 10 : 0)
 
-// Each status tier split into its non-PL (competitor-comparable) and PL
-// (Breadfast own-brand) halves — surfaced in the legend and tooltip.
-const tierSplit = computed(() => {
+// Brand-unreachable spans BOTH dead ends, not just confirmed no-match. Counting
+// only the first put the no-likely-match half into the reachable side and made
+// the ceiling read several hundred products too generous.
+const brandUnreachable = computed(() =>
+  (d.value.no_match_not_shared_brand || 0) + (d.value.no_potential_not_shared_brand || 0))
+const reachable = computed(() => Math.max(0, total.value - brandUnreachable.value))
+const reachablePct = computed(() => total.value ? (reachable.value / total.value) * 100 : 100)
+const reachableMappedPct = computed(() =>
+  reachable.value ? Math.round(mappedTotal.value / reachable.value * 1000) / 10 : 0)
+
+// Ordered done -> possible -> impossible, so the reachable tick lands exactly on
+// the last boundary rather than floating inside a segment.
+const segments = computed(() => {
   const v = d.value
-  return {
-    'Mapped': { notPl: v.mapped_not_pl || 0, pl: v.mapped_pl || 0 },
-    'Potential match': { notPl: v.not_mapped_not_pl_potential || 0, pl: v.not_mapped_pl_potential || 0 },
-    'No likely match': { notPl: v.not_mapped_not_pl_no_potential || 0, pl: v.not_mapped_pl_no_potential || 0 },
-    'Confirmed no match': { notPl: v.not_mapped_not_pl_no_match || 0, pl: v.not_mapped_pl_no_match || 0 },
-  }
-})
-
-const legendItems = computed(() => {
-  const s = tierSplit.value
-  return [
-    { label: 'Mapped', color: '#059669' },
-    { label: 'Potential match', color: '#F59E0B' },
-    { label: 'No likely match', color: '#EF4444' },
-    { label: 'Confirmed no match', color: '#9CA3AF' },
-  ].map(t => {
-    const { notPl, pl } = s[t.label]
-    const count = notPl + pl
-    return { ...t, count, notPl, pl, pct: pct(count) }
-  })
-})
-
-const SEGMENT_DATA = computed(() => {
-  const v = d.value
-  const potential = (v.not_mapped_not_pl_potential || 0) + (v.not_mapped_pl_potential || 0)
-  const noPotential = (v.not_mapped_not_pl_no_potential || 0) + (v.not_mapped_pl_no_potential || 0)
-  const noMatch = (v.not_mapped_not_pl_no_match || 0) + (v.not_mapped_pl_no_match || 0)
-  const mapped = (v.mapped_not_pl || 0) + (v.mapped_pl || 0)
-  return [
-    { name: 'Mapped', value: mapped, itemStyle: { color: '#059669' } },
-    { name: 'Potential match', value: potential, itemStyle: { color: '#F59E0B' } },
-    { name: 'No likely match', value: noPotential, itemStyle: { color: '#EF4444' } },
-    { name: 'Confirmed no match', value: noMatch, itemStyle: { color: '#9CA3AF' } },
-  ].filter(s => s.value > 0)
-})
-
-const chartOption = computed(() => {
   const t = total.value || 1
-  return {
-    animation: !prefersReducedMotion(),
-    animationDuration: 400,
-    animationEasing: 'cubicOut',
-    animationDurationUpdate: 300,
-    textStyle: { fontFamily: 'Geist, system-ui, sans-serif' },
-    tooltip: {
-      trigger: 'item',
-      backgroundColor: 'rgba(17,24,39,0.96)',
-      borderColor: 'transparent',
-      borderWidth: 0,
-      textStyle: { color: '#fff', fontSize: 11, fontFamily: 'Geist, system-ui, sans-serif' },
-      extraCssText: 'border-radius:10px;box-shadow:0 8px 24px rgba(40,16,48,0.18);padding:8px 10px;',
-      formatter: p => {
-        const s = tierSplit.value[p.name]
-        const split = s ? `<br/><span style="opacity:.75">non-PL ${s.notPl.toLocaleString()} · PL ${s.pl.toLocaleString()}</span>` : ''
-        return `${p.name}<br/><b>${p.value?.toLocaleString()}</b> (${((p.value / t) * 100).toFixed(1)}%)${split}`
-      },
-    },
-    graphic: [
-      {
-        type: 'text',
-        left: 'center',
-        top: '42%',
-        style: {
-          text: `${mappedPct.value}%`,
-          fontSize: 22,
-          fontWeight: 900,
-          fontFamily: 'Geist, system-ui, sans-serif',
-          fill: '#111827',
-          textAlign: 'center',
-        },
-      },
-      {
-        type: 'text',
-        left: 'center',
-        top: '55%',
-        style: {
-          text: 'Mapped',
-          fontSize: 11,
-          fontFamily: 'Geist, system-ui, sans-serif',
-          fill: '#6B7280',
-          textAlign: 'center',
-        },
-      },
-    ],
-    series: [{
-      type: 'pie',
-      radius: ['50%', '78%'],
-      center: ['50%', '50%'],
-      data: SEGMENT_DATA.value,
-      label: { show: false },
-      emphasis: {
-        scaleSize: 6,
-        itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.15)' },
-      },
-      itemStyle: {
-        borderRadius: 3,
-        borderColor: '#fff',
-        borderWidth: 2,
-      },
-    }],
-  }
+  const noPotAll = (v.not_mapped_not_pl_no_potential || 0) + (v.not_mapped_pl_no_potential || 0)
+  const noMatchAll = (v.not_mapped_not_pl_no_match || 0) + (v.not_mapped_pl_no_match || 0)
+  const rows = [
+    { label: 'Mapped', count: mappedTotal.value, cls: 'bg-green-600', ink: 'text-white',
+      notPl: v.mapped_not_pl || 0, pl: v.mapped_pl || 0, action: 'Complete',
+      why: 'Matched to one of their products, so it carries a price comparison.' },
+    { label: 'Potential match', count: (v.not_mapped_not_pl_potential || 0) + (v.not_mapped_pl_potential || 0),
+      cls: 'bg-amber-500', ink: 'text-amber-950',
+      notPl: v.not_mapped_not_pl_potential || 0, pl: v.not_mapped_pl_potential || 0, action: 'Review Match',
+      why: 'Unmatched, but a candidate scores >= 0.85 — the likeliest genuine misses.' },
+    { label: 'No likely match', count: Math.max(0, noPotAll - (v.no_potential_not_shared_brand || 0)),
+      cls: 'bg-red-400', ink: 'text-white', action: 'Needs Mapping',
+      why: 'They stock the brand, but nothing scores high enough to propose.' },
+    { label: 'Confirmed no match', count: Math.max(0, noMatchAll - (v.no_match_not_shared_brand || 0)),
+      cls: 'bg-grey-400', ink: 'text-white',
+      why: 'They stock the brand and the matcher rejected every candidate for this item.' },
+    { label: 'Not shared brand', count: brandUnreachable.value,
+      cls: 'bg-slate-200', ink: 'text-slate-700', hatch: true,
+      why: 'They do not stock the brand at all. No matching effort reaches these — the hatch means unreachable.' },
+  ]
+  return rows.filter(r => r.count > 0).map(r => ({ ...r, pct: (r.count / t) * 100 }))
 })
-
-function onSegmentClick(params) {
-  const actionMap = {
-    'Mapped': 'Complete',
-    'Potential match': 'Review Match',
-    'No likely match': 'Needs Mapping',
-    // 'Confirmed no match' intentionally omitted — it's resolved, no action.
-  }
-  const action = actionMap[params.name]
-  if (action) {
-    emit('navigate', { action_type: action })
-  }
-}
 </script>

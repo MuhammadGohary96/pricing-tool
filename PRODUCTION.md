@@ -13,7 +13,7 @@ Set these via your secret manager / environment — do **not** bake them into th
 | `CORS_ORIGINS` | **yes** | JSON list of the production frontend origin(s), e.g. `["https://pricing.breadfast.com"]` (default is `http://localhost:5174`). |
 | `GOOGLE_APPLICATION_CREDENTIALS` | **yes** | Path to the BigQuery service-account key (or use workload identity). The SA needs **read + `tables.get`** on both source tables. |
 | `BQ_PROJECT_ID` / `BQ_DATASET` | yes | Source project/dataset. |
-| `BQ_TABLE` | yes | Pricing table (`pricing_index_analysis`). |
+| `BQ_TABLE` | yes | Pricing table (`competitor_price_monitoring_fps`) — FP grain, built by `docs/FP_granularity_pricing.sql`. |
 | `BQ_COMPETITOR_TABLE` | yes | Competitor table (`competitor_products_analysis`). |
 | `BQ_LOCATION` | yes | e.g. `EU`. |
 | `DUCKDB_PARQUET_PATH` / `COMPETITOR_PARQUET_PATH` | recommended | Cache file paths — point at a **writable, persistent volume** so cache survives restarts. |

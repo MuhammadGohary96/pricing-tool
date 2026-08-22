@@ -85,7 +85,7 @@ function persistViews() {
 // Filter state fields captured in a saved view (state shape: camelCase + arrays/flags).
 const SNAP_KEYS = [
   'mainCategory', 'subCategory', 'globalTier', 'subcatTier', 'actionType',
-  'brand', 'competitor', 'fpNames', 'includePrivateLabel', 'priceFallback',
+  'brand', 'competitor', 'fpNames', 'includePrivateLabel', 'privateLabelOnly', 'priceFallback',
 ]
 
 // API-param key → state key, for normalizing views saved in the older (broken)
@@ -110,6 +110,7 @@ function normalize(f = {}) {
   const out = {}
   for (const [k, v] of Object.entries(f)) {
     if (k === 'exclude_private_label') { out.includePrivateLabel = !v; continue }
+    if (k === 'private_label_only') { out.privateLabelOnly = !!v; continue }
     if (k === 'price_fallback') { out.priceFallback = !!v; continue }
     if (k in API_TO_STATE) {
       out[API_TO_STATE[k]] = Array.isArray(v)

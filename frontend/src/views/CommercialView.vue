@@ -61,6 +61,7 @@
         v-if="allCompetitors.length > 0"
         :competitors="allCompetitors"
         v-model="selectedCompetitors"
+        :scopes-brands="!!filters.brandScope"
         :default-limit="5"
         class="animate-fade-in-up stagger-2"
       />
@@ -88,6 +89,7 @@
         :selected-competitors="selectedCompetitors"
         :busy="store.refreshingBlended"
         :group-by="store.blendedGroupBy"
+        :export-fetcher="exportBlendedPI"
         style="max-height: 420px;"
         @select="onSubcategorySelect"
         @select-category="onCategorySelect"
@@ -117,15 +119,17 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { watchDebounced } from '@vueuse/core'
 import { useFiltersStore } from '../stores/filters'
 import { useCommercialStore } from '../stores/commercial'
+import { commercialApi } from '../api/client'
+import { asDownload } from '../utils/workbook'
 import FilterBar from '../components/layout/FilterBar.vue'
 import BlendedPITable from '../components/commercial/BlendedPITable.vue'
 import ProductPivotTable from '../components/commercial/ProductPivotTable.vue'
-import CompetitorToggle from '../components/commercial/CompetitorToggle.vue'
+import CompetitorToggle from '../components/shared/CompetitorToggle.vue'
 import DrilldownBreadcrumb from '../components/commercial/DrilldownBreadcrumb.vue'
 import PageShell from '../components/shared/PageShell.vue'
 import PageHeader from '../components/shared/PageHeader.vue'
@@ -140,12 +144,46 @@ const filters = useFiltersStore()
 useUrlSync()
 const store = useCommercialStore()
 
-const selectedCompetitors = ref([])
+// The pills live in the store so _params() can read them: under Shared-only they
+// scope which competitors count as "shared". A computed proxy keeps every
+// existing `selectedCompetitors.value` usage working unchanged.
+// Pills bind to the STAGED list. Under Shared-only it commits on Apply, like
+// every other filter, so one Apply is one refetch instead of a page refresh per
+// click. When Shared-only is off it is mirrored to the committed list
+// immediately, keeping plain focusing instant and free.
+const selectedCompetitors = computed({
+  get: () => filters.pendingVisibleCompetitors,
+  set: (v) => {
+    filters.pendingVisibleCompetitors = v
+    if (!filters.brandScope) filters.visibleCompetitors = [...v]
+  },
+})
+watch(() => filters.brandScope, (mode) => {
+  // Leaving Shared-only must not strand a staged selection that will never be
+  // applied — mirror it through so visibility and query agree again.
+  if (mode !== 'shared') filters.visibleCompetitors = [...filters.pendingVisibleCompetitors]
+})
 const compactMode = ref(false)
+// Pill options MUST come from a source the pills do not filter. Under Shared-only
+// they narrow the query, so deriving the list from the response made it collapse
+// to the current selection: the pill you just hid disappeared, and the "All" reset
+// hid too (selected.length == competitors.length), leaving no way back.
+// filters.competitors is loaded independently of this view's query.
 const allCompetitors = computed(() => {
+  if (filters.competitors?.length) return [...filters.competitors].sort()
   const set = new Set([...store.pivotedCompetitors, ...store.blendedCompetitors])
   return [...set].sort()
 })
+// The blended-PI file is rendered by the backend, in the same house style as the
+// Gap workbook — the browser cannot write cell formatting. The view owns the
+// filter params; the table passes the competitors and grain it controls.
+function exportBlendedPI(opts) {
+  return asDownload(
+    commercialApi.workbook({ ...store._params(), sheets: 'blended-pi', ...opts }),
+    'Blended_PI.xlsx',
+  )
+}
+
 const filteredPivotCompetitors = computed(() => {
   if (selectedCompetitors.value.length === 0) return store.pivotedCompetitors
   return store.pivotedCompetitors.filter(c => selectedCompetitors.value.includes(c))
@@ -175,7 +213,12 @@ watchDebounced(
     filters.competitor,
     filters.fpNames,
     filters.vertical,
+    filters.brandScope,
+    // Only varies when the pills actually affect the query, so plain focusing
+    // stays free and one Apply is one refetch rather than two.
+    filters.brandScope ? filters.visibleCompetitors.join(',') : '',
     filters.includePrivateLabel,
+    filters.privateLabelOnly,
     filters.priceFallback,
   ],
   async () => {
@@ -228,7 +271,11 @@ const definitions = [
     items: [
       { term: 'Filter', description: 'Use dropdowns to narrow by category, subcategory, tier, or brand. Press Escape to clear all.', icon: SlidersHorizontal },
       { term: 'Blended PI Table', description: 'Click a row to filter to that subcategory. Dots show individual product PIs; click to jump to the product.', icon: Table2 },
-      { term: 'Edit Price', description: 'Click any BF Price cell to edit the now price inline. Saves to Catalog API if you have write access.', icon: PencilLine },
+      { term: 'BF Price', description: 'The Breadfast regular and sale price for the current scope, read-only. Inline price editing was removed; prices are sourced from BigQuery.', icon: PencilLine },
+      { term: 'Addr %', description: 'Addressable: matched over what CAN be matched, i.e. our products minus those the matcher positively rejected. A subcategory at 30% mapped but 100% addressable is finished, not behind. Resolved per product across competitors, so "no-match" here means nobody carries an equivalent.', icon: Table2 },
+      { term: 'They only', description: 'Competitor products with no link to anything of ours, placed into this subcategory by the category bridge. Rows with no matched product now appear with a blank PI instead of being hidden, because those are the biggest gaps.', icon: Table2 },
+      { term: 'Brands: All / Shared only', description: 'Shared only keeps just the products whose brand the competitor also carries. A brand they do not stock can never be matched, so this turns every mapping rate on screen into the achievable ceiling instead of a target nobody can hit. On the competitor side it means "of the brands we both carry, what do they have that we do not".', icon: SlidersHorizontal },
+      { term: 'Include Private Label', description: 'Unchecking this excludes Breadfast own-brand products. The exclusion is approximate and not yet identical across views: brands named exactly "Breadfast" always drop, while sub-brands such as "Breadfast Bakery" may still be counted on some panels.', icon: SlidersHorizontal },
       { term: 'Color Coding', description: 'Cells are shaded by PI: PI < 0.95, near parity (0.95–1.05), and PI > 1.05. Lower PI = BF cheaper, higher PI = BF more expensive. Worst PI column shows your biggest competitive gap.', icon: Palette },
     ],
   },

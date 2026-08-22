@@ -23,6 +23,11 @@ const routes = [
     component: () => import('../views/CompetitorProductsView.vue'),
   },
   {
+    path: '/gap-analysis',
+    name: 'BrandGap',
+    component: () => import('../views/BrandGapView.vue'),
+  },
+  {
     path: '/how-it-works',
     name: 'HowItWorks',
     component: () => import('../views/HowItWorksView.vue'),

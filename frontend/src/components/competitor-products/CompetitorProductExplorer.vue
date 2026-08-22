@@ -28,11 +28,11 @@
             <th class="px-3 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide">Competitor</th>
             <th class="px-3 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide" style="min-width: 200px">Product Name</th>
             <th class="px-3 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide">Category</th>
-            <th class="px-3 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">Price</th>
+            <th class="px-3 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">Price</th>
             <th class="px-3 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide">Last Crawled</th>
             <th class="px-3 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide" style="min-width: 160px">BF Product</th>
-            <th class="px-3 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">BF Price</th>
-            <th class="px-3 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">PI</th>
+            <th class="px-3 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">BF Price</th>
+            <th class="px-3 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">PI</th>
             <th class="px-3 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide">Status</th>
           </tr>
         </thead>
@@ -53,7 +53,7 @@
               <span class="text-caption text-grey-500">{{ row.category_level_1 }}</span>
               <span v-if="row.category_level_2" class="text-caption text-grey-400"> / {{ row.category_level_2 }}</span>
             </td>
-            <td class="px-3 py-2.5 text-right text-body font-mono text-grey-900">
+            <td class="px-3 py-2.5 text-center text-body font-mono text-grey-900">
               {{ row.competitor_sale_price != null ? `${row.competitor_sale_price.toFixed(2)}` : '—' }}
             </td>
             <td class="px-3 py-2.5">
@@ -78,10 +78,10 @@
               </div>
               <span v-else class="text-caption text-grey-400">—</span>
             </td>
-            <td class="px-3 py-2.5 text-right text-body font-mono text-grey-600">
+            <td class="px-3 py-2.5 text-center text-body font-mono text-grey-600">
               {{ row.bf_sale_price != null ? `${row.bf_sale_price.toFixed(2)}` : '—' }}
             </td>
-            <td class="px-3 py-2.5 text-right">
+            <td class="px-3 py-2.5 text-center">
               <span v-if="row.sale_PI != null" class="text-body font-mono font-semibold" :class="piClass(row.sale_PI)">
                 <span class="text-[10px] mr-0.5 opacity-70">{{ piArrow(row.sale_PI) }}</span>{{ row.sale_PI.toFixed(2) }}
               </span>

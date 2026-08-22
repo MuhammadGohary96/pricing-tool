@@ -14,13 +14,13 @@
         <thead class="bg-grey-50 border-b border-grey-100 sticky top-0 z-10">
           <tr>
             <th class="px-4 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide" style="min-width: 220px">Name</th>
-            <th class="px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">Total</th>
-            <th class="px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">Mapped BF</th>
-            <th class="px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">Mapped Comp.</th>
-            <th class="px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">Unmapped</th>
+            <th class="px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">Total</th>
+            <th class="px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">Mapped BF</th>
+            <th class="px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">Mapped Comp.</th>
+            <th class="px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">Unmapped</th>
             <th class="px-4 py-2 text-caption font-semibold text-grey-500 uppercase tracking-wide" style="min-width: 130px">Mapping %</th>
-            <th class="px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">Potential</th>
-            <th class="px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">Avg Price</th>
+            <th class="px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">Potential</th>
+            <th class="px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">Avg Price</th>
           </tr>
         </thead>
         <tbody>
@@ -134,10 +134,10 @@ const MetricCells = defineComponent({
       const pctTxt = pct >= 60 ? 'text-green-600' : pct >= 35 ? 'text-amber-600' : 'text-red-600'
 
       return [
-        h('td', { class: `px-4 py-2 text-right text-body font-mono ${num}` }, r.total.toLocaleString()),
-        h('td', { class: `px-4 py-2 text-right text-body font-mono ${green}` }, r.mapped_bf.toLocaleString()),
-        h('td', { class: `px-4 py-2 text-right text-body font-mono ${green2}` }, r.mapped_competitor.toLocaleString()),
-        h('td', { class: `px-4 py-2 text-right text-body font-mono ${grey}` }, r.unmapped.toLocaleString()),
+        h('td', { class: `px-4 py-2 text-center text-body font-mono ${num}` }, r.total.toLocaleString()),
+        h('td', { class: `px-4 py-2 text-center text-body font-mono ${green}` }, r.mapped_bf.toLocaleString()),
+        h('td', { class: `px-4 py-2 text-center text-body font-mono ${green2}` }, r.mapped_competitor.toLocaleString()),
+        h('td', { class: `px-4 py-2 text-center text-body font-mono ${grey}` }, r.unmapped.toLocaleString()),
         h('td', { class: 'px-4 py-2' }, [
           h('div', { class: 'flex items-center gap-2' }, [
             h('div', { class: `flex-1 ${barH} bg-grey-100 rounded-full overflow-hidden` }, [
@@ -146,8 +146,8 @@ const MetricCells = defineComponent({
             h('span', { class: `text-caption font-semibold w-10 text-right ${pctTxt}` }, `${pct}%`),
           ]),
         ]),
-        h('td', { class: `px-4 py-2 text-right text-body font-mono ${amber}` }, r.ai_match.toLocaleString()),
-        h('td', { class: `px-4 py-2 text-right text-body font-mono ${price}` }, r.avg_competitor_price != null ? r.avg_competitor_price.toLocaleString() : '—'),
+        h('td', { class: `px-4 py-2 text-center text-body font-mono ${amber}` }, r.ai_match.toLocaleString()),
+        h('td', { class: `px-4 py-2 text-center text-body font-mono ${price}` }, r.avg_competitor_price != null ? r.avg_competitor_price.toLocaleString() : '—'),
       ]
     }
   },

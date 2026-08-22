@@ -21,7 +21,7 @@ from backend.services import parquet_cache as pc
 from backend.services.cache_service import DataCache
 from backend.services.background_loader import BackgroundDataLoader
 from backend.auth import google_auth_middleware
-from backend.routers import health, filters, commercial, master_data, executive, competitor_products
+from backend.routers import health, filters, commercial, master_data, executive, competitor_products, gap
 import logging
 
 logger = logging.getLogger(__name__)
@@ -418,6 +418,7 @@ app.include_router(commercial.router)
 app.include_router(master_data.router)
 app.include_router(executive.router)
 app.include_router(competitor_products.router)
+app.include_router(gap.router)
 
 
 # ── Serve the built frontend (single-image deploy) ─────────────────────────

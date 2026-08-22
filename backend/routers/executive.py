@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from typing import Optional
 
 router = APIRouter(prefix="/api/executive", tags=["executive"])
@@ -12,7 +12,11 @@ def _filters(
     competitor: Optional[str] = Query(None),
     vertical: Optional[str] = Query(None),
     exclude_private_label: Optional[bool] = Query(None),
+    private_label_only: Optional[bool] = Query(None),
     fp_names: Optional[str] = Query(None),
+    brand_scope: Optional[str] = Query(
+        None, description="'shared' = only products whose brand the competitor also carries"
+    ),
 ) -> dict:
     params = {}
     if main_category:
@@ -29,8 +33,12 @@ def _filters(
         params["vertical"] = vertical
     if exclude_private_label:
         params["exclude_private_label"] = True
+    if private_label_only:
+        params["private_label_only"] = True
     if fp_names:
         params["fp_names"] = fp_names
+    if brand_scope:
+        params["brand_scope"] = brand_scope
     return params
 
 
@@ -81,6 +89,25 @@ def get_fp_competitor_pi(
     return svc.get_fp_competitor_pi(filters, price_fallback=price_fallback)
 
 
+@router.get("/competitor-overview")
+def get_competitor_overview(request: Request, filters: dict = Depends(_filters)):
+    """Matching + assortment coverage per competitor — the live equivalent of the
+    hand-maintained "Competitor Overview" workbook sheet.
+
+    DuckDB-only, like /fp-competitor-pi: no @abstractmethod is added to
+    data_interface.py because that ABC is enforced at instantiation and would
+    break DATA_SOURCE=mock.
+    """
+    svc = request.app.state.data_service
+    if svc is None or not hasattr(svc, "get_competitor_overview"):
+        raise HTTPException(
+            status_code=503,
+            detail="Competitor overview requires the DuckDB data service "
+                   "(DATA_SOURCE=bigquery with USE_DUCKDB enabled).",
+        )
+    return svc.get_competitor_overview(filters)
+
+
 @router.get("/week-over-week")
 def get_week_over_week(request: Request):
     svc = request.app.state.data_service
@@ -117,3 +144,63 @@ def get_top_actions(request: Request, limit: int = Query(10, ge=1, le=50), filte
             "sale_PI": _safe(row.get("sale_PI")),
         })
     return {"items": items}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Styled workbook export
+# ─────────────────────────────────────────────────────────────────────────────
+# Same reasoning as /api/gap/workbook: the community build of SheetJS writes
+# values but no cell formatting, so a browser-built file can only ever be an
+# unformatted grid. openpyxl on the server gives the house style — title,
+# uppercase headers on a light fill, zebra striping, frozen header, autofilter,
+# threshold colours — and Executive, Commercial and Gap all stream the same one.
+@router.get("/workbook")
+def export_workbook(
+    request: Request,
+    filters: dict = Depends(_filters),
+    competitors: Optional[str] = Query(
+        None, description="Comma-separated rows to keep — the competitor pills, "
+                          "which are client-side visibility and not part of the query."
+    ),
+    section: Optional[str] = Query(
+        None, description="price | mapping | assortment. One sheet, matching the panel "
+                          "that asked for it. Omit for all three."
+    ),
+):
+    """Stream the competitor scorecard as a styled workbook."""
+    from fastapi.responses import StreamingResponse
+    from ..services.excel_report import build_workbook
+    from ..services.report_sheets import executive_scorecard_sheets
+
+    svc = request.app.state.data_service
+    if svc is None or not hasattr(svc, "get_competitor_overview"):
+        raise HTTPException(
+            status_code=503,
+            detail="The scorecard export requires the DuckDB data service.",
+        )
+
+    rows = svc.get_competitor_overview(filters)
+    if competitors:
+        keep = {c.strip() for c in competitors.split(",") if c.strip()}
+        rows = [r for r in rows if r.get("competitor_name") in keep]
+
+    # One sheet per on-screen table, so a sheet can be sent on its own. The Gap
+    # workbook keeps the single combined sheet, which mirrors a hand-built file.
+    sheets = executive_scorecard_sheets(rows)
+    # The scorecard is three panels on screen, each with its own export, so a
+    # request can name one. Index, not a name match, because the sheet titles are
+    # display strings and would drift.
+    BY_SECTION = {"price": 0, "mapping": 1, "assortment": 2}
+    name = "Competitor_Scorecard.xlsx"
+    if section:
+        key = section.strip().lower()
+        if key not in BY_SECTION:
+            raise HTTPException(status_code=400, detail=f"unknown section: {section}")
+        sheets = [sheets[BY_SECTION[key]]]
+        name = sheets[0]["name"].replace(" ", "_") + ".xlsx"
+
+    return StreamingResponse(
+        build_workbook(sheets),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )

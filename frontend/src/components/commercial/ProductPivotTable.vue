@@ -49,7 +49,7 @@
           @click="!compactMode && $emit('toggle-compact')"
         >PI only</button>
       </div>
-      <ExportButton :fetcher="exportData" filename="pivot_products.csv" class="shrink-0" />
+      <ExportButton :fetcher="exportData" label="Export Excel" filename="Products_Price_Position.xlsx" class="shrink-0" />
     </div>
 
     <!-- Refreshing indicator (in-place refetch on filter/sort/search) -->
@@ -104,7 +104,7 @@
               </span>
             </th>
             <template v-for="comp in competitors" :key="comp">
-              <th v-if="!compactMode" class="px-3 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide border-b border-grey-200 whitespace-nowrap" :style="[row2StickyStyle, compIdx(comp) % 2 ? { background: '#F5F5F5' } : {}]">Price</th>
+              <th v-if="!compactMode" class="px-3 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide border-b border-grey-200 whitespace-nowrap" :style="[row2StickyStyle, compIdx(comp) % 2 ? { background: '#F5F5F5' } : {}]">Price</th>
               <th
                 class="px-3 py-2 text-right text-caption font-semibold uppercase tracking-wide cursor-pointer hover:text-grey-900 border-b border-r border-grey-200 whitespace-nowrap select-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-lightest"
                 :class="sortKey === `${comp}_pi` ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-grey-500'"
@@ -188,13 +188,13 @@
               </div>
             </td>
             <!-- Score (combined_score_global) -->
-            <td class="px-3 py-2 border-r border-grey-100 text-right text-body text-grey-600 font-mono">{{ row.weighted_score?.toFixed(3) ?? '—' }}</td>
+            <td class="px-3 py-2 border-r border-grey-100 text-center text-body text-grey-600 font-mono">{{ row.weighted_score?.toFixed(3) ?? '—' }}</td>
             <!-- Revenue -->
-            <td class="px-3 py-2 border-r border-grey-100 text-right text-body text-grey-600 font-mono" :title="row.total_revenue != null ? row.total_revenue.toLocaleString() + ' EGP' : ''">{{ formatRevenue(row.total_revenue) }}</td>
+            <td class="px-3 py-2 border-r border-grey-100 text-center text-body text-grey-600 font-mono" :title="row.total_revenue != null ? row.total_revenue.toLocaleString() + ' EGP' : ''">{{ formatRevenue(row.total_revenue) }}</td>
 
             <!-- Competitor columns -->
             <template v-for="comp in competitors" :key="comp">
-              <td v-if="!compactMode" class="px-3 py-2 text-right text-body text-grey-600 font-mono whitespace-nowrap" :title="`${comp} price`" :style="compIdx(comp) % 2 ? { background: '#FAFAFA' } : {}">
+              <td v-if="!compactMode" class="px-3 py-2 text-center text-body text-grey-600 font-mono whitespace-nowrap" :title="`${comp} price`" :style="compIdx(comp) % 2 ? { background: '#FAFAFA' } : {}">
                 <div class="flex flex-col items-end gap-0.5">
                   <span>{{ row[`${comp}_price`]?.toFixed(2) ?? '—' }}</span>
                   <span
@@ -270,6 +270,8 @@ import { Search as SearchIcon, Loader2, X, ChevronLeft, ChevronRight, ListFilter
 import { piTextClass, piBgClass, piArrow } from '../../utils/piColor'
 import { useCommercialStore } from '../../stores/commercial'
 import { useFiltersStore } from '../../stores/filters'
+import { commercialApi } from '../../api/client'
+import { asDownload } from '../../utils/workbook'
 
 const props = defineProps({
   data: { type: Array, default: () => [] },
@@ -507,24 +509,22 @@ function formatRevenue(val) {
   return val.toFixed(0)
 }
 
+// Built by the backend — see utils/workbook.js. Two things change besides the
+// styling: the file now holds EVERY product in scope rather than the 50 on the
+// current page, and the sort/search on screen are passed through so it comes out
+// in the order you are looking at.
 function exportData() {
-  return props.data.map(row => {
-    const out = {
-      product_name: row.product_name,
-      brand_name: row.brand_name,
-      sub_category_name: row.sub_category_name,
-      global_tier: row.global_tier,
-      action_type: row.action_type,
-      bf_sale_price: row.bf_sale_price,
-      worst_pi: row.worst_pi,
-      total_revenue: row.total_revenue,
-    }
-    for (const comp of props.competitors) {
-      out[`${comp}_price`] = row[`${comp}_price`]
-      out[`${comp}_pi`] = row[`${comp}_pi`]
-    }
-    return out
-  })
+  return asDownload(
+    commercialApi.workbook({
+      ...store._params(),
+      sheets: 'products',
+      competitors: props.competitors.join(','),
+      sort_by: store.sortBy,
+      sort_dir: store.sortDir,
+      ...(store.search ? { search: store.search } : {}),
+    }),
+    'Products_Price_Position.xlsx',
+  )
 }
 </script>
 

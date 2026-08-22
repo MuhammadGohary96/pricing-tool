@@ -30,11 +30,14 @@ skills-lock.json
 # Local-only docs & scratch
 docs/BQ_PERFORMANCE_PLAN.md
 docs/FP_Price_Index.md
+docs/Achievements-since-main.md
+docs/presentation/pricing-tool-writeup.md
 product-pricing-detail-modal/
 
 # Local-only email drafts, screenshots & skill (not part of the app)
 DA_Tenure_Dimension_Email.html
 Pricing_Tool_Release_Email.html
+Pricing_Tool_Update_Email.html
 PT1.png
 PT2.png
 PT3.png

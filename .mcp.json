@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "breadfast-pricing": {
+      "command": "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3",
+      "args": ["-m", "mcp_server.server"],
+      "env": {
+        "PYTHONPATH": "/Users/m1pro/Downloads/Pricing Tool"
+      }
+    }
+  }
+}

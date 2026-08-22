@@ -43,6 +43,18 @@ class BlendedPIRow(BaseModel):
     eligible_product_count: int = 0
     mapped_product_count: int = 0
     needs_action_count: int = 0
+    # Matchability — same definitions as the gap tab and the Executive
+    # competitor overview. comp_only_products is 0 in commercial-category grain:
+    # the category bridge maps onto our subcategories only.
+    matched_fresh_count: int = 0
+    confirmed_no_match_count: int = 0
+    potential_match_count: int = 0
+    addressable_pct: Optional[float] = None
+    comp_only_products: int = 0
+    # The mirror of comp_only_products: our products matched at no competitor in
+    # scope. Unlike comp_only_products this IS populated in category grain, since
+    # it comes off our own side and needs no category bridge.
+    our_only_count: int = 0
     product_pis: list[ProductPIPoint] = []
     competitor_blended_pis: dict[str, Optional[float]] = {}
     competitor_product_pis: dict[str, list[ProductPIPoint]] = {}
@@ -50,6 +62,13 @@ class BlendedPIRow(BaseModel):
     competitor_needs_action_counts: dict[str, int] = {}
     competitor_eligible_counts: dict[str, int] = {}
     competitor_mapped_counts: dict[str, int] = {}
+    # Per-competitor matchability, so Addr % and They only follow the selected
+    # competitor header like Used and Mapped already do.
+    competitor_addressable_pcts: dict[str, Optional[float]] = {}
+    competitor_comp_only_counts: dict[str, int] = {}
+    competitor_matched_fresh_counts: dict[str, int] = {}
+    competitor_no_match_counts: dict[str, int] = {}
+    competitor_our_only_counts: dict[str, int] = {}
 
 
 class BlendedPITable(BaseModel):

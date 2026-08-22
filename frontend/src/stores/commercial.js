@@ -52,7 +52,16 @@ export const useCommercialStore = defineStore('commercial', {
     },
 
     _params() {
-      return useFiltersStore().activeFilters
+      const f = useFiltersStore()
+      const p = { ...f.activeFilters }
+      // Shared-only scopes the brand test to the competitors you have focused.
+      // The pills stay purely client-side visibility at every other time — this
+      // is the one case where they reach the server, because "shared brands"
+      // is meaningless without saying shared with whom.
+      if (f.brandScope && f.visibleCompetitors.length) {
+        p.competitor = f.visibleCompetitors.join(',')
+      }
+      return p
     },
 
     async fetchKPIs() {
