@@ -1,118 +1,97 @@
 <template>
-  <div class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden">
-    <div class="px-4 py-3 border-b border-grey-100 flex items-center justify-between gap-3 flex-wrap">
-      <div class="flex items-center gap-2 min-w-0">
-        <LayoutList class="w-4 h-4 text-brand-primary shrink-0" />
-        <span class="text-subheading font-bold text-grey-900 tracking-tightish">By competitor</span>
-        <span class="text-caption text-grey-400">three questions, three tables</span>
-      </div>
-      <ExportButton :fetcher="exportData" label="Export Excel" filename="Competitor_Scorecard.xlsx" />
+  <!-- Three panels, not three sections of one. Each answers a different
+       question, exports its own sheet, and can be linked to or screenshotted on
+       its own -- which a shared card could not do. -->
+  <div class="space-y-4">
+
+    <!-- ── 1 ▸ ARE WE PRICED RIGHT ──────────────────────────────────────── -->
+    <section class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden">
+      <PanelHead icon="price" title="Price position"
+                 sub="what we charge against what they charge"
+                 :fetcher="() => exportSection('price')" file="Price_position.xlsx" />
+      <p v-if="!isSupermarket" :class="SCOPE_NOTE">
+        <Info class="w-3.5 h-3.5 inline -mt-0.5 text-grey-400" />
+        Showing all verticals. Set <strong>Vertical &rarr; Supermarket</strong> above to match the
+        <em>excl. beauty</em> brand-portfolio workbook.
+      </p>
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr class="bg-grey-50 border-b border-grey-100">
+            <th :class="TH_L" class="sticky left-0 bg-grey-50 z-10">Competitor</th>
+            <th :class="TH_R">
+              <span :class="HDR">Blended PI
+                <HelpTooltip text="Quantity-weighted Breadfast price divided by competitor price. Above 1.00 means BREADFAST IS MORE EXPENSIVE. Both tails matter." />
+              </span>
+            </th>
+            <!-- Named "Priced", then "Util %", now Confidence %: how much of the
+                 revenue-weighted range the PI beside it is actually built on. -->
+            <th :class="TH_C" style="min-width: 128px">
+              <span :class="HDR">Confidence %
+                <HelpTooltip text="Used ÷ Eligible. How much of our revenue-weighted range the Blended PI beside it is built on — a PI from 6% of the range is a different claim from one from 42%." />
+              </span>
+            </th>
+            <!-- The funnel in order, so a low Confidence % can be diagnosed:
+                 the drop from Eligible to Mapped is a matching problem, the
+                 drop from Mapped to Used is a freshness one. -->
+            <th :class="TH_R">
+              <span :class="HDR">Our SKUs
+                <HelpTooltip text="Our whole tracked range in scope. Eligible beside it is the subset worth pricing against — the drop between them is by design, not missing data." />
+              </span>
+            </th>
+            <th :class="TH_R">
+              <span :class="HDR">Eligible
+                <HelpTooltip text="Our top-80%-of-revenue range, excluding anything with no sellable price. The denominator of Confidence %. Identical on every competitor row by construction — that is correct, not a bug." />
+              </span>
+            </th>
+            <th :class="TH_R">
+              <span :class="HDR">Mapped
+                <HelpTooltip text="Of those eligible products, how many are matched here. Everything lost between Eligible and this is a MATCHING gap; between this and Used, a FRESHNESS one." />
+              </span>
+            </th>
+            <th :class="TH_R">
+              <span :class="HDR">Used
+                <HelpTooltip text="Our eligible products that actually carry a PI — mapped AND priced recently on both sides. The NUMERATOR behind Confidence %." />
+              </span>
+            </th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-grey-50">
+          <tr v-for="row in rows" :key="row.competitor_name" :class="ROW"
+              :title="rowTitle(row)" @click="$emit('select-competitor', row.competitor_name)">
+            <Competitor :row="row" />
+            <td class="px-4 py-3 text-center">
+              <span v-if="row.blended_pi != null"
+                    class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-mono text-body font-bold"
+                    :class="piBgClass(row.blended_pi)">
+                <span :class="piTextClass(row.blended_pi)">{{ piArrow(row.blended_pi) }}</span>
+                {{ row.blended_pi.toFixed(2) }}
+              </span>
+              <span v-else class="text-grey-300">—</span>
+            </td>
+            <td class="px-4 py-3"><Bar :pct="row.priced_pct" /></td>
+            <td :class="[TD_N, 'text-grey-500']">{{ n(row.bf_products) }}</td>
+            <td :class="[TD_N, 'text-grey-600']">{{ n(row.eligible_products) }}</td>
+            <td :class="[TD_N, 'text-grey-700']" :title="mappedEligibleTitle(row)">{{ n(row.mapped_eligible) }}</td>
+            <td :class="[TD_N, 'text-grey-700 font-semibold']" :title="usedTitle(row)">{{ n(row.used_products) }}</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
+      <EmptyState v-if="!rows.length" message="No competitor data for the current filters" />
+    </section>
 
-    <p v-if="!isSupermarket" class="px-4 py-2 text-caption text-grey-500 bg-grey-50/70 border-b border-grey-100">
-      <Info class="w-3.5 h-3.5 inline -mt-0.5 text-grey-400" />
-      Showing all verticals. Set <strong>Vertical → Supermarket</strong> above to match the
-      <em>excl. beauty</em> brand-portfolio workbook.
-    </p>
-
-    <template v-if="rows.length">
-      <!-- One panel, three tables. Sixteen columns under a grouped header asked a
-           reader to hold three unrelated questions at once; each table now asks
-           one, and because each is only 4-9 wide none of them hides anything. -->
-
-      <!-- ── 1 ▸ ARE WE PRICED RIGHT ─────────────────────────────────────── -->
-      <SectionHead icon="price" title="Price position"
-                   sub="what we charge against what they charge" />
-      <div class="overflow-x-auto">
-        <table class="w-full">
-          <thead>
-            <tr class="bg-grey-50 border-b border-grey-100">
-              <th :class="TH_L" class="sticky left-0 bg-grey-50 z-10">Competitor</th>
-              <th :class="TH_R">
-                <span :class="HDR">Blended PI
-                  <HelpTooltip text="Quantity-weighted Breadfast price divided by competitor price. Above 1.00 means BREADFAST IS MORE EXPENSIVE. Both tails matter." />
-                </span>
-              </th>
-              <!-- Named "Priced", then "Util %", now Confidence %: how much of the
-                   revenue-weighted range the PI beside it is actually built on. -->
-              <th :class="TH_C" style="min-width: 128px">
-                <span :class="HDR">Confidence %
-                  <HelpTooltip text="Used ÷ Eligible. How much of our revenue-weighted range the Blended PI beside it is built on — a PI from 6% of the range is a different claim from one from 42%." />
-                </span>
-              </th>
-              <!-- The funnel in order, so a low Confidence % can be diagnosed:
-                   the drop from Eligible to Mapped is a matching problem, the
-                   drop from Mapped to Used is a freshness one. -->
-              <th :class="TH_R">
-                <span :class="HDR">Our SKUs
-                  <HelpTooltip text="Our whole tracked range in scope. Eligible beside it is the subset worth pricing against — the drop between them is by design, not missing data." />
-                </span>
-              </th>
-              <th :class="TH_R">
-                <span :class="HDR">Eligible
-                  <HelpTooltip text="Our top-80%-of-revenue range, excluding anything with no sellable price. The denominator of Confidence %. Identical on every competitor row by construction — that is correct, not a bug." />
-                </span>
-              </th>
-              <th :class="TH_R">
-                <span :class="HDR">Mapped
-                  <HelpTooltip text="Of those eligible products, how many are matched here. Everything lost between Eligible and this is a MATCHING gap; between this and Used, a FRESHNESS one." />
-                </span>
-              </th>
-              <th :class="TH_R">
-                <span :class="HDR">Used
-                  <HelpTooltip text="Our eligible products that actually carry a PI — mapped AND priced recently on both sides. The NUMERATOR behind Confidence %." />
-                </span>
-              </th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-grey-50">
-            <tr v-for="row in rows" :key="row.competitor_name" :class="ROW"
-                :title="rowTitle(row)" @click="$emit('select-competitor', row.competitor_name)">
-              <Competitor :row="row" />
-              <td class="px-4 py-3 text-right">
-                <span v-if="row.blended_pi != null"
-                      class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-mono text-body font-bold"
-                      :class="piBgClass(row.blended_pi)">
-                  <span :class="piTextClass(row.blended_pi)">{{ piArrow(row.blended_pi) }}</span>
-                  {{ row.blended_pi.toFixed(2) }}
-                </span>
-                <span v-else class="text-grey-300">—</span>
-              </td>
-              <td class="px-4 py-3"><Bar :pct="row.priced_pct" /></td>
-              <td :class="[TD_N, 'text-grey-500']">{{ n(row.bf_products) }}</td>
-              <td :class="[TD_N, 'text-grey-600']">{{ n(row.eligible_products) }}</td>
-              <td :class="[TD_N, 'text-grey-700']" :title="mappedEligibleTitle(row)">{{ n(row.mapped_eligible) }}</td>
-              <td :class="[TD_N, 'text-grey-700 font-semibold']" :title="usedTitle(row)">{{ n(row.used_products) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- ── 2 ▸ HOW MUCH CAN WE EVEN COMPARE ────────────────────────────── -->
-      <SectionHead icon="mapping" title="Mapping coverage"
-                   sub="how much of our range is matched, and how much can be">
-        <!-- Summaries of THIS table, beside the table they summarise. -->
+    <!-- ── 2 ▸ HOW MUCH CAN WE EVEN COMPARE ─────────────────────────────── -->
+    <section class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden">
+      <PanelHead icon="mapping" title="Mapping coverage"
+                 sub="how much of our range is matched, and how much can be"
+                 :fetcher="() => exportSection('mapping')" file="Mapping_coverage.xlsx">
         <div v-if="addressablePct != null" class="flex items-baseline gap-1.5">
           <span class="text-caption text-grey-500">Addressable</span>
           <span class="font-mono text-body font-bold text-grey-900 tabular-nums">{{ addressablePct }}%</span>
           <HelpTooltip text="Mapped over what CAN be mapped, pooled across every competitor. Products the matcher positively rejected leave the denominator." />
         </div>
-        <div v-if="freshPct != null" class="flex items-baseline gap-1.5">
-          <span class="text-caption text-grey-500">Benchmark freshness</span>
-          <span class="font-mono text-body font-bold tabular-nums"
-                :class="freshPct < 80 ? 'text-amber-600' : 'text-grey-900'">{{ freshPct }}%</span>
-          <HelpTooltip text="Share of our matches whose competitor product was seen in the last 7 days. A match that has gone quiet is a benchmark quietly going stale." />
-        </div>
-        <!-- Sixteen columns is right for the manager who lives in this table and
-             hostile to anyone scanning it. Says WHAT it hides and HOW MANY, because
-             a control that only says "detail" gives no reason to press it, and
-             columns hidden without a count read as columns that do not exist. -->
-        <button type="button"
-                class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-caption font-semibold ring-1 active:scale-[0.97] transition-[transform,background-color,box-shadow] duration-200 ease-premium"
-                :class="detailed
-                  ? 'bg-brand-primary text-white ring-brand-primary hover:bg-brand-dark'
-                  : 'bg-brand-50 text-brand-primary ring-brand-light/60 hover:bg-brand-lightest hover:ring-brand-light'"
-                :aria-pressed="detailed"
+        <button type="button" :class="TOGGLE_BTN(detailed)" :aria-pressed="detailed"
                 :title="detailed
                   ? `Show the main columns only, hiding ${DETAIL_COLUMNS.length}: ${DETAIL_COLUMNS.join(', ')}`
                   : `Show all columns — ${DETAIL_COLUMNS.length} more: ${DETAIL_COLUMNS.join(', ')}`"
@@ -120,127 +99,135 @@
           <component :is="detailed ? Minus : Plus" class="w-3.5 h-3.5" />
           {{ detailed ? 'Main columns only' : 'Show all columns' }}
         </button>
-      </SectionHead>
-      <div class="overflow-x-auto">
-        <table class="w-full">
-          <thead>
-            <!-- The one table that keeps a grouped header, because it now runs the
-                 SAME chain twice: base -> mapped -> rate -> rejected -> addressable.
-                 Once over everything we sell, once over just the brands they
-                 stock. Without the group row the two "No-match" columns are
-                 indistinguishable. -->
-            <tr class="bg-grey-50 border-b border-grey-100">
-              <th :class="TH_L" rowspan="2" class="sticky left-0 bg-grey-50 z-10 align-bottom">Competitor</th>
-              <th :class="GROUP" :colspan="detailed ? 8 : 3">All brands</th>
-              <th :class="[GROUP, 'border-l border-grey-200']" :colspan="detailed ? 8 : 4">
-                In brands they carry
-                <HelpTooltip text="The same eight columns restricted to products whose brand this competitor stocks — the only part of our range matching can ever reach." />
-              </th>
-            </tr>
-            <tr class="bg-grey-50 border-b border-grey-100">
-              <th :class="TH_R">Our SKUs</th>
-              <th v-if="detailed" :class="TH_R">Mapped</th>
-              <th v-if="detailed" :class="TH_R">
-                <span :class="HDR">Fresh
-                  <HelpTooltip text="Mapped AND the competitor product was seen in the last 7 days. A match that has gone quiet is a benchmark quietly going stale." />
-                </span>
-              </th>
-              <th :class="TH_C" style="min-width: 112px">Mapped %</th>
-              <th v-if="detailed" :class="TH_R">
-                <span :class="HDR">No-match
-                  <HelpTooltip text="Our products the matcher positively REJECTED here — it looked at every candidate and turned them all down. Subtracted from Our SKUs to give Addressable, so these leave the denominator rather than counting against it." />
-                </span>
-              </th>
-              <th v-if="detailed" :class="TH_R">
-                <span :class="HDR">Addressable
-                  <HelpTooltip text="Our SKUs minus confirmed no-match: the products it is still possible to map. The DENOMINATOR of Addressable %, with Mapped as its numerator." />
-                </span>
-              </th>
-              <th :class="TH_C" style="min-width: 112px">
-                <span :class="HDR">Addr %
-                  <HelpTooltip text="Mapped ÷ Addressable. A competitor at 30% mapped but 100% addressable is finished, not behind." />
-                </span>
-              </th>
-              <th v-if="detailed" :class="TH_R">
-                <span :class="HDR">Potential
-                  <HelpTooltip text="Unmatched products with a candidate at similarity ≥ 0.85 — the matcher never ruled them out, so this is the part of the backlog most likely to be a genuine miss." />
-                </span>
-              </th>
+      </PanelHead>
+    <div class="overflow-x-auto">
+      <table class="w-full">
+          <!-- A tinted band, not a heavier rule. A line has to be traced across
+               seven rows; a region is seen at once, and it stays under the
+               columns while the table scrolls sideways. colgroup puts the tint
+               BEHIND cell backgrounds, so row hover still reads on top. -->
+          <colgroup>
+            <col />
+            <col :span="detailed ? 8 : 3" />
+            <col :span="detailed ? 8 : 4" class="col-shared" />
+          </colgroup>
+        <thead>
+          <!-- The one table that keeps a grouped header, because it now runs the
+               SAME chain twice: base -> mapped -> rate -> rejected -> addressable.
+               Once over everything we sell, once over just the brands they
+               stock. Without the group row the two "No-match" columns are
+               indistinguishable. -->
+          <tr class="bg-grey-50 border-b border-grey-100">
+            <th :class="TH_L" rowspan="2" class="sticky left-0 bg-grey-50 z-10 align-bottom">Competitor</th>
+            <th :class="GROUP" :colspan="detailed ? 8 : 3">All brands</th>
+            <th :class="[GROUP, 'border-l-2 border-grey-300']" :colspan="detailed ? 8 : 4">
+              Shared brands
+              <HelpTooltip text="The same eight columns restricted to products whose brand this competitor stocks — the only part of our range matching can ever reach." />
+            </th>
+          </tr>
+          <tr class="bg-grey-50 border-b border-grey-100">
+            <th :class="TH_R">Our SKUs</th>
+            <th v-if="detailed" :class="TH_R">Mapped</th>
+            <th v-if="detailed" :class="TH_R">
+              <span :class="HDR">Fresh
+                <HelpTooltip text="Mapped AND the competitor product was seen in the last 7 days. A match that has gone quiet is a benchmark quietly going stale." />
+              </span>
+            </th>
+            <th :class="TH_C" style="min-width: 112px">Mapped %</th>
+            <th v-if="detailed" :class="TH_R">
+              <span :class="HDR">No-match
+                <HelpTooltip text="Our products the matcher positively REJECTED here — it looked at every candidate and turned them all down. Subtracted from Our SKUs to give Addressable, so these leave the denominator rather than counting against it." />
+              </span>
+            </th>
+            <th v-if="detailed" :class="TH_R">
+              <span :class="HDR">Addressable
+                <HelpTooltip text="Our SKUs minus confirmed no-match: the products it is still possible to map. The DENOMINATOR of Addressable %, with Mapped as its numerator." />
+              </span>
+            </th>
+            <th :class="TH_C" style="min-width: 112px">
+              <span :class="HDR">Addr %
+                <HelpTooltip text="Mapped ÷ Addressable. A competitor at 30% mapped but 100% addressable is finished, not behind." />
+              </span>
+            </th>
+            <th v-if="detailed" :class="TH_R">
+              <span :class="HDR">Potential
+                <HelpTooltip text="Unmatched products with a candidate at similarity ≥ 0.85 — the matcher never ruled them out, so this is the part of the backlog most likely to be a genuine miss." />
+              </span>
+            </th>
 
-              <th v-if="detailed" :class="[TH_R, 'border-l border-grey-200']">
-                <span :class="HDR">Our SKUs
-                  <HelpTooltip text="Our products whose brand this competitor also carries — the base of everything to its right, and the only part of our range matching can ever reach." />
-                </span>
-              </th>
-              <th :class="[TH_R, detailed ? '' : 'border-l border-grey-200']">
-                <span :class="HDR">of our range
-                  <HelpTooltip text="The column to its left ÷ Our SKUs. How much of what we sell is even in brands they stock; the rest cannot be matched at any effort." />
-                </span>
-              </th>
-              <th v-if="detailed" :class="TH_R">Mapped</th>
-              <th :class="TH_C" style="min-width: 112px">
-                <span :class="HDR">Mapped %
-                  <HelpTooltip text="Mapped ÷ Our SKUs, both within shared brands. The realistic target for matching effort: the gap between this and the Mapped % on the left is assortment, not backlog." />
-                </span>
-              </th>
-              <th v-if="detailed" :class="TH_R">
-                <span :class="HDR">No-match
-                  <HelpTooltip text="Confirmed no-match within shared brands: they stock the brand, and the matcher still rejected every candidate for this item." />
-                </span>
-              </th>
-              <th v-if="detailed" :class="TH_R">
-                <span :class="HDR">Addressable
-                  <HelpTooltip text="Products in brands they carry, minus the ones positively rejected. The tightest honest denominator on the page." />
-                </span>
-              </th>
-              <th :class="TH_C" style="min-width: 112px">
-                <span :class="HDR">Addr %
-                  <HelpTooltip text="THE CEILING: mapped over what is left once you drop both the brands they do not stock and the items they positively rejected. Anything short of 100% here is work that can actually be done." />
-                </span>
-              </th>
-              <th :class="TH_R">
-                <span :class="HDR">Potential
-                  <HelpTooltip text="Potential matches inside brands they carry — reachable, unrejected, strong candidate. The tightest definition of workable backlog on the page." />
-                </span>
-              </th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-grey-50">
-            <tr v-for="row in rows" :key="row.competitor_name" :class="ROW"
-                :title="rowTitle(row)" @click="$emit('select-competitor', row.competitor_name)">
-              <Competitor :row="row" />
-              <td :class="[TD_N, 'text-grey-700']">{{ n(row.bf_products) }}</td>
-              <td v-if="detailed" :class="[TD_N, 'text-green-600 font-semibold']">{{ n(row.matched) }}</td>
-              <td v-if="detailed" :class="[TD_N, row.matched_fresh === 0 && row.matched > 0 ? 'text-red-500 font-semibold' : 'text-grey-600']"
-                  :title="staleTitle(row)">{{ n(row.matched_fresh) }}</td>
-              <td class="px-4 py-3"><Bar :pct="row.mapping_pct" /></td>
-              <td v-if="detailed" :class="[TD_N, 'text-grey-500']">{{ n(row.confirmed_no_match) }}</td>
-              <td v-if="detailed" :class="[TD_N, 'text-grey-700']">{{ n(row.addressable) }}</td>
-              <td class="px-4 py-3"><Bar :pct="row.addressable_pct" /></td>
-              <td v-if="detailed" :class="[TD_N, 'text-amber-600']">{{ n(row.potential_match) }}</td>
+            <th v-if="detailed" :class="[TH_R, 'border-l-2 border-grey-300']">
+              <span :class="HDR">Our SKUs
+                <HelpTooltip text="Our products whose brand this competitor also carries — the base of everything to its right, and the only part of our range matching can ever reach." />
+              </span>
+            </th>
+            <th :class="[TH_R, detailed ? '' : 'border-l-2 border-grey-300']">
+              <span :class="HDR">of our range
+                <HelpTooltip text="The column to its left ÷ Our SKUs. How much of what we sell is even in brands they stock; the rest cannot be matched at any effort." />
+              </span>
+            </th>
+            <th v-if="detailed" :class="TH_R">Mapped</th>
+            <th :class="TH_C" style="min-width: 112px">
+              <span :class="HDR">Mapped %
+                <HelpTooltip text="Mapped ÷ Our SKUs, both within shared brands. The realistic target for matching effort: the gap between this and the Mapped % on the left is assortment, not backlog." />
+              </span>
+            </th>
+            <th v-if="detailed" :class="TH_R">
+              <span :class="HDR">No-match
+                <HelpTooltip text="Confirmed no-match within shared brands: they stock the brand, and the matcher still rejected every candidate for this item." />
+              </span>
+            </th>
+            <th v-if="detailed" :class="TH_R">
+              <span :class="HDR">Addressable
+                <HelpTooltip text="Products in shared brands carry, minus the ones positively rejected. The tightest honest denominator on the page." />
+              </span>
+            </th>
+            <th :class="TH_C" style="min-width: 112px">
+              <span :class="HDR">Addr %
+                <HelpTooltip text="THE CEILING: mapped over what is left once you drop both the brands they do not stock and the items they positively rejected. Anything short of 100% here is work that can actually be done." />
+              </span>
+            </th>
+            <th :class="TH_R">
+              <span :class="HDR">Potential
+                <HelpTooltip text="Potential matches inside brands they carry — reachable, unrejected, strong candidate. The tightest definition of workable backlog on the page." />
+              </span>
+            </th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-grey-50">
+          <tr v-for="row in rows" :key="row.competitor_name" :class="ROW"
+              :title="rowTitle(row)" @click="$emit('select-competitor', row.competitor_name)">
+            <Competitor :row="row" />
+            <td :class="[TD_N, 'text-grey-700']">{{ n(row.bf_products) }}</td>
+            <td v-if="detailed" :class="[TD_N, 'text-green-600 font-semibold']">{{ n(row.matched) }}</td>
+            <td v-if="detailed" :class="[TD_N, row.matched_fresh === 0 && row.matched > 0 ? 'text-red-500 font-semibold' : 'text-grey-600']"
+                :title="staleTitle(row)">{{ n(row.matched_fresh) }}</td>
+            <td class="px-4 py-3"><Bar :pct="row.mapping_pct" /></td>
+            <td v-if="detailed" :class="[TD_N, 'text-grey-500']">{{ n(row.confirmed_no_match) }}</td>
+            <td v-if="detailed" :class="[TD_N, 'text-grey-700']">{{ n(row.addressable) }}</td>
+            <td class="px-4 py-3"><Bar :pct="row.addressable_pct" /></td>
+            <td v-if="detailed" :class="[TD_N, 'text-amber-600']">{{ n(row.potential_match) }}</td>
 
-              <td v-if="detailed" :class="[TD_N, 'border-l border-grey-100 text-grey-700']">{{ n(row.shared_brand_products) }}</td>
-              <td :class="[TD_N, 'text-grey-500', detailed ? '' : 'border-l border-grey-100']">{{ pct(row.shared_brand_pct) }}</td>
-              <td v-if="detailed" :class="[TD_N, 'text-green-600 font-semibold']">{{ n(row.matched_shared_brand) }}</td>
-              <td class="px-4 py-3"><Bar :pct="row.mapping_pct_shared" /></td>
-              <td v-if="detailed" :class="[TD_N, 'text-grey-500']">{{ n(row.confirmed_no_match_shared) }}</td>
-              <td v-if="detailed" :class="[TD_N, 'text-grey-700']">{{ n(row.addressable_shared) }}</td>
-              <td class="px-4 py-3"><Bar :pct="row.addressable_pct_shared" /></td>
-              <td :class="[TD_N, 'text-amber-600 font-semibold']" :title="potentialTitle(row)">{{ n(row.potential_match_shared) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+            <td v-if="detailed" :class="[TD_N, 'border-l-2 border-grey-200 text-grey-700']">{{ n(row.shared_brand_products) }}</td>
+            <td :class="[TD_N, 'text-grey-500', detailed ? '' : 'border-l border-grey-100']">{{ pct(row.shared_brand_pct) }}</td>
+            <td v-if="detailed" :class="[TD_N, 'text-green-600 font-semibold']">{{ n(row.matched_shared_brand) }}</td>
+            <td class="px-4 py-3"><Bar :pct="row.mapping_pct_shared" /></td>
+            <td v-if="detailed" :class="[TD_N, 'text-grey-500']">{{ n(row.confirmed_no_match_shared) }}</td>
+            <td v-if="detailed" :class="[TD_N, 'text-grey-700']">{{ n(row.addressable_shared) }}</td>
+            <td class="px-4 py-3"><Bar :pct="row.addressable_pct_shared" /></td>
+            <td :class="[TD_N, 'text-amber-600 font-semibold']" :title="potentialTitle(row)">{{ n(row.potential_match_shared) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+      <EmptyState v-if="!rows.length" message="No competitor data for the current filters" />
+    </section>
 
-      <!-- ── 3 ▸ WHOSE SHELF IS IT ───────────────────────────────────────── -->
-      <SectionHead icon="assortment" title="Assortment gap"
-                   sub="what they stock that we don't, and the reverse">
-        <button type="button"
-                class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-caption font-semibold ring-1 active:scale-[0.97] transition-[transform,background-color,box-shadow] duration-200 ease-premium"
-                :class="assortDetail
-                  ? 'bg-brand-primary text-white ring-brand-primary hover:bg-brand-dark'
-                  : 'bg-brand-50 text-brand-primary ring-brand-light/60 hover:bg-brand-lightest hover:ring-brand-light'"
-                :aria-pressed="assortDetail"
+    <!-- ── 3 ▸ WHOSE SHELF IS IT ────────────────────────────────────────── -->
+    <section class="bg-white rounded-2xl shadow-panel ring-1 ring-grey-200/70 overflow-hidden">
+      <PanelHead icon="assortment" title="Assortment gap"
+                 sub="what they stock that we don't, and the reverse"
+                 :fetcher="() => exportSection('assortment')" file="Assortment_gap.xlsx">
+        <button type="button" :class="TOGGLE_BTN(assortDetail)" :aria-pressed="assortDetail"
                 :title="assortDetail
                   ? `Show the main columns only, hiding ${ASSORT_COLUMNS.length}: ${ASSORT_COLUMNS.join(', ')}`
                   : `Show all columns — ${ASSORT_COLUMNS.length} more: ${ASSORT_COLUMNS.join(', ')}`"
@@ -248,143 +235,149 @@
           <component :is="assortDetail ? Minus : Plus" class="w-3.5 h-3.5" />
           {{ assortDetail ? 'Main columns only' : 'Show all columns' }}
         </button>
-      </SectionHead>
-      <div class="overflow-x-auto">
-        <table class="w-full">
-          <thead>
-            <!-- Same shape as Mapping coverage: one chain run twice, once over
-                 everything and once over brands they actually carry. Both blocks
-                 close the same two partitions --
-                   Both + Both delisted + Ours only = Our SKUs
-                   Both(theirs) + They only        = Their catalogue
-                 -- which is why the shared block uses the paired/unpaired counts
-                 rather than the BigQuery brand-label scalar. -->
-            <tr class="bg-grey-50 border-b border-grey-100">
-              <th :class="TH_L" rowspan="2" class="sticky left-0 bg-grey-50 z-10 align-bottom">Competitor</th>
-              <th :class="GROUP" :colspan="assortDetail ? 6 : 4">All brands</th>
-              <th :class="[GROUP, 'border-l border-grey-200']" :colspan="assortDetail ? 6 : 4">
-                In brands they carry
-                <HelpTooltip text="The same six columns restricted to brands both of us stock. Everything outside them is a brand one of us carries and the other does not — assortment, not a matching gap." />
-              </th>
-              <th :class="[GROUP, 'border-l border-grey-200']" colspan="3">Shape</th>
-            </tr>
-            <tr class="bg-grey-50 border-b border-grey-100">
-              <th :class="TH_R">
-                <span :class="HDR">Our SKUs
-                  <HelpTooltip text="Our whole tracked range in scope. Both + Both delisted + Ours only add back to it exactly." />
-                </span>
-              </th>
-              <th v-if="assortDetail" :class="TH_R">
-                <span :class="HDR">Both
-                  <HelpTooltip text="Our products matched to something they still list. Counted on OUR side, so it is not the paired half of their catalogue — several of ours can share one of their listings." />
-                </span>
-              </th>
-              <th v-if="assortDetail" :class="TH_R">
-                <span :class="HDR">Both, delisted
-                  <HelpTooltip text="Matched, but they have not listed it in 7 days. Still mapped on our side and gone from their shelf, so the benchmark is historical rather than current." />
-                </span>
-              </th>
-              <th :class="TH_R">
-                <span :class="HDR">Ours only
-                  <HelpTooltip text="Our SKUs minus Mapped. A CEILING, not a work queue: what they genuinely do not stock together with what we failed to match. Hover a row for the split." />
-                </span>
-              </th>
-              <th :class="TH_R">
-                <span :class="HDR">Their catalogue
-                  <HelpTooltip :text="catalogueHelp" />
-                </span>
-                <span class="block text-micro font-normal normal-case tracking-normal"
-                      :class="isNarrowed ? 'text-brand-primary' : 'text-grey-400'">{{ catalogueBasis }}</span>
-              </th>
-              <th :class="TH_R">
-                <span :class="HDR">They only
-                  <HelpTooltip text="Their products with no link to anything in our tracked range. NEVER sum this across views: one of their products bridges to several of our subcategories, so the total double-counts." />
-                </span>
-              </th>
+      </PanelHead>
+    <div class="overflow-x-auto">
+      <table class="w-full">
+          <colgroup>
+            <col />
+            <col :span="assortDetail ? 6 : 4" />
+            <col :span="assortDetail ? 6 : 4" class="col-shared" />
+            <col span="3" />
+          </colgroup>
+        <thead>
+          <!-- Same shape as Mapping coverage: one chain run twice, once over
+               everything and once over brands they actually carry. Both blocks
+               close the same two partitions --
+                 Both + Both they delisted + Ours only = Our SKUs
+                 Both(theirs) + They only        = Their catalogue
+               -- which is why the shared block uses the paired/unpaired counts
+               rather than the BigQuery brand-label scalar. -->
+          <tr class="bg-grey-50 border-b border-grey-100">
+            <th :class="TH_L" rowspan="2" class="sticky left-0 bg-grey-50 z-10 align-bottom">Competitor</th>
+            <th :class="GROUP" :colspan="assortDetail ? 6 : 4">All brands</th>
+            <th :class="[GROUP, 'border-l-2 border-grey-300']" :colspan="assortDetail ? 6 : 4">
+              Shared brands
+              <HelpTooltip text="The same six columns restricted to brands both of us stock. Everything outside them is a brand one of us carries and the other does not — assortment, not a matching gap." />
+            </th>
+            <th :class="[GROUP, 'border-l-2 border-grey-300']" colspan="3">Shape</th>
+          </tr>
+          <tr class="bg-grey-50 border-b border-grey-100">
+            <th :class="TH_R">
+              <span :class="HDR">Our SKUs
+                <HelpTooltip text="Our whole tracked range in scope. Both + Both they delisted + Ours only add back to it exactly." />
+              </span>
+            </th>
+            <th v-if="assortDetail" :class="TH_R">
+              <span :class="HDR">Both
+                <HelpTooltip text="Our products matched to something they still list. Counted on OUR side, so it is not the paired half of their catalogue — several of ours can share one of their listings." />
+              </span>
+            </th>
+            <th v-if="assortDetail" :class="TH_R">
+              <span :class="HDR">Both, they delisted
+                <HelpTooltip text="Matched, but they have not listed it in 7 days. Still mapped on our side and gone from their shelf, so the benchmark is historical rather than current." />
+              </span>
+            </th>
+            <th :class="TH_R">
+              <span :class="HDR">Ours only
+                <HelpTooltip text="Our SKUs minus Mapped. A CEILING, not a work queue: what they genuinely do not stock together with what we failed to match. Hover a row for the split." />
+              </span>
+            </th>
+            <th :class="TH_R">
+              <span :class="HDR">Their catalogue
+                <HelpTooltip :text="catalogueHelp" />
+              </span>
+              <span class="block text-micro font-normal normal-case tracking-normal"
+                    :class="isNarrowed ? 'text-brand-primary' : 'text-grey-400'">{{ catalogueBasis }}</span>
+            </th>
+            <th :class="TH_R">
+              <span :class="HDR">They only
+                <HelpTooltip text="Their products with no link to anything in our tracked range. NEVER sum this across views: one of their products bridges to several of our subcategories, so the total double-counts." />
+              </span>
+            </th>
 
-              <th :class="[TH_R, 'border-l border-grey-200']">
-                <span :class="HDR">Our SKUs
-                  <HelpTooltip text="Our products whose brand this competitor also carries — the only part of our range matching can ever reach." />
-                </span>
-              </th>
-              <th v-if="assortDetail" :class="TH_R">Both</th>
-              <th v-if="assortDetail" :class="TH_R">Both, delisted</th>
-              <th :class="TH_R">
-                <span :class="HDR">Ours only
-                  <HelpTooltip text="Unmatched inside brands they carry. Unlike the all-brands column this cannot be blamed on assortment — they stock the brand and we still have no match." />
-                </span>
-              </th>
-              <th :class="TH_R">
-                <span :class="HDR">Their catalogue
-                  <HelpTooltip text="Their live catalogue inside brands we also carry, counted the same way as the all-brands column: the products of theirs we matched plus the products of theirs we did not." />
-                </span>
-              </th>
-              <th :class="TH_R">They only</th>
+            <th :class="[TH_R, 'border-l-2 border-grey-300']">
+              <span :class="HDR">Our SKUs
+                <HelpTooltip text="Our products whose brand this competitor also carries — the only part of our range matching can ever reach." />
+              </span>
+            </th>
+            <th v-if="assortDetail" :class="TH_R">Both</th>
+            <th v-if="assortDetail" :class="TH_R">Both, they delisted</th>
+            <th :class="TH_R">
+              <span :class="HDR">Ours only
+                <HelpTooltip text="Unmatched inside brands they carry. Unlike the all-brands column this cannot be blamed on assortment — they stock the brand and we still have no match." />
+              </span>
+            </th>
+            <th :class="TH_R">
+              <span :class="HDR">Their catalogue
+                <HelpTooltip text="Their live catalogue inside brands we also carry, counted the same way as the all-brands column: the products of theirs we matched plus the products of theirs we did not." />
+              </span>
+            </th>
+            <th :class="TH_R">They only</th>
 
-              <th :class="[TH_R, 'border-l border-grey-200']">
-                <span :class="HDR">Overlap %
-                  <HelpTooltip text="The shared middle over the whole combined assortment: Mapped ÷ (Ours only + Mapped + They only). Low overlap with a big range means a different game, not worse coverage." />
-                </span>
-              </th>
-              <th :class="TH_R">
-                <span :class="HDR">Their range
-                  <HelpTooltip text="Their in-scope catalogue ÷ our SKUs. Above 1.00 they carry more than we do." />
-                </span>
-              </th>
-              <th :class="TH_C" style="min-width: 168px">
-                <span :class="HDR">Brands: shared · by match / only ours / only theirs
-                  <HelpTooltip text="Brands we share, of which proved BY MATCH — a subset, not a fourth bucket. Then only-ours and only-theirs, the last an upper bound since variants are not collapsed." />
-                </span>
-              </th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-grey-50">
-            <tr v-for="row in rows" :key="row.competitor_name" :class="ROW"
-                :title="rowTitle(row)" @click="$emit('select-competitor', row.competitor_name)">
-              <Competitor :row="row" />
-              <td :class="[TD_N, 'text-grey-500']">{{ n(row.bf_products) }}</td>
-              <td v-if="assortDetail" :class="[TD_N, 'text-green-600 font-semibold']" :title="bothTitle(row)">{{ n(bothLive(row)) }}</td>
-              <td v-if="assortDetail" :class="[TD_N, row.mapped_comp_delisted ? 'text-grey-500' : 'text-grey-300']">{{ n(row.mapped_comp_delisted) }}</td>
-              <td :class="[TD_N, 'text-brand-primary font-semibold']" :title="ourOnlyTitle(row)">{{ n(row.our_only_products) }}</td>
-              <td :class="[TD_N, 'text-grey-600']" :title="catalogueTitle(row)">{{ n(catalogueVal(row)) }}</td>
-              <td :class="[TD_N, 'text-amber-700 font-semibold']">{{ n(row.comp_only_products) }}</td>
+            <th :class="[TH_R, 'border-l-2 border-grey-300']">
+              <span :class="HDR">Overlap %
+                <HelpTooltip text="The shared middle over the whole combined assortment: Mapped ÷ (Ours only + Mapped + They only). Low overlap with a big range means a different game, not worse coverage." />
+              </span>
+            </th>
+            <th :class="TH_R">
+              <span :class="HDR">Their range
+                <HelpTooltip text="Their in-scope catalogue ÷ our SKUs. Above 1.00 they carry more than we do." />
+              </span>
+            </th>
+            <th :class="TH_C" style="min-width: 168px">
+              <span :class="HDR">Brands: shared · by match / only ours / only theirs
+                <HelpTooltip text="Brands we share, of which proved BY MATCH — a subset, not a fourth bucket. Then only-ours and only-theirs, the last an upper bound since variants are not collapsed." />
+              </span>
+            </th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-grey-50">
+          <tr v-for="row in rows" :key="row.competitor_name" :class="ROW"
+              :title="rowTitle(row)" @click="$emit('select-competitor', row.competitor_name)">
+            <Competitor :row="row" />
+            <td :class="[TD_N, 'text-grey-500']">{{ n(row.bf_products) }}</td>
+            <td v-if="assortDetail" :class="[TD_N, 'text-green-600 font-semibold']" :title="bothTitle(row)">{{ n(bothLive(row)) }}</td>
+            <td v-if="assortDetail" :class="[TD_N, row.mapped_comp_delisted ? 'text-grey-500' : 'text-grey-300']">{{ n(row.mapped_comp_delisted) }}</td>
+            <td :class="[TD_N, 'text-brand-primary font-semibold']" :title="ourOnlyTitle(row)">{{ n(row.our_only_products) }}</td>
+            <td :class="[TD_N, 'text-grey-600']" :title="catalogueTitle(row)">{{ n(catalogueVal(row)) }}</td>
+            <td :class="[TD_N, 'text-amber-700 font-semibold']">{{ n(row.comp_only_products) }}</td>
 
-              <td :class="[TD_N, 'border-l border-grey-100 text-grey-500']" :title="sharedBothTitle(row)">{{ n(row.shared_brand_products) }}</td>
-              <td v-if="assortDetail" :class="[TD_N, 'text-green-600 font-semibold']">{{ n(bothLiveShared(row)) }}</td>
-              <td v-if="assortDetail" :class="[TD_N, row.mapped_comp_delisted_shared ? 'text-grey-500' : 'text-grey-300']">{{ n(row.mapped_comp_delisted_shared) }}</td>
-              <td :class="[TD_N, 'text-brand-primary font-semibold']">{{ n(oursOnlyShared(row)) }}</td>
-              <td :class="[TD_N, 'text-grey-600']">{{ n(row.comp_catalogue_shared) }}</td>
-              <td :class="[TD_N, 'text-amber-700 font-semibold']">{{ n(row.comp_only_shared) }}</td>
+            <td :class="[TD_N, 'border-l-2 border-grey-200 text-grey-500']" :title="sharedBothTitle(row)">{{ n(row.shared_brand_products) }}</td>
+            <td v-if="assortDetail" :class="[TD_N, 'text-green-600 font-semibold']">{{ n(bothLiveShared(row)) }}</td>
+            <td v-if="assortDetail" :class="[TD_N, row.mapped_comp_delisted_shared ? 'text-grey-500' : 'text-grey-300']">{{ n(row.mapped_comp_delisted_shared) }}</td>
+            <td :class="[TD_N, 'text-brand-primary font-semibold']">{{ n(oursOnlyShared(row)) }}</td>
+            <td :class="[TD_N, 'text-grey-600']">{{ n(row.comp_catalogue_shared) }}</td>
+            <td :class="[TD_N, 'text-amber-700 font-semibold']">{{ n(row.comp_only_shared) }}</td>
 
-              <td :class="[TD_N, 'border-l border-grey-100 text-grey-700']">
-                <template v-if="row.has_catalogue">{{ overlapPct(row) }}%</template>
-                <span v-else class="text-red-400 text-caption font-sans">not measurable</span>
-              </td>
-              <td :class="[TD_N, row.has_catalogue ? 'text-grey-700' : 'text-grey-300']">
-                {{ row.has_catalogue ? `${breadth(row)}×` : '—' }}
-              </td>
-              <td class="px-4 py-3">
-                <div class="flex items-center gap-1 text-caption font-mono">
-                  <span class="px-1.5 py-0.5 rounded bg-green-50 text-green-700" title="Brands both of us carry">{{ row.shared_brands }}</span>
-                  <!-- Middle dot, not a slash: this one is inside the number to
-                       its left, and a slash would read as a fourth bucket. -->
-                  <span class="text-grey-300">·</span>
-                  <span class="px-1.5 py-0.5 rounded ring-1 ring-green-200 text-green-700"
-                        :title="`${row.shared_by_match_brands} of those ${row.shared_brands} shared brands are named differently on each side — proved by matching products, not by the label.`">
-                    {{ row.shared_by_match_brands }}
-                  </span>
-                  <span class="text-grey-300">/</span>
-                  <span class="px-1.5 py-0.5 rounded bg-brand-50 text-brand-primary" title="Brands only we carry">{{ row.bf_only_brands }}</span>
-                  <span class="text-grey-300">/</span>
-                  <span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700" title="Brands only they carry. Name variants are not collapsed, so this is an upper bound.">{{ row.comp_only_brands }}</span>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </template>
-    <EmptyState v-else message="No competitor data for the current filters" />
+            <td :class="[TD_N, 'border-l-2 border-grey-200 text-grey-700']">
+              <template v-if="row.has_catalogue">{{ overlapPct(row) }}%</template>
+              <span v-else class="text-red-400 text-caption font-sans">not measurable</span>
+            </td>
+            <td :class="[TD_N, row.has_catalogue ? 'text-grey-700' : 'text-grey-300']">
+              {{ row.has_catalogue ? `${breadth(row)}×` : '—' }}
+            </td>
+            <td class="px-4 py-3">
+              <div class="flex items-center gap-1 text-caption font-mono">
+                <span class="px-1.5 py-0.5 rounded bg-green-50 text-green-700" title="Brands both of us carry">{{ row.shared_brands }}</span>
+                <!-- Middle dot, not a slash: this one is inside the number to
+                     its left, and a slash would read as a fourth bucket. -->
+                <span class="text-grey-300">·</span>
+                <span class="px-1.5 py-0.5 rounded ring-1 ring-green-200 text-green-700"
+                      :title="`${row.shared_by_match_brands} of those ${row.shared_brands} shared brands are named differently on each side — proved by matching products, not by the label.`">
+                  {{ row.shared_by_match_brands }}
+                </span>
+                <span class="text-grey-300">/</span>
+                <span class="px-1.5 py-0.5 rounded bg-brand-50 text-brand-primary" title="Brands only we carry">{{ row.bf_only_brands }}</span>
+                <span class="text-grey-300">/</span>
+                <span class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700" title="Brands only they carry. Name variants are not collapsed, so this is an upper bound.">{{ row.comp_only_brands }}</span>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+      <EmptyState v-if="!rows.length" message="No competitor data for the current filters" />
+    </section>
   </div>
 </template>
 
@@ -412,9 +405,9 @@ defineEmits(['select-competitor'])
 
 const GROUP = 'px-4 py-1.5 text-center text-micro font-bold uppercase tracking-wide text-grey-400'
 const TH_L = 'px-4 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide'
-const TH_R = 'px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide'
+const TH_R = 'px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide'
 const TH_C = 'px-4 py-2 text-caption font-semibold text-grey-500 uppercase tracking-wide'
-const TD_N = 'px-4 py-3 text-right text-body font-mono'
+const TD_N = 'px-4 py-3 text-center text-body font-mono'
 const HDR = 'inline-flex items-center gap-1'
 const ROW = 'hover:bg-brand-50 transition-colors cursor-pointer'
 
@@ -438,7 +431,7 @@ function toggleDetail() {
 // One entry per folded column, so the button's count cannot lie.
 // One entry per column the main view leaves out, so the count cannot lie.
 const ASSORT_COLUMNS = [
-  'Both', 'Both delisted', 'Both (shared brands)', 'Both delisted (shared brands)',
+  'Both', 'Both they delisted', 'Both (shared brands)', 'Both they delisted (shared brands)',
 ]
 const assortDetail = ref(localStorage.getItem('exec-assortment-detail') !== '0')
 function toggleAssort() {
@@ -448,18 +441,31 @@ function toggleAssort() {
 
 const ICONS = { price: Scale, mapping: Link2, assortment: PackageSearch }
 
-// Each table's own title bar. Tinted rather than white so the three read as
-// sections of one panel instead of three panels that lost their borders.
-const SectionHead = (p, { slots }) => h('div', {
-  class: 'px-4 py-2 bg-grey-50/60 border-y border-grey-100 flex items-center justify-between gap-3 flex-wrap',
+// Each panel's header: icon, title, subtitle, slotted controls, own export.
+// Replaces the inner SectionHead divider now that these are separate cards.
+const PanelHead = (p, { slots }) => h('div', {
+  class: 'px-4 py-3 border-b border-grey-100 flex items-center justify-between gap-3 flex-wrap',
 }, [
   h('div', { class: 'flex items-center gap-2 min-w-0' }, [
-    h(ICONS[p.icon], { class: 'w-3.5 h-3.5 text-brand-primary shrink-0' }),
-    h('span', { class: 'text-caption font-bold text-grey-800 uppercase tracking-wide' }, p.title),
-    h('span', { class: 'text-caption text-grey-400 truncate' }, p.sub),
+    h(ICONS[p.icon], { class: 'w-4 h-4 text-brand-primary shrink-0' }),
+    h('span', { class: 'text-subheading font-bold text-grey-900 tracking-tightish' }, p.title),
+    h('span', { class: 'text-caption text-grey-400 truncate hidden sm:inline' }, p.sub),
   ]),
-  slots.default ? h('div', { class: 'flex items-center gap-4 flex-wrap' }, slots.default()) : null,
+  h('div', { class: 'flex items-center gap-3 flex-wrap' }, [
+    ...(slots.default ? slots.default() : []),
+    h(ExportButton, { fetcher: p.fetcher, label: 'Export Excel', filename: p.file }),
+  ]),
 ])
+
+// One definition for both column toggles, so they cannot drift apart visually.
+const TOGGLE_BTN = (on) => [
+  'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-caption font-semibold ring-1',
+  'active:scale-[0.97] transition-[transform,background-color,box-shadow] duration-200 ease-premium',
+  on ? 'bg-brand-primary text-white ring-brand-primary hover:bg-brand-dark'
+     : 'bg-brand-50 text-brand-primary ring-brand-light/60 hover:bg-brand-lightest hover:ring-brand-light',
+].join(' ')
+
+const SCOPE_NOTE = 'px-4 py-2 text-caption text-grey-500 bg-grey-50/70 border-b border-grey-100'
 
 // The one cell all three tables share, so the sticky column can never drift
 // out of step between them.
@@ -488,7 +494,6 @@ function pooled(numKey, denFn) {
   return den > 0 ? Math.round((num / den) * 1000) / 10 : null
 }
 const addressablePct = computed(() => pooled('matched', r => r.addressable))
-const freshPct = computed(() => pooled('matched_fresh', r => r.matched))
 
 function n(v) { return v == null ? '—' : Number(v).toLocaleString() }
 function pct(v) { return v == null ? '—' : `${v}%` }
@@ -586,7 +591,7 @@ function bothTitle(row) {
     `Those ${live.toLocaleString()} land on ${theirs.toLocaleString()} of their listings —`,
     'several of ours can share one of theirs.',
     '',
-    `Both + Both delisted + Ours only = ${(row.bf_products || 0).toLocaleString()} Our SKUs.`,
+    `Both + Both they delisted + Ours only = ${(row.bf_products || 0).toLocaleString()} Our SKUs.`,
   ].join('\n')
 }
 
@@ -600,7 +605,7 @@ function sharedBothTitle(row) {
   return [
     `Comparable slice of each range at ${row.competitor_name}`,
     '',
-    `Ours in brands they carry:  ${ours.toLocaleString()} of ${(row.bf_products || 0).toLocaleString()} (${pct(ours, row.bf_products)})`,
+    `Ours in shared brands:    ${ours.toLocaleString()} of ${(row.bf_products || 0).toLocaleString()} (${pct(ours, row.bf_products)})`,
     `Theirs in brands we carry:  ${theirs.toLocaleString()} of ${(row.comp_products || 0).toLocaleString()} (${pct(theirs, row.comp_products)})`,
     '',
     'Everything outside these two is a brand one of us stocks and the',
@@ -700,8 +705,19 @@ const Bar = (p) => {
 // The file is built by the backend — see utils/workbook.js for why. All this
 // has to say is which competitors are on screen, since the pills are client-side
 // visibility and never reach the query.
-function exportData() {
+// One panel, one sheet. The view owns the filter params; the panel says which
+// section it is and which competitor rows are on screen (the pills are
+// client-side visibility and never reach the query).
+function exportSection(section) {
   if (!props.exportFetcher) return []
-  return props.exportFetcher(rows.value.map(r => r.competitor_name))
+  return props.exportFetcher(rows.value.map(r => r.competitor_name), section)
 }
 </script>
+
+<style scoped>
+/* Only background-color and border are honoured on <col>, which is exactly what
+   this needs — the band must not affect text or layout. */
+.col-shared {
+  background-color: rgb(248 250 252);   /* slate-50 */
+}
+</style>

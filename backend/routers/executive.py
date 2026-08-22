@@ -162,6 +162,10 @@ def export_workbook(
         None, description="Comma-separated rows to keep — the competitor pills, "
                           "which are client-side visibility and not part of the query."
     ),
+    section: Optional[str] = Query(
+        None, description="price | mapping | assortment. One sheet, matching the panel "
+                          "that asked for it. Omit for all three."
+    ),
 ):
     """Stream the competitor scorecard as a styled workbook."""
     from fastapi.responses import StreamingResponse
@@ -182,8 +186,21 @@ def export_workbook(
 
     # One sheet per on-screen table, so a sheet can be sent on its own. The Gap
     # workbook keeps the single combined sheet, which mirrors a hand-built file.
+    sheets = executive_scorecard_sheets(rows)
+    # The scorecard is three panels on screen, each with its own export, so a
+    # request can name one. Index, not a name match, because the sheet titles are
+    # display strings and would drift.
+    BY_SECTION = {"price": 0, "mapping": 1, "assortment": 2}
+    name = "Competitor_Scorecard.xlsx"
+    if section:
+        key = section.strip().lower()
+        if key not in BY_SECTION:
+            raise HTTPException(status_code=400, detail=f"unknown section: {section}")
+        sheets = [sheets[BY_SECTION[key]]]
+        name = sheets[0]["name"].replace(" ", "_") + ".xlsx"
+
     return StreamingResponse(
-        build_workbook(executive_scorecard_sheets(rows)),
+        build_workbook(sheets),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="Competitor_Scorecard.xlsx"'},
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
     )

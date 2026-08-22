@@ -507,10 +507,14 @@ const visibleOverview = computed(() =>
 // the Gap workbook — the browser cannot write cell formatting at all. The view
 // owns the filter params; the panel only says which competitor rows are on
 // screen, because the pills filter it client-side.
-function exportScorecard(names) {
+function exportScorecard(names, section) {
   return asDownload(
-    executiveApi.workbook({ ...store._params(), competitors: (names || []).join(',') }),
-    'Competitor_Scorecard.xlsx',
+    executiveApi.workbook({
+      ...store._params(),
+      competitors: (names || []).join(','),
+      ...(section ? { section } : {}),
+    }),
+    section ? `${section}.xlsx` : 'Competitor_Scorecard.xlsx',
   )
 }
 
