@@ -6,6 +6,11 @@ pydantic>=2.5.0
 pydantic-settings>=2.1.0
 python-dotenv>=1.0.0
 google-cloud-bigquery>=3.13.0
+# Optional to import, not optional in practice: without it the BigQuery client
+# silently falls back to the REST iterator, which turned a ~2 minute Arrow pull
+# of 3M rows into 1,603s on a production cold start. Imported lazily behind
+# except ImportError in bigquery_service.py, so nothing fails loudly.
+google-cloud-bigquery-storage>=2.24.0
 db-dtypes>=1.2.0
 httpx>=0.27.0
 duckdb>=1.0.0

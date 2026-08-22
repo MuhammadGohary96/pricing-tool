@@ -45,6 +45,34 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
+      # Build locally FIRST and prove the app imports before anything reaches
+      # the registry. On 2026-08-22 an image whose python could not import
+      # openpyxl was pushed and deployed, and because the Deployment is
+      # strategy: Recreate with replicas: 1, the old pod was torn down before
+      # the new one failed -- a missing line in requirements.txt became a full
+      # outage. The smoke test below fails in seconds instead.
+      #
+      # `load: true` puts the image in the runner's docker daemon; buildx
+      # refuses load and push in one call, so the push step re-runs the build
+      # and hits the gha cache rather than rebuilding.
+      - name: Build for testing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          platforms: linux/amd64
+          tags: pricing-tool:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test — everything the backend imports is installed
+        run: |
+          docker run --rm \
+            -v "$PWD/scripts:/scripts:ro" \
+            --entrypoint python pricing-tool:smoke \
+            /scripts/check_imports.py /app/backend
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
