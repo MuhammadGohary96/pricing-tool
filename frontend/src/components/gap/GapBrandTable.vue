@@ -28,28 +28,40 @@
       </div>
     </div>
 
-    <p class="px-4 py-2 text-caption text-grey-500 bg-amber-50/60 border-b border-amber-100">
-      <TriangleAlert class="w-3.5 h-3.5 inline -mt-0.5 text-amber-500" />
-      Brand-name variants are not collapsed — <em>L'Oréal Paris</em>, <em>L'Oreal</em> and
-      <em>Elvive</em> count as three brands. Treat "brands only they carry" as an upper bound.
-    </p>
-
     <div v-if="filtered.length" class="overflow-x-auto max-h-[620px] overflow-y-auto">
       <table class="w-full">
         <thead class="bg-grey-50 border-b border-grey-100 sticky top-0 z-10">
           <tr>
-            <th :class="TH_L">Brand</th>
-            <th :class="TH_L">Overlap</th>
-            <th :class="TH_L">
+<th :class="TH_L" rowspan="2" class="align-bottom">Brand</th>
+<th :class="TH_L" rowspan="2" class="align-bottom">Overlap</th>
+<th :class="TH_L" rowspan="2" class="align-bottom">
               <span class="inline-flex items-center gap-1">Their brand
                 <HelpTooltip text="Every spelling this brand has on their shelf, from products we actually matched, biggest first. Our Froneri is their Nestle; their 7Up/7UP/7up count as three brands, which is why 'only theirs' is an upper bound." />
               </span>
             </th>
+            <th :class="GROUP" colspan="6">Mapping coverage</th>
+            <th :class="[GROUP, 'border-l-2 border-grey-300']" colspan="7">Assortment gap</th>
+          </tr>
+          <tr>
             <th :class="TH_R">Our SKUs</th>
             <th :class="TH_R">Mapped</th>
             <th :class="TH_C" style="min-width: 120px">Mapped %</th>
             <th :class="TH_R">No-match</th>
+            <th :class="TH_C" style="min-width: 130px">
+              <span class="inline-flex items-center gap-1">Mapping Addressable %
+                <HelpTooltip text="Mapped ÷ (our SKUs − confirmed no-match), the column to its left. Products the matcher positively rejected leave the denominator." />
+              </span>
+            </th>
             <th :class="TH_R">Potential</th>
+
+            <th :class="[TH_R, 'border-l-2 border-grey-300']">
+              <span class="inline-flex items-center gap-1">Their catalogue
+                <HelpTooltip text="Their catalogue attributable to this brand — Mapped live plus They only. It will not equal Mapped + They only, because Mapped counts OUR products and this counts theirs." />
+              </span>
+            </th>
+            <!-- Our SKUs repeats here: it is the denominator of Ours only, and
+                 the assortment group cannot be read without our own side's size. -->
+            <th :class="TH_R">Our SKUs</th>
             <th :class="TH_R">
               <span class="inline-flex items-center gap-1">Mapped live
                 <HelpTooltip text="Their products ours are matched to that they still list. Counted on THEIR side, so smaller than Mapped. This plus They only is exactly Their catalogue." />
@@ -57,13 +69,8 @@
             </th>
             <th :class="TH_R">They only</th>
             <th :class="TH_R">
-              <span class="inline-flex items-center gap-1">Their catalogue
-                <HelpTooltip text="Their catalogue attributable to this row — Mapped live plus They only, the two columns to its left. It will not equal Mapped + They only, because Mapped counts OUR products and this counts theirs." />
-              </span>
-            </th>
-            <th :class="TH_R">
               <span class="inline-flex items-center gap-1">Ours only
-                <HelpTooltip text="Our SKUs of this brand minus Mapped — the mirror of They only. A CEILING, not a proven gap: what they do not stock plus what we failed to match. No-match beside it is the confirmed subset." />
+                <HelpTooltip text="Our SKUs of this brand minus Mapped — the mirror of They only. A CEILING, not a proven gap: what they do not stock plus what we failed to match. No-match is the confirmed subset." />
               </span>
             </th>
             <th :class="TH_R">Our subcats</th>
@@ -104,12 +111,14 @@
               <span v-else class="text-grey-300 text-caption">—</span>
             </td>
             <td :class="TD_N" class="text-grey-500">{{ n(row.confirmed_no_match) }}</td>
+            <td class="px-4 py-3"><Bar :pct="row.addressable_pct" /></td>
             <td :class="TD_N" class="text-amber-600">{{ n(row.potential_match) }}</td>
+            <td :class="[TD_N, 'border-l-2 border-grey-200']" class="text-grey-600" :title="catalogueTitle(row)">{{ n(row.comp_catalogue) }}</td>
+            <td :class="TD_N" class="text-grey-500">{{ n(row.bf_products) }}</td>
             <td :class="TD_N" class="text-green-700">{{ n(row.comp_mapped_live) }}</td>
             <td :class="TD_N" class="text-amber-700 font-semibold">{{ n(row.comp_only_products) }}</td>
-            <td :class="TD_N" class="text-grey-600" :title="catalogueTitle(row)">{{ n(row.comp_catalogue) }}</td>
             <td :class="TD_N" class="text-brand-primary font-semibold">{{ n(row.our_only_products) }}</td>
-            <td :class="TD_N" class="text-grey-600">{{ n(row.bf_subcategories) }}</td>
+                                                            <td :class="TD_N" class="text-grey-600">{{ n(row.bf_subcategories) }}</td>
             <td :class="TD_N" class="text-grey-600">{{ n(row.comp_subcategories) }}</td>
           </tr>
         </tbody>
@@ -120,11 +129,24 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
-import { Tags, TriangleAlert } from 'lucide-vue-next'
+import { computed, ref, h } from 'vue'
+import { Tags } from 'lucide-vue-next'
 import ExportButton from '../shared/ExportButton.vue'
 import EmptyState from '../shared/EmptyState.vue'
 import HelpTooltip from '../shared/HelpTooltip.vue'
+
+// Shared by Mapped % and Mapping Addressable %: a rate drawn as bare text
+// beside one drawn as a bar reads as the lesser number.
+const Bar = (p) => {
+  const v = p.pct
+  if (v == null) return h('span', { class: 'text-grey-300' }, '—')
+  return h('div', { class: 'flex items-center gap-2' }, [
+    h('div', { class: 'flex-1 h-1.5 bg-grey-100 rounded-full overflow-hidden' }, [
+      h('div', { class: `h-full rounded-full ${barColor(v)}`, style: { width: `${v}%` } }),
+    ]),
+    h('span', { class: `text-caption font-semibold w-11 text-right ${pctColor(v)}` }, `${v}%`),
+  ])
+}
 
 const props = defineProps({
   rows: { type: Array, default: () => [] },
@@ -150,10 +172,11 @@ const TYPE_STYLE = {
   comp_only: 'bg-amber-50 text-amber-700',
 }
 
+const GROUP = 'px-4 py-1.5 text-center text-micro font-bold uppercase tracking-wide text-grey-400'
 const TH_L = 'px-4 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide'
-const TH_R = 'px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide'
+const TH_R = 'px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide'
 const TH_C = 'px-4 py-2 text-caption font-semibold text-grey-500 uppercase tracking-wide'
-const TD_N = 'px-4 py-3 text-right text-body font-mono'
+const TD_N = 'px-4 py-3 text-center text-body font-mono'
 
 // comp_brand_variants arrives as "Nestle:45|Paradise:39|Oreo:28", already ranked
 // and capped at ten by the query. Encoded rather than sent as a nested array so
