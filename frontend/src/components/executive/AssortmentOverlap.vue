@@ -4,12 +4,12 @@
       <div class="flex items-center gap-2 min-w-0">
         <ArrowLeftRight class="w-4 h-4 text-brand-primary shrink-0" />
         <span class="text-subheading font-bold text-grey-900 tracking-tightish">Portfolio comparison</span>
-        <HelpTooltip text="Our range and one competitor's combined, split into only-ours, both, only-theirs. One scale across rows, so a longer wing is a bigger range. The pale band is matched to something they have delisted." />
+        <HelpTooltip text="Our range and one competitor's combined, split into only-ours, both, only-theirs. One scale across rows, so a longer wing is a bigger range. The hatched band is matched to something they have delisted." />
       </div>
       <div class="flex items-center gap-3 flex-wrap text-caption">
         <span class="inline-flex items-center gap-1.5 text-grey-600"><span class="w-2.5 h-2.5 rounded-sm bg-brand-primary"></span>Only ours</span>
         <span class="inline-flex items-center gap-1.5 text-grey-600"><span class="w-2.5 h-2.5 rounded-sm bg-green-500"></span>Both</span>
-        <span class="inline-flex items-center gap-1.5 text-grey-600"><span class="w-2.5 h-2.5 rounded-sm bg-green-500/30 ring-1 ring-green-600/40"></span>Both, they've delisted it</span>
+        <span class="inline-flex items-center gap-1.5 text-grey-600"><span class="w-2.5 h-2.5 rounded-sm ring-1 ring-slate-400/50" :style="{ backgroundImage: HATCH }"></span>Both, they delisted</span>
         <span class="inline-flex items-center gap-1.5 text-grey-600"><span class="w-2.5 h-2.5 rounded-sm bg-amber-500"></span>Only theirs</span>
       </div>
     </div>
@@ -34,8 +34,8 @@
             <!-- The pale band is ours-matched-to-something-they-no-longer-list.
                  It sits on OUR side only, because their side counts live
                  listings and these are by definition not among them. -->
-            <div v-if="r.delisted" class="h-full bg-green-500/25 border-y border-green-600/30"
-                 :style="{ width: `${r.w.delistedHalf}%` }"
+            <div v-if="r.delisted" class="h-full border-y border-slate-400/40"
+                 :style="{ width: `${r.w.delistedHalf}%`, backgroundImage: HATCH }"
                  :title="`Both carried it, but ${r.name} has not listed it in 7 days: ${r.delisted.toLocaleString()}\nStill counted as mapped on our side; gone from their catalogue.`"></div>
             <div class="h-full bg-green-500" :style="{ width: `${r.w.liveHalf}%` }"></div>
           </div>
@@ -102,6 +102,11 @@ import { ArrowLeftRight } from 'lucide-vue-next'
 import CompetitorLogo from '../shared/CompetitorLogo.vue'
 import HelpTooltip from '../shared/HelpTooltip.vue'
 import EmptyState from '../shared/EmptyState.vue'
+
+// Diagonal hatch for the delisted band. Deliberately NOT a fourth colour: the
+// three semantic hues are taken, grey reads as expired, and a pattern stays
+// legible in greyscale and in print.
+const HATCH = "repeating-linear-gradient(45deg, rgb(203 213 225) 0 3px, rgb(241 245 249) 3px 6px)"
 
 const props = defineProps({
   data: { type: Array, default: () => [] },
