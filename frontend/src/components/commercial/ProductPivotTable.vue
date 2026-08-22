@@ -104,7 +104,7 @@
               </span>
             </th>
             <template v-for="comp in competitors" :key="comp">
-              <th v-if="!compactMode" class="px-3 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide border-b border-grey-200 whitespace-nowrap" :style="[row2StickyStyle, compIdx(comp) % 2 ? { background: '#F5F5F5' } : {}]">Price</th>
+              <th v-if="!compactMode" class="px-3 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide border-b border-grey-200 whitespace-nowrap" :style="[row2StickyStyle, compIdx(comp) % 2 ? { background: '#F5F5F5' } : {}]">Price</th>
               <th
                 class="px-3 py-2 text-right text-caption font-semibold uppercase tracking-wide cursor-pointer hover:text-grey-900 border-b border-r border-grey-200 whitespace-nowrap select-none transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-lightest"
                 :class="sortKey === `${comp}_pi` ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-grey-500'"
@@ -188,13 +188,13 @@
               </div>
             </td>
             <!-- Score (combined_score_global) -->
-            <td class="px-3 py-2 border-r border-grey-100 text-right text-body text-grey-600 font-mono">{{ row.weighted_score?.toFixed(3) ?? '—' }}</td>
+            <td class="px-3 py-2 border-r border-grey-100 text-center text-body text-grey-600 font-mono">{{ row.weighted_score?.toFixed(3) ?? '—' }}</td>
             <!-- Revenue -->
-            <td class="px-3 py-2 border-r border-grey-100 text-right text-body text-grey-600 font-mono" :title="row.total_revenue != null ? row.total_revenue.toLocaleString() + ' EGP' : ''">{{ formatRevenue(row.total_revenue) }}</td>
+            <td class="px-3 py-2 border-r border-grey-100 text-center text-body text-grey-600 font-mono" :title="row.total_revenue != null ? row.total_revenue.toLocaleString() + ' EGP' : ''">{{ formatRevenue(row.total_revenue) }}</td>
 
             <!-- Competitor columns -->
             <template v-for="comp in competitors" :key="comp">
-              <td v-if="!compactMode" class="px-3 py-2 text-right text-body text-grey-600 font-mono whitespace-nowrap" :title="`${comp} price`" :style="compIdx(comp) % 2 ? { background: '#FAFAFA' } : {}">
+              <td v-if="!compactMode" class="px-3 py-2 text-center text-body text-grey-600 font-mono whitespace-nowrap" :title="`${comp} price`" :style="compIdx(comp) % 2 ? { background: '#FAFAFA' } : {}">
                 <div class="flex flex-col items-end gap-0.5">
                   <span>{{ row[`${comp}_price`]?.toFixed(2) ?? '—' }}</span>
                   <span

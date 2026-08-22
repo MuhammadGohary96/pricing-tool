@@ -14,15 +14,15 @@
         <thead class="bg-grey-50 border-b border-grey-100">
           <tr>
             <th class="px-4 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide">Competitor</th>
-            <th class="px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">Total</th>
-            <th class="px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">Mapped BF</th>
-            <th class="px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">Mapped Comp.</th>
-            <th class="px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">Unmapped</th>
+            <th class="px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">Total</th>
+            <th class="px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">Mapped BF</th>
+            <th class="px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">Mapped Comp.</th>
+            <th class="px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">Unmapped</th>
             <th class="px-4 py-2 text-caption font-semibold text-grey-500 uppercase tracking-wide" style="min-width: 150px">Mapping %</th>
-            <th class="px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">Potential</th>
-            <th class="px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">Fresh</th>
-            <th class="px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">Stale</th>
-            <th class="px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide">Avg Age</th>
+            <th class="px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">Potential</th>
+            <th class="px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">Fresh</th>
+            <th class="px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">Stale</th>
+            <th class="px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide">Avg Age</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-grey-50">
@@ -33,10 +33,10 @@
                 <span class="text-body font-semibold text-grey-900">{{ row.competitor_name }}</span>
               </div>
             </td>
-            <td class="px-4 py-3 text-right text-body font-mono text-grey-900">{{ row.total.toLocaleString() }}</td>
-            <td class="px-4 py-3 text-right text-body font-mono text-green-600">{{ row.mapped_bf.toLocaleString() }}</td>
-            <td class="px-4 py-3 text-right text-body font-mono text-green-500">{{ row.mapped_competitor.toLocaleString() }}</td>
-            <td class="px-4 py-3 text-right text-body font-mono text-grey-500">{{ row.unmapped.toLocaleString() }}</td>
+            <td class="px-4 py-3 text-center text-body font-mono text-grey-900">{{ row.total.toLocaleString() }}</td>
+            <td class="px-4 py-3 text-center text-body font-mono text-green-600">{{ row.mapped_bf.toLocaleString() }}</td>
+            <td class="px-4 py-3 text-center text-body font-mono text-green-500">{{ row.mapped_competitor.toLocaleString() }}</td>
+            <td class="px-4 py-3 text-center text-body font-mono text-grey-500">{{ row.unmapped.toLocaleString() }}</td>
             <td class="px-4 py-3">
               <div class="flex items-center gap-2">
                 <div class="flex-1 h-1.5 bg-grey-100 rounded-full overflow-hidden">
@@ -51,10 +51,10 @@
                 </span>
               </div>
             </td>
-            <td class="px-4 py-3 text-right text-body font-mono text-amber-600">{{ row.with_ai_match.toLocaleString() }}</td>
-            <td class="px-4 py-3 text-right text-body font-mono text-green-600">{{ row.fresh.toLocaleString() }}</td>
-            <td class="px-4 py-3 text-right text-body font-mono text-red-500">{{ row.stale.toLocaleString() }}</td>
-            <td class="px-4 py-3 text-right text-body font-mono text-grey-600">
+            <td class="px-4 py-3 text-center text-body font-mono text-amber-600">{{ row.with_ai_match.toLocaleString() }}</td>
+            <td class="px-4 py-3 text-center text-body font-mono text-green-600">{{ row.fresh.toLocaleString() }}</td>
+            <td class="px-4 py-3 text-center text-body font-mono text-red-500">{{ row.stale.toLocaleString() }}</td>
+            <td class="px-4 py-3 text-center text-body font-mono text-grey-600">
               {{ row.avg_crawl_age != null ? `${row.avg_crawl_age}d` : '—' }}
             </td>
           </tr>

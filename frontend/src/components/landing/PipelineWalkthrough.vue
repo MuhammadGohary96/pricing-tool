@@ -84,19 +84,19 @@
               <thead>
                 <tr class="text-micro uppercase tracking-wide text-grey-400">
                   <th class="text-left font-semibold px-4 pt-3 pb-2">Product</th>
-                  <th class="text-right font-semibold px-2 pt-3 pb-2">PI</th>
-                  <th class="text-right font-semibold px-2 pt-3 pb-2">Qty/day</th>
-                  <th class="text-right font-semibold px-4 pt-3 pb-2">PI × Qty</th>
+                  <th class="text-center font-semibold px-2 pt-3 pb-2">PI</th>
+                  <th class="text-center font-semibold px-2 pt-3 pb-2">Qty/day</th>
+                  <th class="text-center font-semibold px-4 pt-3 pb-2">PI × Qty</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="r in blend" :key="r.name">
                   <td class="px-4 py-2 border-t border-grey-100 text-grey-800">{{ r.name }}</td>
-                  <td class="px-2 py-2 border-t border-grey-100 text-right">
+                  <td class="px-2 py-2 border-t border-grey-100 text-center">
                     <span class="inline-flex items-center gap-0.5 font-mono font-semibold" :class="piTextClass(r.pi)"><span class="text-[9px]">{{ piArrow(r.pi) }}</span>{{ r.pi.toFixed(2) }}</span>
                   </td>
-                  <td class="px-2 py-2 border-t border-grey-100 text-right font-mono text-grey-600">{{ r.qty }}</td>
-                  <td class="px-4 py-2 border-t border-grey-100 text-right font-mono text-grey-800">{{ (r.pi * r.qty).toFixed(1) }}</td>
+                  <td class="px-2 py-2 border-t border-grey-100 text-center font-mono text-grey-600">{{ r.qty }}</td>
+                  <td class="px-4 py-2 border-t border-grey-100 text-center font-mono text-grey-800">{{ (r.pi * r.qty).toFixed(1) }}</td>
                 </tr>
               </tbody>
             </table>

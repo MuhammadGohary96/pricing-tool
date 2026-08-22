@@ -86,7 +86,7 @@
                 <tr>
                   <th class="text-left px-4 py-2.5 text-micro font-semibold text-grey-500 uppercase tracking-wide border-b border-r border-grey-200 bg-grey-50"
                       style="position: sticky; top: 0; left: 0; z-index: 40; min-width: 156px; width: 156px;">Fulfillment Point</th>
-                  <th class="text-right px-4 py-2.5 text-micro font-bold uppercase tracking-wide border-b border-grey-200 bg-brand-lightest text-brand-dark"
+                  <th class="text-center px-4 py-2.5 text-micro font-bold uppercase tracking-wide border-b border-grey-200 bg-brand-lightest text-brand-dark"
                       style="position: sticky; top: 0; z-index: 30; min-width: 104px; border-right: 2px solid #E5E7EB;">BF Price</th>
                   <th v-for="comp in data.competitors" :key="comp.competitor_name"
                       class="text-right px-4 py-2 border-b border-r border-grey-200"
@@ -106,7 +106,7 @@
                     <div class="text-body font-semibold text-grey-900 whitespace-nowrap">{{ row.fp_name }}</div>
                   </th>
                   <!-- Our price -->
-                  <td class="text-right px-4 py-2.5 border-b border-grey-100" style="border-right: 2px solid #E5E7EB; background: #FCFAFC;">
+                  <td class="text-center px-4 py-2.5 border-b border-grey-100" style="border-right: 2px solid #E5E7EB; background: #FCFAFC;">
                     <span class="font-mono text-body font-semibold text-grey-900">{{ fmt(row.bf_sale_price) }}</span>
                   </td>
                   <!-- Competitor cells -->

@@ -62,7 +62,7 @@
                    class="text-caption text-grey-400 truncate max-w-[220px]"
                    :title="row.mapped_bf_sub_categories_all">also: {{ row.mapped_bf_sub_categories_all }}</div>
             </td>
-            <td class="px-4 py-3 text-right">
+            <td class="px-4 py-3 text-center">
               <span v-if="row.mapped_pct_of_comp_category != null"
                     class="text-caption font-mono px-1.5 py-0.5 rounded"
                     :class="confClass(row.mapped_pct_of_comp_category, row.bridge_level)">
@@ -77,7 +77,7 @@
                 {{ row.is_shared_brand ? 'We carry this brand' : 'New brand' }}
               </span>
             </td>
-            <td class="px-4 py-3 text-right text-caption font-mono text-grey-500">{{ row.comp_last_seen || '—' }}</td>
+            <td class="px-4 py-3 text-center text-caption font-mono text-grey-500">{{ row.comp_last_seen || '—' }}</td>
           </tr>
         </tbody>
       </table>
@@ -161,11 +161,11 @@
             <td class="px-4 py-3">
               <span class="px-2 py-0.5 rounded-md text-caption font-semibold" :class="stateStyle(row)">{{ stateLabel(row) }}</span>
             </td>
-            <td class="px-4 py-3 text-right text-body font-mono text-grey-600">
+            <td class="px-4 py-3 text-center text-body font-mono text-grey-600">
               {{ row.best_similarity != null ? `${Math.round(row.best_similarity * 100)}%` : '—' }}
             </td>
-            <td class="px-4 py-3 text-right text-body font-mono text-grey-700">{{ money(row.bf_sale_price) }}</td>
-            <td class="px-4 py-3 text-right text-body font-mono text-grey-700">{{ money(row.comp_sale_price) }}</td>
+            <td class="px-4 py-3 text-center text-body font-mono text-grey-700">{{ money(row.bf_sale_price) }}</td>
+            <td class="px-4 py-3 text-center text-body font-mono text-grey-700">{{ money(row.comp_sale_price) }}</td>
             <td class="px-4 py-3 text-center">
               <span v-if="row.sale_PI != null"
                     class="font-mono text-body font-bold px-1.5 py-0.5 rounded-md"
@@ -233,7 +233,7 @@ const SIDES = [
   { label: 'Our products', value: 'breadfast' },
 ]
 const TH_L = 'px-4 py-2 text-left text-caption font-semibold text-grey-500 uppercase tracking-wide'
-const TH_R = 'px-4 py-2 text-right text-caption font-semibold text-grey-500 uppercase tracking-wide'
+const TH_R = 'px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide'
 const TH_C = 'px-4 py-2 text-center text-caption font-semibold text-grey-500 uppercase tracking-wide'
 const PAGE_BTN = 'px-3 py-1 text-caption font-semibold rounded-lg border border-grey-200 text-grey-700 hover:bg-grey-50 disabled:opacity-40 disabled:cursor-not-allowed'
 

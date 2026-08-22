@@ -83,16 +83,16 @@
               <!-- No match -->
               <span v-else class="text-grey-300">—</span>
             </td>
-            <td class="px-3 py-2 text-body text-grey-700 text-right font-mono">{{ row.bf_sale_price?.toFixed(1) }}</td>
-            <td class="px-3 py-2 text-body text-grey-700 text-right font-mono">{{ row.competitor_sale_price?.toFixed(1) ?? '—' }}</td>
+            <td class="px-3 py-2 text-body text-grey-700 text-center font-mono">{{ row.bf_sale_price?.toFixed(1) }}</td>
+            <td class="px-3 py-2 text-body text-grey-700 text-center font-mono">{{ row.competitor_sale_price?.toFixed(1) ?? '—' }}</td>
             <!-- Stale — color-coded -->
-            <td class="px-3 py-2 text-body text-right font-mono">
+            <td class="px-3 py-2 text-body text-center font-mono">
               <span v-if="row.days_since_update != null" :class="staleClass(row.days_since_update)">
                 {{ row.days_since_update }}d
               </span>
               <span v-else class="text-grey-300">—</span>
             </td>
-            <td class="px-3 py-2 text-body text-grey-700 text-right font-mono">{{ formatRevenue(row.total_revenue) }}</td>
+            <td class="px-3 py-2 text-body text-grey-700 text-center font-mono">{{ formatRevenue(row.total_revenue) }}</td>
             <td class="px-2 py-1.5 text-center">
               <button
                 @click.stop="router.push({ path: '/commercial', query: { search: row.product_name } })"
