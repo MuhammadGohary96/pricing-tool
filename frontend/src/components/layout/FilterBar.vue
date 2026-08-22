@@ -8,13 +8,16 @@
       <ChevronDown class="w-3.5 h-3.5 transition-transform" :class="expanded ? 'rotate-180' : ''" />
     </button>
 
-    <div :class="['flex items-center gap-3 flex-wrap', expanded ? '' : 'hidden lg:flex']">
-      <div class="flex items-center gap-1.5 text-subheading text-grey-500 font-semibold">
-        <FilterIcon class="w-4 h-4" />
-        Filters
-      </div>
+    <!-- Three zones, because these controls do not do the same KIND of thing.
+         SCOPE changes what every number MEANS (which vertical, whether our own
+         label counts, which brands are comparable); NARROW only filters rows.
+         Thirteen controls in one wrapping row hid that distinction. -->
+    <div :class="['space-y-2.5', expanded ? '' : 'hidden lg:block']">
 
-      <div class="h-5 w-px bg-grey-200"></div>
+      <div class="flex items-center gap-3 flex-wrap">
+        <span :class="ZONE" title="These change what the numbers MEAN, not just which rows are counted.">
+          <FilterIcon class="w-3.5 h-3.5" /> Scope
+        </span>
 
       <!-- Vertical (single-select toggle) -->
       <div class="inline-flex items-center gap-1.5">
@@ -35,7 +38,7 @@
            brands they actually stock, how are we doing", which is a different
            question from the raw mapping rate. -->
       <div class="inline-flex items-center gap-1.5">
-        <span class="text-body text-grey-500 font-medium">Brands</span>
+        <span class="text-body text-grey-500 font-medium whitespace-nowrap">Brand scope</span>
         <div class="inline-flex items-center rounded-lg border border-grey-200 overflow-hidden">
           <button
             v-for="opt in brandScopeOptions"
@@ -49,7 +52,30 @@
         </div>
       </div>
 
-      <div class="h-5 w-px bg-grey-200"></div>
+      <!-- Private label — a segmented control like Vertical and Brands, rather
+           than a checkbox. A checkbox can only say include/exclude; the third
+           state, our own label ON ITS OWN, was unreachable and is the one that
+           answers "how does our own range compare". -->
+      <div class="flex items-center gap-1.5">
+        <span class="text-body text-grey-500 whitespace-nowrap">Private label</span>
+        <div class="inline-flex rounded-lg border border-grey-200 overflow-hidden text-caption font-medium">
+          <button
+            v-for="opt in privateLabelOptions"
+            :key="opt.value"
+            type="button"
+            :title="opt.title"
+            class="px-2.5 py-1.5 text-body font-medium transition-colors border-r border-grey-200 last:border-r-0"
+            :class="privateLabelState === opt.value ? 'bg-brand-primary text-white' : 'bg-white text-grey-600 hover:bg-grey-50'"
+            @click="setPrivateLabel(opt.value)"
+          >{{ opt.label }}</button>
+        </div>
+      </div>
+      </div>
+
+      <div class="flex items-center gap-3 flex-wrap border-t border-grey-100 pt-2.5">
+        <span :class="ZONE" title="These filter which rows are counted. They change no definition.">
+          <Layers class="w-3.5 h-3.5" /> Narrow
+        </span>
 
       <MultiSelect
         :model-value="pending.mainCategory"
@@ -96,26 +122,12 @@
         @update:model-value="pending.fpNames = $event"
       />
 
-      <div class="h-5 w-px bg-grey-200"></div>
-
-      <!-- Private label — a segmented control like Vertical and Brands, rather
-           than a checkbox. A checkbox can only say include/exclude; the third
-           state, our own label ON ITS OWN, was unreachable and is the one that
-           answers "how does our own range compare". -->
-      <div class="flex items-center gap-1.5">
-        <span class="text-body text-grey-500 whitespace-nowrap">Private label</span>
-        <div class="inline-flex rounded-lg border border-grey-200 overflow-hidden text-caption font-medium">
-          <button
-            v-for="opt in privateLabelOptions"
-            :key="opt.value"
-            type="button"
-            :title="opt.title"
-            class="px-2.5 py-1.5 text-body font-medium transition-colors border-r border-grey-200 last:border-r-0"
-            :class="privateLabelState === opt.value ? 'bg-brand-primary text-white' : 'bg-white text-grey-600 hover:bg-grey-50'"
-            @click="setPrivateLabel(opt.value)"
-          >{{ opt.label }}</button>
-        </div>
       </div>
+
+      <div class="flex items-center gap-3 flex-wrap border-t border-grey-100 pt-2.5">
+        <span :class="ZONE" title="How missing competitor prices are treated when the blend is computed.">
+          <Calculator class="w-3.5 h-3.5" /> Basis
+        </span>
 
       <!-- Price-fallback mode (staged like every other control until Apply). -->
       <button
@@ -134,20 +146,28 @@
         {{ pending.priceFallback ? 'Estimating prices' : 'Estimate missing prices' }}
       </button>
 
-      <div class="h-5 w-px bg-grey-200"></div>
-
-      <!-- Apply: commits the staged selection (single refetch + URL update). -->
-      <button
-        type="button"
-        :disabled="!isDirty"
-        class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-body font-bold transition-colors active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
-        :class="isDirty ? 'bg-brand-primary text-white hover:bg-brand-dark' : 'bg-grey-100 text-grey-400'"
-        @click="applyFilters"
-      >
-        <Check class="w-3.5 h-3.5" />
-        Apply
-        <span v-if="isDirty && pendingChanges > 0" class="text-micro px-1.5 py-px rounded-full bg-white/25 font-bold">{{ pendingChanges }}</span>
-      </button>
+      <div class="ml-auto flex items-center gap-2">
+        <!-- ml-auto pins Apply to the right end of its row: it used to sit inline
+             with twelve other controls, so every reflow moved the primary action. -->
+        <span v-if="isDirty" class="hidden sm:inline text-caption text-amber-700 font-semibold whitespace-nowrap">
+          {{ pendingChanges }} unapplied
+        </span>
+        <button
+          type="button"
+          :disabled="!isDirty"
+          class="inline-flex items-center gap-2 px-5 py-2 rounded-lg text-body font-bold whitespace-nowrap transition-[background-color,box-shadow,transform] duration-200 ease-premium active:scale-[0.97] disabled:cursor-not-allowed"
+          :class="isDirty
+            ? 'bg-brand-primary text-white shadow-lg shadow-brand-primary/30 ring-2 ring-brand-primary/25 hover:bg-brand-dark'
+            : 'bg-grey-50 text-grey-400 ring-1 ring-grey-200'"
+          :title="isDirty ? `Apply ${pendingChanges} pending change(s)` : 'Filters are up to date'"
+          @click="applyFilters"
+        >
+          <Check class="w-4 h-4" />
+          {{ isDirty ? 'Apply' : 'Applied' }}
+          <span v-if="isDirty && pendingChanges > 0"
+                class="text-caption px-1.5 py-px rounded-full bg-white/25 font-bold tabular-nums">{{ pendingChanges }}</span>
+        </button>
+      </div>
 
       <Transition name="filter">
         <div v-if="loading" class="flex items-center gap-1.5 text-caption text-brand-primary font-medium">
@@ -155,6 +175,7 @@
           Updating...
         </div>
       </Transition>
+      </div>
 
       <SavedViews />
 
@@ -233,7 +254,8 @@
 
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
-import { Filter as FilterIcon, Loader2, Link as LinkIcon, ChevronDown, X, Check } from 'lucide-vue-next'
+import { Filter as FilterIcon, Loader2, Link as LinkIcon, ChevronDown, X, Check,
+         Layers, Calculator } from 'lucide-vue-next'
 import MultiSelect from '../shared/MultiSelect.vue'
 import SavedViews from './SavedViews.vue'
 import CompetitorLogo from '../shared/CompetitorLogo.vue'
@@ -253,6 +275,10 @@ defineProps({
 const filters = useFiltersStore()
 const linkCopied = ref(false)
 const expanded = ref(false)
+
+const ZONE = 'inline-flex items-center gap-1 text-micro font-bold uppercase tracking-wide '
+           + 'text-grey-400 w-[70px] shrink-0 cursor-help'
+
 
 // Widening left to right. 'shared' keeps its meaning from before this control
 // grew a third state, so saved URLs and presets do not silently change scope.
