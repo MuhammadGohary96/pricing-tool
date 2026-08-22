@@ -327,7 +327,10 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
 
         _report_progress(f"Loaded {len(df):,} rows, processing...", len(df), max(len(df), 1))
 
-        # Drop unused columns to save memory
+        # A safety net, not a saving: FPS_QUERY does not select these, so they
+        # never arrive. They stay IN the BigQuery table deliberately -- the subcat
+        # scores pair with the global ones, and product_key/ranks are identifiers
+        # other consumers may want -- so this guards a future `SELECT *`.
         DROP_COLS = [
             "norm_revenue_subcat", "norm_quantity_subcat",
             "score_subcat_100rev", "score_subcat_70rev",
