@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -60,7 +60,7 @@ def write_parquet(df: pd.DataFrame, path: Path) -> None:
     meta = {
         "row_count": len(df),
         "columns": list(df.columns),
-        "written_at": datetime.now().isoformat(),
+        "written_at": datetime.now(timezone.utc).isoformat(),
     }
     meta_path = path.with_suffix(".json")
     meta_path.write_text(json.dumps(meta, indent=2))
@@ -158,7 +158,10 @@ def data_age_hours(path: Path) -> float | None:
     if meta and meta.get("written_at"):
         try:
             written = datetime.fromisoformat(meta["written_at"])
-            return (datetime.now() - written).total_seconds() / 3600
+            if written.tzinfo is None:
+                # Legacy sidecars carry naive timestamps written in UTC.
+                written = written.replace(tzinfo=timezone.utc)
+            return (datetime.now(timezone.utc) - written).total_seconds() / 3600
         except Exception:
             pass
     return (time.time() - path.stat().st_mtime) / 3600

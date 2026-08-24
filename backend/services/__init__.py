@@ -133,7 +133,7 @@ def save_parquet_cache(service) -> None:
     artifact DuckDB queries) and a competitor-grain Parquet (derived `*_date`
     columns dropped — they're rebuilt on load).
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
     from pathlib import Path
     from backend.services import parquet_cache as pc
 
@@ -153,7 +153,7 @@ def save_parquet_cache(service) -> None:
     # tables so a competitor-table-only change is still captured.
     latest = latest_bq_modified(getattr(service, "_client", None))
     bq_modified_iso = latest.isoformat() if latest is not None else None
-    pc.write_sync_state(fp_path.parent, datetime.now().isoformat(), bq_modified_iso)
+    pc.write_sync_state(fp_path.parent, datetime.now(timezone.utc).isoformat(), bq_modified_iso)
 
 
 def create_data_service_from_cache(cached_data: dict):

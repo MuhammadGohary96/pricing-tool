@@ -50,6 +50,10 @@
             <Loader2 class="w-3 h-3 animate-spin shrink-0 text-brand-light" />
             <span>Syncing{{ refreshPercent != null ? ` ${refreshPercent}%` : '…' }}</span>
           </template>
+          <template v-else-if="refreshError">
+            <span class="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0"></span>
+            <span>{{ syncLabel }}, refresh failing</span>
+          </template>
           <template v-else>
             <span class="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0"></span>
             {{ syncLabel }}
@@ -96,6 +100,7 @@ import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { Loader2, RefreshCw, LogOut, BookOpen } from 'lucide-vue-next'
 import { useAuthStore } from '../../stores/auth'
 import { dataApi } from '../../api/client'
+import { parseTs, fmtCairo } from '../../utils/time'
 
 const emit = defineEmits(['resync', 'data-updated'])
 
@@ -108,6 +113,8 @@ const lastCheckedAt = ref(null)    // badge counts from this (pull OR no-change 
 const dataSyncedAt = ref(null)     // when data actually changed (tooltip + refetch trigger)
 const refreshing = ref(false)
 const refreshPercent = ref(null)
+const refreshError = ref(null)     // last pull failed (cleared by the next attempt)
+const refreshErrorAt = ref(null)
 let clockTimer = null
 let pollTimer = null
 let prevDataSyncedMs = null
@@ -115,10 +122,12 @@ let prevDataSyncedMs = null
 async function pollDataStatus() {
   try {
     const { data } = await dataApi.getStatus()
-    lastCheckedAt.value = data.last_checked_at ? new Date(data.last_checked_at) : null
-    dataSyncedAt.value = data.data_synced_at ? new Date(data.data_synced_at) : null
+    lastCheckedAt.value = parseTs(data.last_checked_at)
+    dataSyncedAt.value = parseTs(data.data_synced_at)
     refreshing.value = !!data.refreshing
     refreshPercent.value = data.refresh_percent ?? null
+    refreshError.value = data.refresh_error ?? null
+    refreshErrorAt.value = parseTs(data.refresh_error_at)
     // Refetch the visible view ONLY when the data itself changed (a pull
     // landed) — never on a no-change check (which only advances last_checked).
     const dMs = dataSyncedAt.value ? dataSyncedAt.value.getTime() : null
@@ -154,8 +163,12 @@ const syncLabel = computed(() => {
 const syncTitle = computed(() => {
   if (refreshing.value) return 'Refreshing data from BigQuery…'
   const parts = []
-  if (lastCheckedAt.value) parts.push(`Last checked: ${lastCheckedAt.value.toLocaleString()}`)
-  if (dataSyncedAt.value) parts.push(`Data last changed: ${dataSyncedAt.value.toLocaleString()}`)
+  if (refreshError.value) {
+    const since = refreshErrorAt.value ? ` since ${fmtCairo(refreshErrorAt.value)}` : ''
+    parts.push(`Background refresh failing${since}: ${refreshError.value.slice(0, 160)}`)
+  }
+  if (lastCheckedAt.value) parts.push(`Last checked: ${fmtCairo(lastCheckedAt.value)}`)
+  if (dataSyncedAt.value) parts.push(`Data last changed: ${fmtCairo(dataSyncedAt.value)}`)
   return parts.length ? parts.join(' · ') : 'Data sync status'
 })
 

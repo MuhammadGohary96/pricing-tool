@@ -120,7 +120,7 @@ async def lifespan(app: FastAPI):
         competitor) to our baseline and pull ONLY when either changed. On
         no-change, just record that we verified (last_checked_at). Never
         downloads unless something changed. Returns an outcome dict."""
-        from datetime import datetime
+        from datetime import datetime, timezone
         loader = app.state.background_loader
         if loader.is_loading():
             return {"ok": True, "status": "refreshing", "changed": None}
@@ -148,7 +148,7 @@ async def lifespan(app: FastAPI):
             _start_background_refresh()
             return {"ok": True, "status": "refreshing", "changed": True}
         # No change — record the verification (advances last_checked_at only).
-        pc.touch_last_checked(fp_path.parent, datetime.now().isoformat())
+        pc.touch_last_checked(fp_path.parent, datetime.now(timezone.utc).isoformat())
         logger.info("[Check] BQ table unchanged → data confirmed current")
         return {"ok": True, "status": "up_to_date", "changed": False}
 
@@ -327,7 +327,7 @@ def get_data_status(request: Request):
     - data_synced_at:  when the data itself was last pulled/changed (tooltip;
       also the trigger the UI uses to refetch the view in place).
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
     from backend.services import parquet_cache as pc
 
     fp_path = Path(settings.DUCKDB_PARQUET_PATH)
@@ -341,13 +341,22 @@ def get_data_status(request: Request):
     age_minutes = None
     if last_checked_at:
         try:
-            age_minutes = round((datetime.now() - datetime.fromisoformat(last_checked_at)).total_seconds() / 60, 1)
+            ts = datetime.fromisoformat(last_checked_at)
+            if ts.tzinfo is None:
+                # Legacy sync states carry naive timestamps written in UTC.
+                ts = ts.replace(tzinfo=timezone.utc)
+            age_minutes = round((datetime.now(timezone.utc) - ts).total_seconds() / 60, 1)
         except Exception:
             age_minutes = None
 
     loader = getattr(request.app.state, "background_loader", None)
     progress = loader.get_progress() if loader else {}
     refreshing = bool(progress.get("loading"))
+    # last_error reflects the most recent completed attempt (the loader resets
+    # it at the start of each run), so a stale error can never outlive a
+    # later successful pull. Without this the UI has no way to tell "fresh"
+    # from "silently failing every hour" — the badge just ages.
+    refresh_error = None if refreshing else progress.get("last_error")
     return {
         "last_checked_at": last_checked_at,
         "data_synced_at": data_synced_at,
@@ -355,6 +364,8 @@ def get_data_status(request: Request):
         "refreshing": refreshing,
         "refresh_stage": progress.get("stage") if refreshing else None,
         "refresh_percent": progress.get("percent") if refreshing else None,
+        "refresh_error": refresh_error,
+        "refresh_error_at": progress.get("started_at") if refresh_error else None,
         "auto_refresh_enabled": settings.AUTO_REFRESH_ENABLED,
         "refresh_interval_seconds": settings.REFRESH_INTERVAL_SECONDS,
     }
