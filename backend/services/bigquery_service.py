@@ -313,12 +313,20 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             # loop has started `rows`, any retry must ask the (already
             # completed) job for a fresh iterator, or it raises
             # "Iterator has already started".
-            arrow_tbl = pa.Table.from_batches(batches) if batches else job.result().to_arrow()
+            # create_bqstorage_client=False: to_arrow() defaults to True, and
+            # the most likely reason we are here is that the Storage API just
+            # failed (e.g. missing bigquery.readsessions.create) — the
+            # fallback must be pure REST or it re-raises the same error.
+            arrow_tbl = (
+                pa.Table.from_batches(batches)
+                if batches
+                else job.result().to_arrow(create_bqstorage_client=False)
+            )
             del batches
         except Exception as exc:
             print(f"[BigQuery] Streaming download failed ({exc}); falling back to bulk to_arrow()")
             _report_progress("Falling back to bulk download...", 0, total_rows)
-            arrow_tbl = job.result().to_arrow()
+            arrow_tbl = job.result().to_arrow(create_bqstorage_client=False)
 
         # date_as_object=False → DATE columns become datetime64[ns] (the
         # vectorized derivations below depend on this).
@@ -1818,7 +1826,9 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             print(f"[BigQuery] Storage API unavailable ({exc}); using REST fallback")
             # Fresh iterator from the completed job — `rows` may already be
             # partially consumed, and a started RowIterator cannot be re-read.
-            arrow_tbl = job.result().to_arrow()
+            # create_bqstorage_client=False forces pure REST; the default
+            # (True) would re-attempt the Storage API that just failed.
+            arrow_tbl = job.result().to_arrow(create_bqstorage_client=False)
         df = arrow_tbl.to_pandas(date_as_object=True)
         del arrow_tbl
         print(f"[BigQuery] Competitor products: {len(df)} rows in {time.time() - t0:.1f}s")
