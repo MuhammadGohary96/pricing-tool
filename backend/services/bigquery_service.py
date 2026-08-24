@@ -309,12 +309,16 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 _report_progress(
                     f"Downloading {seen:,} / {total_rows:,} rows...", seen, total_rows or seen
                 )
-            arrow_tbl = pa.Table.from_batches(batches) if batches else rows.to_arrow()
+            # A RowIterator can only be consumed once — after the streaming
+            # loop has started `rows`, any retry must ask the (already
+            # completed) job for a fresh iterator, or it raises
+            # "Iterator has already started".
+            arrow_tbl = pa.Table.from_batches(batches) if batches else job.result().to_arrow()
             del batches
         except Exception as exc:
             print(f"[BigQuery] Streaming download failed ({exc}); falling back to bulk to_arrow()")
             _report_progress("Falling back to bulk download...", 0, total_rows)
-            arrow_tbl = rows.to_arrow()
+            arrow_tbl = job.result().to_arrow()
 
         # date_as_object=False → DATE columns become datetime64[ns] (the
         # vectorized derivations below depend on this).
@@ -1812,7 +1816,9 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             arrow_tbl = rows.to_arrow(create_bqstorage_client=True)
         except Exception as exc:
             print(f"[BigQuery] Storage API unavailable ({exc}); using REST fallback")
-            arrow_tbl = rows.to_arrow()
+            # Fresh iterator from the completed job — `rows` may already be
+            # partially consumed, and a started RowIterator cannot be re-read.
+            arrow_tbl = job.result().to_arrow()
         df = arrow_tbl.to_pandas(date_as_object=True)
         del arrow_tbl
         print(f"[BigQuery] Competitor products: {len(df)} rows in {time.time() - t0:.1f}s")

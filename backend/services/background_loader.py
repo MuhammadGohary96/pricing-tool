@@ -9,7 +9,7 @@ import threading
 import time
 import logging
 from typing import Callable, Optional, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ class BackgroundDataLoader:
             "progress": 0,
             "total": 0,
             "percent": 0,
-            "started_at": datetime.now().isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
             "estimated_completion": None,
         }
 
@@ -91,7 +91,7 @@ class BackgroundDataLoader:
                     "total": 1,
                     "percent": 100,
                     "started_at": self.progress["started_at"],
-                    "estimated_completion": datetime.now().isoformat(),
+                    "estimated_completion": datetime.now(timezone.utc).isoformat(),
                 }
 
                 logger.info("[Background] Data service updated successfully")
@@ -152,12 +152,14 @@ class BackgroundDataLoader:
         if progress > 0 and total > 0 and self.progress.get("started_at"):
             try:
                 started = datetime.fromisoformat(self.progress["started_at"])
-                elapsed = (datetime.now() - started).total_seconds()
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                elapsed = (datetime.now(timezone.utc) - started).total_seconds()
                 rate = progress / elapsed  # rows per second
                 remaining = total - progress
                 eta_seconds = remaining / rate if rate > 0 else 0
-                estimated_completion = (datetime.now().timestamp() + eta_seconds)
-                estimated_completion = datetime.fromtimestamp(estimated_completion).isoformat()
+                estimated_completion = (datetime.now(timezone.utc).timestamp() + eta_seconds)
+                estimated_completion = datetime.fromtimestamp(estimated_completion, tz=timezone.utc).isoformat()
             except:
                 pass
 

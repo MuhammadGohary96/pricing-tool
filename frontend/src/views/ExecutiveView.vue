@@ -218,6 +218,7 @@ import { useFiltersStore } from '../stores/filters'
 import { useExecutiveStore } from '../stores/executive'
 import { dataApi, executiveApi } from '../api/client'
 import { asDownload } from '../utils/workbook'
+import { parseTs, fmtCairo } from '../utils/time'
 import KpiCard from '../components/layout/KpiCard.vue'
 import FilterBar from '../components/layout/FilterBar.vue'
 import CompetitorToggle from '../components/shared/CompetitorToggle.vue'
@@ -258,8 +259,8 @@ let pollTimer = null
 async function refreshSyncTime() {
   try {
     const { data } = await dataApi.getStatus()
-    dataSyncedAt.value = data.data_synced_at ? new Date(data.data_synced_at) : null
-    lastCheckedAt.value = data.last_checked_at ? new Date(data.last_checked_at) : null
+    dataSyncedAt.value = parseTs(data.data_synced_at)
+    lastCheckedAt.value = parseTs(data.last_checked_at)
   } catch { /* non-critical — badge falls back to a generic label */ }
 }
 
@@ -280,8 +281,8 @@ const syncLabel = computed(() =>
 
 const syncTitle = computed(() => {
   const parts = []
-  if (dataSyncedAt.value) parts.push(`Data last synced from BigQuery: ${dataSyncedAt.value.toLocaleString()}`)
-  if (lastCheckedAt.value) parts.push(`Freshness last checked: ${lastCheckedAt.value.toLocaleString()}`)
+  if (dataSyncedAt.value) parts.push(`Data last synced from BigQuery: ${fmtCairo(dataSyncedAt.value)}`)
+  if (lastCheckedAt.value) parts.push(`Freshness last checked: ${fmtCairo(lastCheckedAt.value)}`)
   return parts.length ? parts.join(' · ') : 'Data sync status'
 })
 
