@@ -6,27 +6,37 @@
 -- a classification tree (Mapped × PL × Potential Match).
 --
 -- Mapping vs Pricing separation:
---   is_mapped → product-level: this BF product is linked to a competitor
---               product in at least one FP. Carries to every FP.
---   has_PI    → fp-level: this FP has an actual price observation for the
---               (product, competitor) pair, so sale_PI is computable.
+--   is_mapped → product-level, from dim_competitor_products.mapped_bf_product_id
+--               (v2 rows; the master-data truth — NULL means not mapped NOW).
+--               Never derived from price observations: mapped-with-no-price is
+--               still mapped; an unassigned pair stops being mapped that day.
+--   has_PI    → fp-level: this FP has a price observation, so sale_PI exists.
 --
--- Competitor scope: the seven benchmarked competitors (Amazon, Amazon Now,
--- Seoudi, Talabat, Noon Minutes, Rabbit, Carrefour).
--- FP scope: active FPs matching "<Area> FP #<number>" or named "*Sahel*",
--- and not in SLEEP.
--- (product, fp) pairs are only emitted when:
---   • Breadfast has a price record for the SKU in that FP, AND
---   • the SKU was live in the app in that FP in the last 7 days.
+-- Scope: 7 competitors (Amazon, Amazon Now, Seoudi, Talabat, Noon Minutes,
+-- Rabbit, Carrefour); active FPs ("<Area> FP #<n>" or *Sahel*, not SLEEP);
+-- (product, fp) pairs need a BF price AND app availability in the last 7 days.
 --
--- Output is a UNION of two row types, discriminated by `row_type`:
---   'breadfast'  → one row per (product, fp, competitor) from final_product_data,
---                  plus the gap-analysis columns (STEPS 15-20).
---   'competitor' → the national competitor-only catalogue: competitor products
---                  we do not carry. fp_id / fp_name are NULL and product_id is
---                  NULL, so these rows MUST NOT flow through the app's
---                  _BASE_CTE (which collapses on (product_id, competitor_id)).
--- Alternative roll-up: (fp, subcategory, competitor) via subcategory_summary.
+-- Output: two row types under `row_type` —
+--   'breadfast'  → one row per (product, fp, competitor) + gap columns.
+--   'competitor' → national competitor-only catalogue (fp/product NULL); must
+--                  NOT flow through the app's _BASE_CTE.
+--
+-- PIPELINE (one CTE per step)
+--   STEP 0a  competitor_registry        the 7 benchmarked competitors
+--   STEP 0a2 current_mapping            THE mapping truth (dim, v2, non-NULL)
+--   STEP 0b  fp_registry                active fulfillment points
+--   STEP 0c  fps_available_products     (product, fp) live in app ≤7d
+--   STEPS 1–5  scored_products          revenue/quantity metrics, tiers, scores
+--   STEPS 6–7  products_enriched_prices BF price per (product, fp) + gate
+--   STEP 8   competitor_clean           freshest fact row per pair×fp, gated
+--                                       to current mapping; per-FP sale_PI
+--   STEP 9   competitor_mapping         one counterpart per (product, comp)
+--   STEP 11  products_with_pi           assembly: products × competitors × fps
+--   STEP 12  rec_base → ai_match_candidates  matcher output, read once
+--   STEP 13  final_product_data         eligibility, action_type, classification
+--   STEPS 15–20 (NEW 1–7)               gap layer: brand overlap, category
+--                                       bridge, catalogue partition
+--   OUTPUT   breadfast rows UNION ALL competitor-only rows
 -- ═══════════════════════════════════════════════════════════════════════════
 CREATE OR REPLACE TABLE dbt_gohary.competitor_price_monitoring_fps AS (
 WITH
@@ -43,6 +53,29 @@ competitor_registry AS (
         competitor_name
     FROM `followbreadfast.l03_marts.dim_competitors`
     WHERE competitor_name IN ('Amazon', 'Amazon Now', 'Seoudi', 'Talabat', 'Noon Minutes', 'Rabbit', 'Carrefour')
+),
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- STEP 0a2 ▸ CURRENT MAPPING — THE ONE SOURCE OF "IS THIS PAIR MAPPED NOW"
+-- mapped_bf_product_id (NULL = not mapped today) is the master-data truth;
+-- the daily fact is history and spells "unmapped" as a hash-of-NULL key.
+-- Every mapping decision flows from HERE.
+-- ─────────────────────────────────────────────────────────────────────────────
+current_mapping AS (
+    SELECT
+        cp.competitor_id,
+        cp.competitor_product_key,
+        SAFE_CAST(cp.mapped_bf_product_id AS INT64) AS bf_product_id,
+        cp.competitor_product_id,
+        cp.product_name_en AS competitor_product_name
+    FROM `followbreadfast.l03_marts.dim_competitor_products` cp
+    INNER JOIN competitor_registry cr
+        ON cr.competitor_id = cp.competitor_id
+    WHERE cp.mapped_bf_product_id IS NOT NULL
+      -- v2 only: a mapping onto an uncrawled v1 row can never price — it
+      -- reads as unmapped and surfaces as re-mapping work.
+      AND cp.pricing_tool_version = 'v2'
 ),
 
 
@@ -207,92 +240,86 @@ scored_products AS (
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
--- STEPS 6–7 ▸ BREADFAST PRICE ENRICHMENT (PER FP) + ACTIVITY GATE  — UNCHANGED
--- Retained as the driver grid: establishes the (product, fp) universe that has
--- a BF price AND active assortment, so unmapped products still appear.
+-- STEPS 6–7 ▸ BREADFAST PRICES (PER FP) + ACTIVITY GATE — ONE PASS
+-- The driver grid: (product, fp) pairs with a BF price AND active assortment,
+-- so unmapped products still appear. Latest SCD row per pair (ROW_NUMBER, so
+-- one-row-per-pair is a guarantee, not luck).
 -- ═══════════════════════════════════════════════════════════════════════════
-
-
--- ─────────────────────────────────────────────────────────────────────────────
--- STEP 6 ▸ BREADFAST PRICES — LATEST SCD ROW PER (PRODUCT, FP)
--- ─────────────────────────────────────────────────────────────────────────────
-products_enriched_prices_1 AS (
+products_enriched_prices AS (
     SELECT
         s.*,
         p.fp_id,
         fr.fp_name,
-        p.applied_regular_price,
-        COALESCE(NULLIF(p.applied_sale_price, 0), p.applied_regular_price) AS applied_sale_price,
+        p.applied_regular_price AS bf_regular_price,
+        COALESCE(NULLIF(p.applied_sale_price, 0), p.applied_regular_price) AS bf_sale_price,
         CASE
             WHEN p.valid_to_ltz >= CURRENT_DATE() THEN CURRENT_DATE()
             ELSE DATE(p.valid_to_ltz)
-        END AS breadfast_last_updated_day
+        END AS breadfast_last_updated_day,
+        CASE
+            WHEN p.valid_to_ltz >= CURRENT_DATE() THEN CURRENT_DATE()
+            ELSE DATE(p.valid_to_ltz)
+        END >= CURRENT_DATE() - 7 AS is_recent_breadfast
     FROM scored_products s
     INNER JOIN `followbreadfast.l03_marts.dim_fp_product_price_logs_scd` p
         ON s.product_key = p.product_key
     INNER JOIN fp_registry fr
         ON p.fp_id = fr.fp_id
-    QUALIFY RANK() OVER (
+    INNER JOIN fps_available_products av
+        ON s.product_id = av.product_id
+        AND p.fp_id = av.fp_id
+    QUALIFY ROW_NUMBER() OVER (
         PARTITION BY p.product_key, p.fp_id
         ORDER BY p.valid_to_ltz DESC
     ) = 1
 ),
 
 
--- ─────────────────────────────────────────────────────────────────────────────
--- STEP 7 ▸ BREADFAST PRICES — COLLAPSE TIES + GATE ON SKU ACTIVITY
--- ─────────────────────────────────────────────────────────────────────────────
-products_enriched_prices_2 AS (
-    SELECT
-        s.* EXCEPT (applied_regular_price, applied_sale_price, breadfast_last_updated_day),
-        APPROX_TOP_COUNT(applied_regular_price, 1)[OFFSET(0)].value AS bf_regular_price,
-        APPROX_TOP_COUNT(applied_sale_price, 1)[OFFSET(0)].value AS bf_sale_price,
-        MAX(breadfast_last_updated_day) AS breadfast_last_updated_day,
-        MAX(breadfast_last_updated_day) >= CURRENT_DATE() - 7 AS is_recent_breadfast
-    FROM products_enriched_prices_1 s
-    INNER JOIN fps_available_products av
-        ON s.product_id = av.product_id
-        AND s.fp_id = av.fp_id
-    GROUP BY ALL
-),
-
-
 -- ═══════════════════════════════════════════════════════════════════════════
--- STEPS 8–10 ▸ COMPETITOR PRICE PIPELINE — RE-SOURCED ONTO THE DAILY FACT
---   Step 8  — latest daily-comparison row per (competitor, BF product, fp).
---   Step 9  — thin enrichment (names, freshness); no location collapse needed.
---   Step 9b — product-level mapping (collapses across FPs).
---   Step 10 — sale_PI = bf_eod_sale_price ÷ last_seen_sale_price (matches metric).
+-- STEPS 8–9 ▸ COMPETITOR PRICE PIPELINE — RE-SOURCED ONTO THE DAILY FACT
+--   Step 8 — latest daily-comparison row per (competitor, BF product, fp),
+--            gated to the current mapping, with per-FP sale_PI computed in
+--            place (= the fp_sale_price_index metric's row-level sale_pi).
+--   Step 9 — product-level mapping from current_mapping (FP-agnostic).
 -- ═══════════════════════════════════════════════════════════════════════════
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- STEP 8 ▸ COMPETITOR PRICES — LATEST DAILY OBSERVATION (PER FP)
--- One row per (competitor, mapped BF product, fp): the most recent comparison
--- day. The marts table already prefers the cleaned/latest crawl and is
--- location-collapsed, so the v2/valid_to/location logic is gone. Keys are
--- bridged to ids via the dims (competitor_key→id, product_key→id).
+-- Freshest comparison day per (competitor, mapped BF product, fp), gated to
+-- the CURRENT mapping. Counterpart id/name come from current_mapping (the
+-- same dim rows the gate reads). MIN/MAX are point values — the daily fact
+-- carries no within-fp location spread.
 -- ─────────────────────────────────────────────────────────────────────────────
-competitor_raw AS (
+competitor_clean AS (
     SELECT
         cr.competitor_id,
         cr.competitor_name,
         fr.fp_id,
         fr.fp_name,
-        dcp.competitor_product_id,
-        dcp.product_name_en AS competitor_product_name,
+        cm.competitor_product_id,
+        cm.competitor_product_name,
         h.competitor_product_key,
         dp.product_id AS bf_product_id,
 
         -- Prices straight from the metric's source table
-        NULLIF(h.last_seen_sale_price, 0)    AS sale_price,        -- competitor sale (carry-forward, >0)
-        NULLIF(h.last_seen_regular_price, 0) AS regular_price,
-        NULLIF(h.bf_eod_sale_price, 0)       AS bf_sale_price,     -- Breadfast end-of-day sale
-        NULLIF(h.bf_eod_regular_price, 0)    AS bf_regular_price,
+        NULLIF(h.last_seen_sale_price, 0)    AS competitor_sale_price,   -- carry-forward, >0
+        NULLIF(h.last_seen_regular_price, 0) AS competitor_regular_price,
+        NULLIF(h.bf_eod_sale_price, 0)       AS breadfast_sale_price,    -- BF end-of-day
+        NULLIF(h.bf_eod_regular_price, 0)    AS breadfast_regular_price,
+        -- No location spread in the daily fact → point value
+        NULLIF(h.last_seen_sale_price, 0)    AS min_competitor_sale_price,
+        NULLIF(h.last_seen_sale_price, 0)    AS max_competitor_sale_price,
 
-        -- Freshness == the metric's recently_crawled gate
-        h.days_since_crawl,
-        (h.days_since_crawl <= 7) AS is_recent_competitor,
+        -- sale_PI = bf_eod_sale_price / last_seen_sale_price → identical to the
+        -- fp_sale_price_index metric's row-level sale_pi.
+        SAFE_DIVIDE(NULLIF(h.bf_eod_sale_price, 0),
+                    NULLIF(h.last_seen_sale_price, 0)) AS sale_PI,
+
+        -- Freshness anchored to the BUILD date, not the row's own day — a pair
+        -- the fact stops emitting decays to stale instead of freezing "fresh".
+        (DATE_SUB(h.date_day, INTERVAL h.days_since_crawl DAY)
+            >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)) AS is_recent_competitor,
 
         -- Actual last crawl date (date_day is the comparison day)
         DATE_SUB(h.date_day, INTERVAL h.days_since_crawl DAY) AS date_day
@@ -303,89 +330,54 @@ competitor_raw AS (
         ON h.fp_id = fr.fp_id
     LEFT JOIN `followbreadfast.l03_marts.dim_products` dp
         ON h.mapped_product_key = dp.product_key
-    LEFT JOIN `followbreadfast.l03_marts.dim_competitor_products` dcp
-        ON h.competitor_product_key = dcp.competitor_product_key
-        AND dcp.competitor_id = cr.competitor_id
-    WHERE h.mapped_product_key IS NOT NULL
+    -- The current-mapping gate: keep a price row only when the fact's pair IS
+    -- today's mapping. History rows for since-unassigned pairs (and the
+    -- hash-of-NULL rows) die here.
+    INNER JOIN current_mapping cm
+        ON  cm.competitor_id = cr.competitor_id
+        AND cm.competitor_product_key = h.competitor_product_key
+        AND cm.bf_product_id = dp.product_id
+    -- The fact is LOCATION grain; this ORDER BY is the location collapse:
+    -- freshest crawl wins, equal freshness → LOWEST real price (house tie
+    -- rule; guards one-off promos and bad scrapes).
     QUALIFY ROW_NUMBER() OVER (
         PARTITION BY cr.competitor_id, h.mapped_product_key, h.fp_id
         ORDER BY
-            h.date_day DESC,            -- freshest comparison day
-            h.days_since_crawl ASC,     -- freshest crawl
-            h.competitor_product_key    -- deterministic tiebreak
+            h.date_day DESC,                              -- freshest comparison day
+            h.days_since_crawl ASC,                       -- freshest crawl
+            NULLIF(h.last_seen_sale_price, 0) ASC NULLS LAST,  -- ties → lowest real price
+            h.competitor_product_key                      -- final determinism
     ) = 1
 ),
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- STEP 9 ▸ COMPETITOR PRICES — ENRICH (no location collapse; table is already
--- one price per fp). MIN/MAX retained as the point value for schema parity —
--- within-fp location spread is not available from the daily comparison table.
--- ─────────────────────────────────────────────────────────────────────────────
-competitor_clean AS (
-    SELECT
-        competitor_id,
-        competitor_name,
-        fp_id,
-        fp_name,
-        competitor_product_id,
-        competitor_product_name,
-        competitor_product_key,
-        bf_product_id,
-
-        is_recent_competitor,
-        date_day,
-
-        regular_price AS competitor_regular_price,
-        sale_price    AS competitor_sale_price,
-        bf_regular_price AS breadfast_regular_price,
-        bf_sale_price    AS breadfast_sale_price,
-
-        -- No location spread in the daily fact → point value
-        sale_price AS min_competitor_sale_price,
-        sale_price AS max_competitor_sale_price
-    FROM competitor_raw
-),
-
-
--- ─────────────────────────────────────────────────────────────────────────────
--- STEP 9b ▸ COMPETITOR MAPPING (PRODUCT-LEVEL, FP-AGNOSTIC)  — UNCHANGED LOGIC
--- A BF product is "mapped" to a competitor if any FP has an observation linking
--- them. Most recent observation wins for link details.
+-- STEP 9 ▸ COMPETITOR MAPPING (PRODUCT-LEVEL, FP-AGNOSTIC) — DIM-ANCHORED
+-- The mapping IS current_mapping. Several of theirs → one of ours: the
+-- displayed counterpart is the most recently priced one.
 -- ─────────────────────────────────────────────────────────────────────────────
 competitor_mapping AS (
     SELECT
-        bf_product_id,
-        competitor_id,
-        competitor_name,
-        ANY_VALUE(competitor_product_id HAVING MAX date_day) AS competitor_product_id,
-        ANY_VALUE(competitor_product_key HAVING MAX date_day) AS competitor_product_key,
-        ANY_VALUE(competitor_product_name HAVING MAX date_day) AS competitor_product_name
-    FROM competitor_clean
-    GROUP BY bf_product_id, competitor_id, competitor_name
-),
-
-
--- ─────────────────────────────────────────────────────────────────────────────
--- STEP 10 ▸ PRICE INDEX CALCULATION (PER FP)
---   sale_PI = bf_eod_sale_price / last_seen_sale_price  →  identical to the
---   fp_sale_price_index metric's row-level sale_pi.
--- ─────────────────────────────────────────────────────────────────────────────
-price_index AS (
-    SELECT
-        c.bf_product_id AS product_id,
-        c.competitor_id,
-        c.competitor_name,
-        c.fp_id,
-        c.fp_name,
-        c.is_recent_competitor,
-        c.breadfast_sale_price,
-        c.competitor_sale_price,
-        c.min_competitor_sale_price,
-        c.max_competitor_sale_price,
-        c.date_day AS competitor_last_updated_day,
-        SAFE_DIVIDE(c.breadfast_sale_price, c.competitor_sale_price) AS sale_PI
-    FROM competitor_clean c
+        cm.bf_product_id,
+        cm.competitor_id,
+        cr.competitor_name,
+        cm.competitor_product_id,
+        cm.competitor_product_key,
+        cm.competitor_product_name
+    FROM current_mapping cm
+    INNER JOIN competitor_registry cr
+        ON cr.competitor_id = cm.competitor_id
+    LEFT JOIN (
+        SELECT competitor_id, competitor_product_key, MAX(date_day) AS last_obs
+        FROM competitor_clean
+        GROUP BY 1, 2
+    ) obs
+        ON  obs.competitor_id = cm.competitor_id
+        AND obs.competitor_product_key = cm.competitor_product_key
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY cm.bf_product_id, cm.competitor_id
+        ORDER BY obs.last_obs DESC NULLS LAST, cm.competitor_product_key
+    ) = 1
 ),
 
 
@@ -396,7 +388,7 @@ price_index AS (
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- STEP 11 ▸ JOIN SCORES + MAPPING + PRICE INDEX
--- Driver: products_enriched_prices_2 (gated on activity + BF SCD pricing).
+-- Driver: products_enriched_prices (gated on activity + BF SCD pricing).
 -- BF price for PI rows comes from the comparison fact (bf_eod); SCD is the
 -- fallback + the source of BF freshness (the daily fact has no BF-price age).
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -424,20 +416,20 @@ products_with_pi AS (
         s.is_recent_breadfast,
         pi.is_recent_competitor,
         s.breadfast_last_updated_day,
-        pi.competitor_last_updated_day,
+        pi.date_day AS competitor_last_updated_day,
 
         -- Both sides fresh (≤ 7 days)
         (s.is_recent_breadfast AND pi.is_recent_competitor) AS prices_recently_updated,
 
         -- Product-level mapping flag (carries across FPs)
         (cm.competitor_product_id IS NOT NULL) AS is_mapped
-    FROM products_enriched_prices_2 s
+    FROM products_enriched_prices s
     CROSS JOIN competitor_registry cr
     LEFT JOIN competitor_mapping cm
         ON s.product_id = cm.bf_product_id
         AND cr.competitor_id = cm.competitor_id
-    LEFT JOIN price_index pi
-        ON s.product_id = pi.product_id
+    LEFT JOIN competitor_clean pi
+        ON s.product_id = pi.bf_product_id
         AND s.fp_id = pi.fp_id
         AND cr.competitor_id = pi.competitor_id
 ),
@@ -446,35 +438,39 @@ products_with_pi AS (
 -- ─────────────────────────────────────────────────────────────────────────────
 -- STEP 12 ▸ AI MATCH CANDIDATES (PRODUCT-LEVEL, REPLICATED ACROSS FPS) — UNCHANGED
 -- ─────────────────────────────────────────────────────────────────────────────
+-- The matcher's output, read ONCE: v2 only (v1 never records a rejection, so
+-- it would block the 'not match' branches); country_code pins the read.
+-- recommended_product_status ∈ 'mapped' (accepted) · 'ambiguous mapping'
+-- (competing accepted targets) · 'not match' (explicitly rejected) ·
+-- 'pending action' (awaiting review).
+rec_base AS (
+    SELECT
+        r.competitor_id,
+        CAST(r.bf_product_id AS INT64) AS bf_product_id,
+        r.competitor_product_id,
+        r.competitor_product_key,
+        r.similarity_score,
+        r.recommended_product_status
+    FROM `followbreadfast.l03_marts.dim_recommended_bf_competitor_products` r
+    INNER JOIN competitor_registry cr
+        ON r.competitor_id = cr.competitor_id
+    WHERE r.pricing_tool_version = 'v2'
+      AND r.country_code = 'EG'
+),
+
 ai_match_candidates AS (
     SELECT
-        CAST(rcp.bf_product_id AS INT64) AS recommended_bf_product_id,
-        rcp.competitor_id,
-        rcp.similarity_score,
+        rb.bf_product_id AS recommended_bf_product_id,
+        rb.competitor_id,
+        rb.similarity_score,
         cp.product_name_en AS match_potential_product_name,
-        rcp.is_matched
-    FROM `followbreadfast.l03_marts.dim_recommended_bf_competitor_products` rcp
-    INNER JOIN competitor_registry cr
-        ON rcp.competitor_id = cr.competitor_id
+        rb.recommended_product_status
+    FROM rec_base rb
     LEFT JOIN `followbreadfast.l03_marts.dim_competitor_products` cp
-        ON rcp.competitor_product_id = cp.competitor_product_id
-        AND cp.competitor_id = rcp.competitor_id
-    -- v2 only, matching rec_flags in the gap layer so the whole tool takes its
-    -- recommendations from one generation of the matcher.
-    --
-    -- This read used to be unfiltered, which let the superseded v1 model decide
-    -- match potential: every one of its 240,226 rows carries is_matched = TRUE,
-    -- so v1 never records a rejection, and whenever a v1 row won on similarity
-    -- the classification tree below could never reach its 'No Match' branch. It
-    -- won 21.5% of in-scope pairs despite a lower average similarity than v2
-    -- (0.66 vs 0.79), i.e. on artificially high scores.
-    --
-    -- country_code is a no-op today (there are no non-EG rows); it is here so the
-    -- two reads of this table stay identical.
-    WHERE rcp.pricing_tool_version = 'v2'
-      AND rcp.country_code = 'EG'
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY rcp.bf_product_id, rcp.competitor_id
-        ORDER BY rcp.similarity_score DESC) = 1
+        ON rb.competitor_product_id = cp.competitor_product_id
+        AND cp.competitor_id = rb.competitor_id
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY rb.bf_product_id, rb.competitor_id
+        ORDER BY rb.similarity_score DESC) = 1
 ),
 
 
@@ -520,38 +516,40 @@ final_product_data AS (
             ELSE 'Complete'
         END AS action_type,
 
-        -- ─── Classification tree (Mapped is product-level) ──────────────────
+        -- ─── Classification tree ─────────────────────────────────────────────
+        -- Keys on is_mapped (Mapped = LINKED, same definition as Mapped %
+        -- everywhere), never on sale_PI.
         CASE
             -- Branch 1: MAPPED
-            WHEN w.sale_PI IS NOT NULL AND w.brand_name != 'Breadfast'
+            WHEN w.is_mapped AND w.brand_name != 'Breadfast'
                 THEN 'Mapped - Not PL'
-            WHEN w.sale_PI IS NOT NULL AND w.brand_name = 'Breadfast'
+            WHEN w.is_mapped AND w.brand_name = 'Breadfast'
                 THEN 'Mapped - PL'
 
             -- Branch 2a: NOT MAPPED — PL
-            WHEN w.sale_PI IS NULL
+            WHEN NOT w.is_mapped
                  AND w.brand_name = 'Breadfast'
-                 AND NOT is_matched
+                 AND recommended_product_status = 'not match'
                 THEN 'Not Mapped - PL - No Match'
-            WHEN w.sale_PI IS NULL
+            WHEN NOT w.is_mapped
                  AND w.brand_name = 'Breadfast'
                  AND amc.similarity_score >= 0.85
                 THEN 'Not Mapped - PL - Potential Match'
-            WHEN w.sale_PI IS NULL
+            WHEN NOT w.is_mapped
                  AND w.brand_name = 'Breadfast'
                  AND (amc.similarity_score IS NULL OR amc.similarity_score < 0.85)
                 THEN 'Not Mapped - PL - No Potential Match'
 
             -- Branch 2b: NOT MAPPED — Not PL
-            WHEN w.sale_PI IS NULL
+            WHEN NOT w.is_mapped
                  AND w.brand_name != 'Breadfast'
-                 AND NOT is_matched
+                 AND recommended_product_status = 'not match'
                 THEN 'Not Mapped - Not PL - No Match'
-            WHEN w.sale_PI IS NULL
+            WHEN NOT w.is_mapped
                  AND w.brand_name != 'Breadfast'
                  AND amc.similarity_score >= 0.85
                 THEN 'Not Mapped - Not PL - Potential Match'
-            WHEN w.sale_PI IS NULL
+            WHEN NOT w.is_mapped
                  AND w.brand_name != 'Breadfast'
                  AND (amc.similarity_score IS NULL OR amc.similarity_score < 0.85)
                 THEN 'Not Mapped - Not PL - No Potential Match'
@@ -566,172 +564,59 @@ final_product_data AS (
 ),
 
 
--- ─────────────────────────────────────────────────────────────────────────────
--- STEP 14 ▸ (FP × SUBCATEGORY × COMPETITOR) ROLL-UP (optional output) — UNCHANGED
--- ─────────────────────────────────────────────────────────────────────────────
-subcategory_summary AS (
-    SELECT
-        competitor_id,
-        competitor_name,
-        fp_id,
-        fp_name,
-        main_category_name,
-        sub_category_name,
-
-        -- Product counts
-        COUNT(DISTINCT product_id) AS total_products,
-        COUNT(DISTINCT CASE WHEN is_mapped THEN product_id END) AS mapped_products,
-        COUNT(DISTINCT CASE WHEN has_PI    THEN product_id END) AS priced_products,
-        COUNT(DISTINCT CASE WHEN is_mapped AND NOT has_PI THEN product_id END) AS mapped_no_price_products,
-        COUNT(DISTINCT CASE WHEN eligible_product THEN product_id END) AS eligible_products,
-        COUNT(DISTINCT CASE WHEN updated THEN product_id END) AS recently_updated_products,
-        COUNT(DISTINCT CASE WHEN used_product THEN product_id END) AS used_products,
-
-        -- Action backlog for the master-data team
-        COUNT(DISTINCT CASE
-            WHEN eligible_product AND action_type != 'Complete'
-            THEN product_id
-        END) AS needs_action_products,
-
-        -- Revenue & quantity totals
-        ROUND(SUM(avg_daily_revenue), 2) AS total_avg_daily_revenue,
-        ROUND(SUM(avg_daily_quantity), 2) AS total_avg_daily_quantity,
-
-        -- PRIMARY METRIC — quantity-weighted blended PI within (fp, subcategory)
-        ROUND(
-            SAFE_DIVIDE(
-                SUM(CASE WHEN used_product THEN sale_PI * avg_daily_quantity END),
-                SUM(CASE WHEN used_product THEN avg_daily_quantity END)
-            ), 3
-        ) AS blended_PI,
-
-        -- Reference — unweighted average PI
-        ROUND(AVG(CASE WHEN sale_PI IS NOT NULL THEN sale_PI END), 3) AS avg_PI_unweighted,
-
-        -- Coverage of the eligible set within (fp, subcategory)
-        ROUND(
-            SAFE_DIVIDE(
-                COUNT(DISTINCT CASE WHEN used_product THEN product_id END),
-                COUNT(DISTINCT CASE WHEN eligible_product THEN product_id END)
-            ) * 100, 1
-        ) AS coverage_pct
-    FROM final_product_data
-    WHERE competitor_id IS NOT NULL
-    GROUP BY
-        competitor_id,
-        competitor_name,
-        fp_id,
-        fp_name,
-        main_category_name,
-        sub_category_name
-),
-
-
 -- ═══════════════════════════════════════════════════════════════════════════
 -- STEPS 15-20 ▸ GAP-ANALYSIS LAYER (added 2026-08-03)
--- ADDITIVE GAP-ANALYSIS LAYER for competitor_price_monitoring_fps
--- =============================================================================
--- Splice into docs/FP_granularity_pricing.sql (CREATE OR REPLACE TABLE
--- dbt_gohary.competitor_price_monitoring_fps) after STEP 12
--- (ai_match_candidates) / STEP 13 (final_product_data).
+-- Adds the assortment-gap columns (brand overlap, category bridge, catalogue
+-- partition) to the same output rows. Section labels NEW 1-7 are stable
+-- identifiers referenced from docs/DDD.md and the app specs — do not renumber.
 --
--- SOURCE CONTRACT (revised 2026-08-03)
---   ALL match determination comes from
---     `followbreadfast.l03_marts.fct_daily_competitor_price_comparison`
---   through the query's OWN STEP 8/9/9b CTEs (competitor_raw / competitor_clean
---   / competitor_mapping). fct_competitor_price_monitoring is deliberately NOT
---   used, so the new gap metrics can never disagree with the existing
---   is_mapped / sale_PI columns.
+-- SOURCE CONTRACT: match determination = current_mapping (dim, v2); the fact
+-- supplies price history for currently-mapped pairs and the crawl clock;
+-- dim_competitor_products is also the CATALOGUE (only source of never-matched
+-- products). Comp-only rows are NATIONAL (fp NULL); PL/Beauty kept but
+-- flagged; similarity 0.85 everywhere.
 --
---   `dim_competitor_products` is still read, but ONLY as the competitor
---   CATALOGUE (the list of products that exist). It has to be: the daily
---   comparison fact contains matched pairs only, so competitor products that
---   were never matched -- precisely the "competitor-only" population this
---   feature is about -- appear nowhere else.
---
--- Decisions encoded here:
---   * comp-only rows are NATIONAL: fp_id/fp_name NULL, row_type='competitor'
---   * PL kept, flagged is_private_label (app toggles it)
---   * Beauty kept, flagged is_beauty / beauty_path_share (app toggles it)
---   * category bridge computed in BQ at product grain
---   * similarity threshold aligned on 0.85 everywhere
---   * all 7 competitors; competitor_has_v2_catalogue flags the Carrefour gap
---
--- DOWNSTREAM WARNING
---   duckdb_service.py `_BASE_CTE` collapses to ONE ROW PER (product_id,
---   competitor_id). Competitor-only rows carry product_id = NULL and MUST NOT
---   flow through it -- they would all collapse into a single row per
---   competitor. See docs/plans/brand-subcategory-gap-tab-plan.md section 5.
+-- DOWNSTREAM WARNING: competitor-only rows (product_id NULL) MUST NOT flow
+-- through the app's _BASE_CTE (it collapses on product_id, competitor_id).
 -- =============================================================================
 
--- ── NEW 1 ▸ COMPETITOR PRODUCTS THAT HAVE ANY MATCH (daily fact) ────────────
--- Deliberately NOT restricted to our product universe: a competitor product
--- matched to a Breadfast product that falls outside scope must remain
--- distinguishable from one that was never matched at all.
+-- ── NEW 1 ▸ ANY CURRENT MATCH (unrestricted to our universe) ────────────────
+-- Mapped-out-of-scope must stay distinguishable from never-matched. A bare
+-- projection of current_mapping, named only for the join sites.
 comp_matched_any AS (
-    SELECT DISTINCT
-        cr.competitor_id,
-        h.competitor_product_key
-    FROM `followbreadfast.l03_marts.fct_daily_competitor_price_comparison` AS h
-    INNER JOIN competitor_registry AS cr ON cr.competitor_key = h.competitor_key
-    WHERE h.mapped_product_key IS NOT NULL
-      AND h.competitor_product_key IS NOT NULL
+    SELECT competitor_id, competitor_product_key FROM current_mapping
 ),
 
 -- ── NEW 2 ▸ BREADFAST UNIVERSE AT PRODUCT GRAIN ─────────────────────────────
--- products_enriched_prices_2 is per (product, fp). Gap metrics are national, so
+-- products_enriched_prices is per (product, fp). Gap metrics are national, so
 -- collapse to product grain and attach brand_key + scope flags.
-bf_universe AS (
+bf_universe_enriched AS (
     SELECT
         s.product_id,
         ANY_VALUE(s.product_key)        AS product_key,
         ANY_VALUE(s.sub_category_name)  AS sub_category_name,
         ANY_VALUE(s.main_category_name) AS main_category_name,
-        ANY_VALUE(s.brand_name)         AS brand_name
-    FROM products_enriched_prices_2 s
-    GROUP BY s.product_id
-),
-bf_universe_enriched AS (
-    SELECT
-        u.*,
-        COALESCE(dp.brand_slug, LOWER(u.brand_name))   AS brand_key,
-        (u.main_category_name = 'Fragrances & Beauty') AS is_beauty,
-        -- NOTE: matches the pandas convention (contains 'breadfast'), which is
-        -- WIDER than the SQL convention brand_name != 'Breadfast' used in
-        -- STEP 13's classification tree. Deliberate: brand grain makes
-        -- 'Breadfast Bakery' a first-class row. See plan section 9.
-        (LOWER(u.brand_name) LIKE '%breadfast%')       AS is_private_label
-    FROM bf_universe AS u
+        ANY_VALUE(s.brand_name)         AS brand_name,
+        COALESCE(ANY_VALUE(dp.brand_slug), LOWER(ANY_VALUE(s.brand_name)))  AS brand_key,
+        (ANY_VALUE(s.main_category_name) = 'Fragrances & Beauty')           AS is_beauty,
+        -- is_private_label is deliberately WIDER than STEP 13's
+        -- brand_name != 'Breadfast': brand grain makes 'Breadfast Bakery' a
+        -- first-class row.
+        (LOWER(ANY_VALUE(s.brand_name)) LIKE '%breadfast%')                 AS is_private_label
+    FROM products_enriched_prices s
     LEFT JOIN `followbreadfast.l03_marts.dim_products` AS dp
-        ON dp.product_key = u.product_key
+        ON dp.product_key = s.product_key
+    GROUP BY s.product_id
 ),
 bf_brands AS (
     SELECT DISTINCT brand_key FROM bf_universe_enriched WHERE brand_key IS NOT NULL
 ),
 
--- ── NEW 6 ▸ PAIRED KEYS + PAIR FRESHNESS (both from the daily fact) ─────────
--- Competitor products already represented on a Breadfast row, so comp-only
--- counts are never inflated.
---
--- "Represented on a Breadfast row" is the operative phrase, and it is why this
--- joins final_product_data rather than reading competitor_mapping flat. A
--- competitor product can be matched to a Breadfast product this tool does not
--- track -- the universe is product_type='single' inside the top 80% of revenue,
--- so a match to a bundle or a long-tail SKU is real but has no row here. Read
--- flat, such a product was excluded from the competitor-only branch (it is
--- matched) while never appearing on a Breadfast row either (no row exists), so
--- it fell out of the table entirely: 827 of Talabat's active products, 628 of
--- Seoudi's, 127 of Amazon's.
---
--- That was invisible while "their catalogue" was a pre-aggregated total. Now
--- that the paired and unpaired halves are counted to reconcile against it, the
--- hole is load-bearing: without this gate the two halves add up to 94.7% of
--- Talabat's catalogue and no filter can explain the missing 5.3%.
---
--- So the gate is reachability, and the products that fail it become competitor-only
--- rows. That is a deliberate call: from this tool's point of view a product whose
--- only counterpart is outside the tracked range is one we do not carry. It raises
--- "They only" by 0.4-8.2% depending on the competitor.
+-- ── NEW 6 ▸ PAIRED KEYS (reachability-gated) ────────────────────────────────
+-- Competitor products represented on a Breadfast row. Gated on
+-- final_product_data so a match to an out-of-universe BF product falls to the
+-- comp-only side, not out of the table — this keeps paired + unpaired an
+-- exact PARTITION of the active catalogue.
 paired_comp_keys AS (
     SELECT DISTINCT cm.competitor_id, cm.competitor_product_key
     FROM competitor_mapping AS cm
@@ -741,6 +626,25 @@ paired_comp_keys AS (
         ON  reachable.competitor_id = cm.competitor_id
         AND reachable.product_id    = cm.bf_product_id
     WHERE cm.competitor_product_key IS NOT NULL
+),
+
+-- ── NEW 3a ▸ FACT CRAWL CLOCK (per competitor product) ──────────────────────
+-- The ONLY activity clock: latest true crawl date per product; MAX over its
+-- rows (one per location per day) = fresh if ANY location crawled recently.
+-- The dim's updated_at_ltz is NOT consulted — it lags the crawl (Seoudi:
+-- 2,403) and covers no product the fact lacks (measured zero). 8-day window
+-- guarantees anything crawled within 7 days is present; absent 8+ = inactive.
+fact_crawl_clock AS (
+    SELECT
+        cr.competitor_id,
+        h.competitor_product_key,
+        MAX(DATE_SUB(DATE(h.date_day), INTERVAL h.days_since_crawl DAY)) AS last_crawl
+    FROM `followbreadfast.l03_marts.fct_daily_competitor_price_comparison` h
+    INNER JOIN competitor_registry cr
+        ON h.competitor_key = cr.competitor_key
+    WHERE DATE(h.date_day) >= DATE_SUB(CURRENT_DATE(), INTERVAL 8 DAY)
+      AND h.competitor_product_key IS NOT NULL
+    GROUP BY 1, 2
 ),
 
 -- ── NEW 3 ▸ COMPETITOR CATALOGUE + DEDUP + BUNDLE EXCLUSION ─────────────────
@@ -758,31 +662,20 @@ comp_products_raw AS (
         ANY_VALUE(cp.category_level_2)      AS category_level_2,
         ANY_VALUE(cp.category_level_3)      AS category_level_3,
         ANY_VALUE(cp.category_level_4)      AS category_level_4,
-        MAX(IF(COALESCE(DATE(cp.updated_at_ltz), DATE(cp.created_at_ltz)) >= CURRENT_DATE() - 7, 1, 0)) AS is_active_7d,
-        MAX(COALESCE(DATE(cp.updated_at_ltz), DATE(cp.created_at_ltz)))     AS comp_last_seen
+        -- Activity from the FACT's crawl clock only. A product with no clock
+        -- row was not crawled in 8 days: inactive, comp_last_seen NULL.
+        MAX(IF(fc.last_crawl >= CURRENT_DATE() - 7, 1, 0))                  AS is_active_7d,
+        MAX(fc.last_crawl)                                                  AS comp_last_seen
     FROM `followbreadfast.l03_marts.dim_competitor_products` AS cp
     INNER JOIN competitor_registry AS cr ON cr.competitor_id = cp.competitor_id
+    LEFT JOIN fact_crawl_clock AS fc
+        ON  fc.competitor_id          = cp.competitor_id
+        AND fc.competitor_product_key = cp.competitor_product_key
     WHERE cp.pricing_tool_version = 'v2'
     GROUP BY cp.competitor_id, cr.competitor_name, cp.competitor_product_key
 ),
--- Dedup identical names within (competitor, brand) down to EXACTLY ONE row:
--- a matched copy wins, otherwise the most recently seen one. The dedup is
--- applied here, at the single definition of the competitor catalogue, so it
--- carries into everything downstream — the brand universe, the category
--- bridge, the recommendation flags, the catalogue-health counts and the
--- competitor-only output branch.
---
--- The earlier `OR is_matched_any = 1` short-circuit kept EVERY matched copy,
--- not one. That leaked 6,159 duplicate rows (8.5% of the competitor
--- catalogue) into the gap tab — 19 identical "Flower Hair Clip" rows for
--- Amazon, 18 "Ice Cream" for Amazon Now. All of them were 'Matched Out Of
--- Scope', which is the tell: comp_matched_any has no fp_registry gate, so it
--- marks a product matched that paired_comp_keys (which is FP-gated, via
--- competitor_mapping) does not exclude — so every copy fell through to the
--- comp-only branch.
---
--- Bundle exclusion: unmatched products whose name joins two items with ' + '
--- are dropped, because Breadfast bundles are out of scope on our side.
+-- Dedup identical names within (competitor, brand) to ONE row (paired copy
+-- wins, else matched, else freshest); unmatched ' + ' bundle names dropped.
 comp_products AS (
     SELECT
         competitor_id, competitor_name, competitor_product_key, competitor_product_id,
@@ -804,37 +697,16 @@ comp_products AS (
             ON  pk.competitor_id          = r.competitor_id
             AND pk.competitor_product_key = r.competitor_product_key
     )
-    -- Bundle exclusion, and it now actually excludes. The condition was
-    -- `is_matched_any = 1 OR NOT bundle`, and since EVERY active competitor
-    -- product is in comp_matched_any the first half is always true -- so the
-    -- second was never evaluated and 1,058 active bundles sailed through. A
-    -- bundle of two items has no counterpart in a range of singles, so it
-    -- inflates "they carry, we don't" with products we were never going to
-    -- stock as such.
-    --   Matched bundles are KEPT: if the matcher paired it to one of ours, the
-    --   pairing is evidence enough that it belongs, and dropping it would strand
-    --   our product as unmatched. is_paired, not is_matched_any, for the reason
-    --   in the ORDER BY below.
-    --   Spaced ' + ' only, deliberately: an unspaced '+' also appears in names
-    --   like "Vitamin B+" where it marks no bundle at all. 399 unspaced cases
-    --   are knowingly left in rather than risk those.
+    -- Paired bundles KEPT (dropping one strands our product as unmatched);
+    -- spaced ' + ' only ("Vitamin B+" is no bundle).
     WHERE ( is_paired = 1
             OR NOT REGEXP_CONTAINS(COALESCE(comp_product_name, ''), r'\s\+\s') )
-    -- An empty name is not evidence of duplication, so those rows are never
-    -- collapsed into each other.
+    -- Empty names are never collapsed into each other.
     QUALIFY name_norm = ''
          OR ROW_NUMBER() OVER (
                 PARTITION BY competitor_id, name_norm, brand_norm
-                -- is_paired FIRST, and this is the whole point. Talabat lists
-                -- "Soft Drink Pet Bottle" (7Up) twice, both active, both seen
-                -- today; one is matched to our 7up, one is not. Ordering by
-                -- is_matched_any could not separate them -- comp_matched_any is
-                -- broader than the pairing this query actually uses, so both
-                -- scored 1 -- and with last_seen equal the tiebreak fell to the
-                -- key, where the UNMATCHED copy happened to sort first. It
-                -- survived, so the product appeared under "they carry, we don't"
-                -- while its matched twin was dropped from the catalogue
-                -- entirely. The total stayed right and the split was wrong.
+                -- is_paired FIRST: the matched copy must survive, or the
+                -- product reads "they only" while its matched twin vanishes.
                 ORDER BY is_paired DESC,             -- the copy we actually matched
                          is_matched_any DESC,        -- else any matched copy
                          comp_last_seen DESC,        -- else the freshest
@@ -852,15 +724,9 @@ competitor_catalogue AS (
     SELECT
         cr.competitor_id,
         COUNTIF(cp.is_active_7d = 1)     AS comp_active_products,
-        -- The same count restricted to brands Breadfast also carries. The app
-        -- cannot derive this: comp_active_products is a per-competitor scalar
-        -- with no brand dimension, and the downstream comp_catalogue holds only
-        -- UNPAIRED products, so the matched half of their catalogue is not
-        -- countable there. Without it, "their catalogue" was the one column the
-        -- Shared-only brand scope could not narrow, sitting next to columns it
-        -- does narrow — Amazon reads 31,762 when only ~22% of that is in brands
-        -- we stock at all.
-        -- bf_brands is DISTINCT brand_key, so this join cannot fan the count out.
+        -- Same count restricted to brands we also carry — not derivable in the
+        -- app (comp_catalogue downstream holds only UNPAIRED products).
+        -- bf_brands is DISTINCT brand_key, so the join cannot fan the count.
         COUNTIF(cp.is_active_7d = 1 AND bb.brand_key IS NOT NULL)
                                          AS comp_active_products_shared,
         COUNTIF(cp.is_active_7d = 1) > 0 AS competitor_has_v2_catalogue
@@ -871,8 +737,8 @@ competitor_catalogue AS (
 ),
 
 -- ── NEW 4 ▸ CATEGORY BRIDGE (competitor category path -> BF subcategory) ────
--- Evidence = the query's own competitor_mapping (STEP 9b, i.e. the daily
--- comparison fact). Keyed on the full path incl. level_4 (only Amazon
+-- Evidence = the query's own competitor_mapping (STEP 9, i.e. the current
+-- dim mapping). Keyed on the full path incl. level_4 (only Amazon
 -- populates L4), with a parent-L3 fallback for thin L4 nodes.
 bridge_pairs AS (
     SELECT
@@ -938,23 +804,24 @@ path_beauty AS (
 ),
 
 -- ── NEW 5 ▸ RECOMMENDATION FLAGS (confirmed no-match + best similarity) ─────
--- NOTE: filtered to v2 + EG. Intentionally STRICTER than STEP 12's
--- ai_match_candidates (which reads the table unfiltered). Confirmed-no-match
--- must not be driven by a v1-era or non-EG rejection. Both reads coexist.
+-- Same single read of the matcher's output as STEP 12 (rec_base), so
+-- confirmed-no-match and match-potential can never come from two different
+-- generations of the matcher.
 rec_flags AS (
     SELECT
-        r.competitor_id,
-        CAST(r.bf_product_id AS INT64) AS bf_product_id,
-        LOGICAL_OR(r.is_matched)       AS has_true_rec,
-        LOGICAL_OR(NOT r.is_matched)   AS has_false_rec,
+        rb.competitor_id,
+        rb.bf_product_id,
+        -- accepted evidence = an accepted mapping, incl. a competing one;
+        -- rejected = EXPLICIT rejection only — 'pending action' is neither
+        -- (previously pending counted as rejected via NOT is_matched).
+        LOGICAL_OR(rb.recommended_product_status IN ('mapped', 'ambiguous mapping')) AS has_true_rec,
+        LOGICAL_OR(rb.recommended_product_status = 'not match')                      AS has_false_rec,
         -- best similarity among candidates still present in the portfolio
-        MAX(IF(cp.competitor_product_key IS NOT NULL, r.similarity_score, NULL)) AS best_similarity_in_portfolio
-    FROM `followbreadfast.l03_marts.dim_recommended_bf_competitor_products` AS r
-    INNER JOIN competitor_registry AS cr ON cr.competitor_id = r.competitor_id
+        MAX(IF(cp.competitor_product_key IS NOT NULL, rb.similarity_score, NULL)) AS best_similarity_in_portfolio
+    FROM rec_base AS rb
     LEFT JOIN comp_products AS cp
-        ON  cp.competitor_id          = r.competitor_id
-        AND cp.competitor_product_key = r.competitor_product_key
-    WHERE r.pricing_tool_version = 'v2' AND r.country_code = 'EG'
+        ON  cp.competitor_id          = rb.competitor_id
+        AND cp.competitor_product_key = rb.competitor_product_key
     GROUP BY 1, 2
 ),
 
@@ -973,25 +840,10 @@ bf_pair_freshness AS (
 ),
 
 -- ── NEW 7 ▸ BRAND OVERLAP FROM MATCH EVIDENCE ──────────────────────────────
--- is_shared_brand asked one question -- do the two brand_keys match? -- and got
--- it wrong whenever the same brand is labelled differently on each side. The
--- worst case is a manufacturer versus a consumer brand: we carry "Froneri", the
--- Nestle ice-cream JV, and Talabat shelves the very same products as Nestle,
--- Paradise, Oreo, Squizz, Cadbury, KitKat and a dozen more. 59 of our 62 Froneri
--- products were matched at Talabat while the brand read "only ours" -- a brand
--- they demonstrably stock, in the column that exists to say what they stock.
--- No amount of slug normalisation reaches it: froneri and nestle share nothing.
---
--- So brand overlap is also inferred from the matches themselves, exactly as the
--- category bridge infers subcategories from the daily fact. A brand counts as
--- shared with a competitor when at least half its products are matched there.
--- Both sides get the same test, read from their own end.
---
--- Computed over the WHOLE range, deliberately, and never inside the app's
--- filters. If the percentage were recomputed per filter, Shared-only would feed
--- on itself: switching it on changes which products are in scope, which changes
--- each brand's mapped share, which changes which brands are shared. The flag
--- stays a fixed property of (product, competitor), as it has always been.
+-- Name equality misses manufacturer-vs-consumer labels (our Froneri = their
+-- Nestle), so a brand also counts as shared when ≥50% of its products are
+-- matched there — computed over the WHOLE range, never inside app filters
+-- (Shared-only would feed on itself).
 bf_brand_pair AS (          -- is_mapped is FP-agnostic; collapse the FP grain away
     SELECT product_id, competitor_id, LOGICAL_OR(is_mapped) AS is_mapped
     FROM final_product_data
@@ -1013,10 +865,8 @@ bf_brand_shared_by_match AS (
     FROM bf_brand_evidence
     WHERE brand_products > 0 AND brand_mapped / brand_products >= 0.5
 ),
--- The mirror. Their "Nestle" is a brand we do carry, under the name Froneri, so
--- counting it as theirs-only overstates the assortment gap by the same mistake
--- read backwards. paired_comp_keys is already gated on our tracked range, so
--- "matched" here means matched to something we actually sell.
+-- The mirror, from their end; paired_comp_keys is range-gated, so "matched"
+-- means matched to something we actually sell.
 comp_brand_evidence AS (
     SELECT
         cp.competitor_id,
@@ -1036,14 +886,9 @@ comp_brand_shared_by_match AS (
     FROM comp_brand_evidence
     WHERE products > 0 AND matched / products >= 0.5
 ),
--- What the matches actually landed on: every distinct spelling the competitor
--- uses for this brand, so a promoted brand can be audited rather than taken on
--- trust AND ordinary brands show their naming fragmentation. 7Up is carried as
--- "7Up", "7UP" and "7up" in the same catalogue; grouping on the display NAME
--- rather than brand_key is what keeps those three visible instead of collapsing
--- them to one. Blank brand names are dropped -- they encode as ":1" downstream
--- and read as a parsing failure.
--- Encoded "brand:count|brand:count", ranked, capped at 10.
+-- The audit trail for promoted brands: every distinct spelling the matches
+-- landed on, grouped by DISPLAY name (so 7Up/7UP/7up stay visible), encoded
+-- "brand:count|brand:count", ranked, capped at 10. Blank names dropped.
 brand_variants AS (
     SELECT
         competitor_id,
@@ -1057,11 +902,9 @@ brand_variants AS (
             SELECT
                 f.competitor_id,
                 bu.brand_key AS bf_brand_key,
-                -- The DISPLAY name, not the key: the key is exactly what
-                -- collapses 7Up / 7UP / 7up into one, and those variants are
-                -- the point of this column. '(unbranded)' rather than NULL when
-                -- they carry no brand at all, so the cell never reads blank for
-                -- a brand we demonstrably matched.
+                -- DISPLAY name, not key (the key collapses the variants this
+                -- column exists to show); '(unbranded)' so a matched brand
+                -- never reads blank.
                 COALESCE(NULLIF(TRIM(cpx.comp_brand_name), ''),
                          NULLIF(TRIM(cpx.brand_key), ''),
                          '(unbranded)') AS comp_brand,
@@ -1070,19 +913,15 @@ brand_variants AS (
             JOIN bf_universe_enriched AS bu ON bu.product_id = f.product_id
             JOIN competitor_mapping   AS cm
                  ON cm.competitor_id = f.competitor_id AND cm.bf_product_id = f.product_id
-            -- comp_products_RAW, not comp_products. The deduped table keeps one
-            -- row per (competitor, name, brand), so a key competitor_mapping
-            -- points at may simply not be there any more -- and it drops nothing
-            -- for being inactive either. Joining the deduped table silently lost
-            -- the variants for every match of Evian, Powerade, Roots, Lotus and
-            -- Elano Water at Talabat: mapped products, blank column.
+            -- comp_products_RAW, not the deduped table: a key the mapping
+            -- points at may have been collapsed away there, silently blanking
+            -- the variants of mapped brands.
             JOIN comp_products_raw    AS cpx
                  ON  cpx.competitor_id          = cm.competitor_id
                  AND cpx.competitor_product_key = cm.competitor_product_key
             WHERE bu.brand_key IS NOT NULL
-              -- No brand_key != bf_brand_key filter any more: a brand whose key
-              -- matches ours can still be spelled several ways on their shelf,
-              -- and seeing that is the whole point.
+              -- Same-key brands stay in: their shelf can still spell the name
+              -- several ways, and showing that is the point.
         )
         GROUP BY 1, 2, 3
         QUALIFY ROW_NUMBER() OVER (
@@ -1119,19 +958,12 @@ SELECT
                 AND COALESCE(rf.has_false_rec, FALSE) )
       AND rf.best_similarity_in_portfolio >= 0.85 ) AS is_potential_match,
     rf.best_similarity_in_portfolio,
-    -- The matched competitor product's key. Was hard-coded NULL, which made the
-    -- PAIRED half of a competitor's catalogue invisible to the app: comp_catalogue
-    -- holds only UNPAIRED products, so "their catalogue" could only ever be the
-    -- pre-aggregated per-competitor scalar, unnarrowable by category. With the key
-    -- present, the two sides PARTITION the active catalogue and the app can count
-    -- DISTINCT keys across whatever scope is filtered. DISTINCT matters: one of
-    -- their products can be matched to several of ours.
+    -- The matched competitor product's key: lets the app count the PAIRED half
+    -- of their catalogue (DISTINCT — one of theirs can answer several of ours),
+    -- so paired + unpaired partition the active catalogue under any filter.
     cmk.competitor_product_key AS competitor_product_key,
-    -- Is that matched product actually in the live deduped catalogue? Not the same
-    -- question as matched_comp_active_7d, which is the daily fact's freshness gate.
-    -- This one is comp_products.is_active_7d, i.e. exactly the predicate behind
-    -- comp_active_products — so counting on it is what keeps the partition adding
-    -- up to that total instead of drifting from it.
+    -- Is that matched product in the live deduped catalogue? Uses the exact
+    -- predicate behind comp_active_products, so the partition sums to it.
     (COALESCE(mcp.is_active_7d, 0) = 1) AS matched_comp_in_catalogue,
     CAST(NULL AS STRING)  AS comp_brand_name,
     CAST(NULL AS STRING)  AS category_level_1,
@@ -1144,9 +976,7 @@ SELECT
     'bf_own'              AS bridge_level,
     CAST(NULL AS FLOAT64) AS beauty_path_share,
     cc.competitor_has_v2_catalogue,
-    -- Size of the competitor's live catalogue. Already computed in
-    -- competitor_catalogue; exposed because comp_catalogue downstream holds
-    -- only UNPAIRED products, so the total is not otherwise derivable.
+    -- Catalogue totals: not derivable downstream (comp rows are unpaired only).
     cc.comp_active_products,
     cc.comp_active_products_shared
 FROM final_product_data AS f
@@ -1155,9 +985,7 @@ LEFT JOIN comp_brand           AS cb ON cb.competitor_id = f.competitor_id AND c
 LEFT JOIN bf_pair_freshness    AS fr ON fr.competitor_id = f.competitor_id AND fr.bf_product_id = f.product_id
 LEFT JOIN rec_flags            AS rf ON rf.competitor_id = f.competitor_id AND rf.bf_product_id = f.product_id
 LEFT JOIN competitor_catalogue AS cc ON cc.competitor_id = f.competitor_id
--- Both one row per join key, so neither can fan the Breadfast grain out:
--- competitor_mapping is GROUP BY (bf_product_id, competitor_id), and comp_products
--- is one row per (competitor_id, competitor_product_key) after the dedup.
+-- Every joined CTE is one row per its join key — nothing fans the grain out.
 LEFT JOIN bf_brand_shared_by_match AS sbm
        ON sbm.competitor_id = f.competitor_id AND sbm.brand_key = bu.brand_key
 LEFT JOIN brand_variants       AS bv
@@ -1242,10 +1070,8 @@ SELECT
     CAST(NULL AS NUMERIC) AS best_similarity_in_portfolio,
     -- competitor-side detail
     cp.competitor_product_key,
-    -- FALSE, not NULL: these rows ARE the unpaired half of the active catalogue
-    -- and are counted as such. The flag exists to pick out the paired half on
-    -- Breadfast rows, so anything counting on it here would double-count.
-    -- Same ordinal position as the Breadfast branch — UNION ALL matches by order.
+    -- FALSE, not NULL: these rows ARE the unpaired half; counting the flag
+    -- here would double-count the partition.
     FALSE                 AS matched_comp_in_catalogue,
     cp.comp_brand_name,
     cp.category_level_1,
