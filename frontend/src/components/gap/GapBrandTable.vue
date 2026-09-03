@@ -5,7 +5,7 @@
         <Tags class="w-4 h-4 text-brand-primary" />
         <span class="text-subheading font-bold text-grey-900 tracking-tightish">Gap by brand</span>
         <span class="text-caption text-grey-400 ml-1">
-          showing {{ rows.length.toLocaleString() }} of {{ total.toLocaleString() }}
+          {{ filtered.length.toLocaleString() }} of {{ total.toLocaleString() }} brands
         </span>
       </div>
       <div class="flex items-center gap-2 flex-wrap">
@@ -24,6 +24,13 @@
           placeholder="Filter brands…"
           class="text-body border border-grey-200 rounded-lg px-3 py-1.5 w-52 focus:outline-none focus:ring-1 focus:ring-brand-primary"
         />
+        <!-- Top pager: same controls as the footer, so long lists navigate
+             without scrolling to the bottom first. -->
+        <div v-if="totalPages > 1" class="flex items-center gap-1">
+          <button :disabled="page <= 1" @click="page--" :class="PAGE_BTN">Previous</button>
+          <span class="text-caption text-grey-600 px-1 whitespace-nowrap">{{ page }} / {{ totalPages }}</span>
+          <button :disabled="page >= totalPages" @click="page++" :class="PAGE_BTN">Next</button>
+        </div>
         <ExportButton :fetcher="exportFetcher" label="Export Excel" filename="gap_by_brand.xlsx" />
       </div>
     </div>
@@ -78,7 +85,7 @@
           </tr>
         </thead>
         <tbody class="divide-y divide-grey-50">
-          <tr v-for="row in filtered" :key="row.brand_key" class="hover:bg-brand-50 transition-colors">
+          <tr v-for="row in paged" :key="row.brand_key" class="hover:bg-brand-50 transition-colors">
             <td class="px-4 py-3 text-body font-semibold text-grey-900">{{ row.brand_name }}</td>
             <td class="px-4 py-3">
               <span class="px-2 py-0.5 rounded-md text-caption font-semibold whitespace-nowrap"
@@ -125,11 +132,24 @@
       </table>
     </div>
     <EmptyState v-else message="No brands match the current scope" />
+
+    <!-- Pagination (client-side: the full brand list is already loaded) -->
+    <div v-if="totalPages > 1" class="px-4 py-3 border-t border-grey-100 flex items-center justify-between">
+      <span class="text-caption text-grey-500">
+        {{ ((page - 1) * PAGE_SIZE + 1).toLocaleString() }}–{{ Math.min(page * PAGE_SIZE, filtered.length).toLocaleString() }}
+        of {{ filtered.length.toLocaleString() }}
+      </span>
+      <div class="flex items-center gap-1">
+        <button :disabled="page <= 1" @click="page--" :class="PAGE_BTN">Previous</button>
+        <span class="text-caption text-grey-600 px-2">Page {{ page }} / {{ totalPages }}</span>
+        <button :disabled="page >= totalPages" @click="page++" :class="PAGE_BTN">Next</button>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref, h } from 'vue'
+import { computed, ref, watch, h } from 'vue'
 import { Tags } from 'lucide-vue-next'
 import ExportButton from '../shared/ExportButton.vue'
 import EmptyState from '../shared/EmptyState.vue'
@@ -218,6 +238,15 @@ const filtered = computed(() => {
   if (!q) return props.rows
   return props.rows.filter(r => (r.brand_name || '').toLowerCase().includes(q))
 })
+
+// Client-side pagination over the filtered set: search first, then page.
+const PAGE_SIZE = 50
+const page = ref(1)
+const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / PAGE_SIZE)))
+const paged = computed(() => filtered.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE))
+const PAGE_BTN = 'px-3 py-1 text-caption font-semibold rounded-lg border border-grey-200 text-grey-700 hover:bg-grey-50 disabled:opacity-40 disabled:cursor-not-allowed'
+// New search, type filter, or data → back to page 1.
+watch([search, () => props.brandType, () => props.rows], () => { page.value = 1 })
 
 // The column does not equal Mapped + They only and visibly should, so the
 // breakdown belongs on the number itself rather than in a paragraph nobody
