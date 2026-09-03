@@ -164,6 +164,11 @@ export const useGapStore = defineStore('gap', {
     async fetchBrands() {
       const params = { ...this.filterParams }
       if (this.brandTypeFilter) params.brand_type = this.brandTypeFilter
+      // The endpoint computes every row and then truncates to `limit`
+      // (default 300) — with ~2,000 brands and no pager, everything past
+      // row 300 was unreachable. Fetch the lot; the table's client-side
+      // search and scroll handle the volume.
+      params.limit = 5000
       const res = await gapApi.getBrands(params)
       this.brands = res.data.items || []
       this.brandsTotal = res.data.total_count || 0

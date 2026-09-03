@@ -23,6 +23,12 @@
           :placeholder="side === 'competitor' ? 'Search their products…' : 'Search our products…'"
           class="text-body border border-grey-200 rounded-lg px-3 py-1.5 w-56 focus:outline-none focus:ring-1 focus:ring-brand-primary"
         />
+        <!-- Top pager: mirrors the footer so long lists navigate from either end. -->
+        <div v-if="totalPages > 1" class="flex items-center gap-1">
+          <button :disabled="page <= 1" @click="$emit('page', page - 1)" :class="PAGE_BTN">Previous</button>
+          <span class="text-caption text-grey-600 px-1 whitespace-nowrap">{{ page }} / {{ totalPages }}</span>
+          <button :disabled="page >= totalPages" @click="$emit('page', page + 1)" :class="PAGE_BTN">Next</button>
+        </div>
         <ExportButton :fetcher="exportFetcher" label="Export Excel" :filename="`gap_products_${side}.xlsx`" />
       </div>
     </div>
