@@ -292,7 +292,8 @@ const filters = useFiltersStore()
 const emptyHint = computed(() => {
   if (!filters.hasActiveFilters) return ''
   const names = []
-  if (filters.mainCategory.length) names.push('Category')
+  if (filters.mainCategoryName.length) names.push('Main category')
+  if (filters.mainCategory.length) names.push('Commercial category')
   if (filters.subCategory.length) names.push('Subcategory')
   if (filters.globalTier.length) names.push('Tier')
   if (filters.brand.length) names.push('Brand')

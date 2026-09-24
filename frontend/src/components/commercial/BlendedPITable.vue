@@ -7,20 +7,16 @@
         <HelpTooltip text="Quantity-weighted: Σ(sale_PI × qty) ÷ Σ(qty) over used products. sale_PI = BF ÷ competitor, so above 1.00 means BREADFAST IS MORE EXPENSIVE." />
       </div>
       <div class="flex items-center gap-3 shrink-0">
-        <!-- Grain toggle: roll up to commercial category or drop to subcategory -->
+        <!-- Grain toggle, coarsest to finest: roll up to either category axis or drop to subcategory -->
         <div class="inline-flex items-center rounded-lg border border-grey-200 overflow-hidden text-caption font-medium">
           <button
+            v-for="opt in GRAINS"
+            :key="opt.value"
             type="button"
-            class="px-2.5 py-1 transition-colors"
-            :class="groupBy === 'sub_category' ? 'bg-brand-primary text-white' : 'bg-white text-grey-600 hover:bg-grey-50'"
-            @click="$emit('set-group-by', 'sub_category')"
-          >Subcategory</button>
-          <button
-            type="button"
-            class="px-2.5 py-1 border-l border-grey-200 transition-colors"
-            :class="groupBy === 'commercial_category' ? 'bg-brand-primary text-white' : 'bg-white text-grey-600 hover:bg-grey-50'"
-            @click="$emit('set-group-by', 'commercial_category')"
-          >Commercial category</button>
+            class="px-2.5 py-1 border-l border-grey-200 first:border-l-0 transition-colors"
+            :class="groupBy === opt.value ? 'bg-brand-primary text-white' : 'bg-white text-grey-600 hover:bg-grey-50'"
+            @click="$emit('set-group-by', opt.value)"
+          >{{ opt.label }}</button>
         </div>
         <span class="hidden sm:inline text-micro text-grey-400">Click a row to filter · a dot to jump to a product</span>
         <ExportButton :fetcher="exportData" label="Export Excel" filename="Blended_PI.xlsx" class="shrink-0" />
@@ -107,6 +103,15 @@
             @click="onRowClick(row)"
           >
             <td
+              v-if="groupBy === 'main_category'"
+              class="px-3 py-1.5 text-body text-grey-900 text-center truncate"
+              style="max-width: 180px"
+              :title="row.main_category_name || ''"
+            >
+              {{ row.main_category_name || '—' }}
+            </td>
+            <td
+              v-else
               class="px-3 py-1.5 text-body text-center truncate"
               :class="groupBy === 'commercial_category' ? 'text-grey-900' : 'text-grey-600'"
               style="max-width: 180px"
@@ -127,7 +132,7 @@
               <PIStripPlot
                 :points="stripPlotPoints(row)"
                 :blended-pi="stripPlotBlendedPi(row)"
-                :subcategory="row.sub_category_name || row.commercial_category_name"
+                :subcategory="row.sub_category_name || ''"
                 @select-product="(payload) => $emit('select-product', payload)"
               />
             </td>
@@ -223,23 +228,31 @@ const props = defineProps({
   competitors: { type: Array, default: () => [] },
   selectedCompetitors: { type: Array, default: () => [] },
   busy: { type: Boolean, default: false },
-  // 'sub_category' (default) | 'commercial_category' — the row grain.
+  // 'sub_category' (default) | 'commercial_category' | 'main_category' — the row grain.
   groupBy: { type: String, default: 'sub_category' },
   /** Supplied by the view, which owns the filter params. Takes the competitors
       on screen and resolves to { blob, filename }. */
   exportFetcher: { type: Function, default: null },
 })
 
-const emit = defineEmits(['select', 'select-product', 'select-category', 'set-group-by'])
+const emit = defineEmits(['select', 'select-product', 'select-category', 'select-main-category', 'set-group-by'])
+
+const GRAINS = [
+  { value: 'main_category', label: 'Main category' },
+  { value: 'commercial_category', label: 'Commercial category' },
+  { value: 'sub_category', label: 'Subcategory' },
+]
 
 const title = computed(() =>
-  props.groupBy === 'commercial_category' ? 'Blended PI by commercial category' : 'Blended PI by subcategory'
+  'Blended PI by ' + (GRAINS.find(g => g.value === props.groupBy)?.label ?? 'Subcategory').toLowerCase()
 )
 
-// Row click drills: subcategory → subcategory filter; commercial category →
-// commercial-category filter (handled by the parent view).
+// Row click filters to that row's value and keeps the grain: subcategory →
+// subcategory filter; a category roll-up → that category axis's filter
+// (handled by the parent view).
 function onRowClick(row) {
   if (props.groupBy === 'commercial_category') emit('select-category', row.commercial_category_name)
+  else if (props.groupBy === 'main_category') emit('select-main-category', row.main_category_name)
   else emit('select', row.sub_category_name)
 }
 
@@ -290,9 +303,13 @@ function stripPlotBlendedPi(row) {
 }
 
 // Columns split around competitor PI columns. The Subcategory column only
-// exists in subcategory grain; the category roll-up drops it.
+// exists in subcategory grain; the category roll-ups drop it. Main category
+// replaces Commercial category rather than joining it: one main category spans
+// several commercial categories, so there is no single value to show.
 const fixedColumns = computed(() => {
-  const cols = [{ key: 'commercial_category_name', label: 'Commercial category' }]
+  const cols = props.groupBy === 'main_category'
+    ? [{ key: 'main_category_name', label: 'Main category' }]
+    : [{ key: 'commercial_category_name', label: 'Commercial category' }]
   if (props.groupBy === 'sub_category') cols.push({ key: 'sub_category_name', label: 'Subcategory' })
   cols.push(
     { key: 'min_pi', label: 'Min PI' },

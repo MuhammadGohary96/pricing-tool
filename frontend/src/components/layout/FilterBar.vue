@@ -77,10 +77,19 @@
           <Layers class="w-3.5 h-3.5" /> Narrow
         </span>
 
+      <!-- Two category axes that cut across each other: the storefront main
+           category (main_category_name) and the commercial org's category. -->
+      <MultiSelect
+        :model-value="pending.mainCategoryName"
+        :options="mainCategoryOptions"
+        label="Main category"
+        @update:model-value="onMainCategoryName($event)"
+      />
+
       <MultiSelect
         :model-value="pending.mainCategory"
         :options="filters.categories"
-        label="Categories"
+        label="Commercial category"
         @update:model-value="onMainCategory($event)"
       />
 
@@ -213,6 +222,10 @@
           Shared brands only
           <button class="hover:text-brand-dark" @click="pending.brandScope = ''"><X class="w-3 h-3" /></button>
         </span>
+        <span v-for="mc in pending.mainCategoryName" :key="'maincat-' + mc" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
+          {{ mc }}
+          <button class="hover:text-brand-dark" @click="removeChip('mainCategoryName', mc)"><X class="w-3 h-3" /></button>
+        </span>
         <span v-for="cat in pending.mainCategory" :key="'cat-' + cat" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-50 text-brand-primary text-micro font-medium border border-brand-light">
           {{ cat }}
           <button class="hover:text-brand-dark" @click="removeChip('mainCategory', cat)"><X class="w-3 h-3" /></button>
@@ -259,7 +272,7 @@ import { Filter as FilterIcon, Loader2, Link as LinkIcon, ChevronDown, X, Check,
 import MultiSelect from '../shared/MultiSelect.vue'
 import SavedViews from './SavedViews.vue'
 import CompetitorLogo from '../shared/CompetitorLogo.vue'
-import { useFiltersStore } from '../../stores/filters'
+import { useFiltersStore, mainCategoriesForVertical } from '../../stores/filters'
 
 defineProps({
   loading: { type: Boolean, default: false },
@@ -312,7 +325,7 @@ const verticalOptions = [
 // refetch / URL change) until Apply. subcatTier & actionType are carried through
 // even though they have no control here, so committing never wipes filters set
 // elsewhere (e.g. Master Data action cards).
-const FIELDS = ['mainCategory', 'subCategory', 'globalTier', 'subcatTier', 'actionType', 'brand', 'competitor', 'fpNames', 'vertical', 'brandScope', 'includePrivateLabel', 'privateLabelOnly', 'priceFallback']
+const FIELDS = ['mainCategory', 'mainCategoryName', 'subCategory', 'globalTier', 'subcatTier', 'actionType', 'brand', 'competitor', 'fpNames', 'vertical', 'brandScope', 'includePrivateLabel', 'privateLabelOnly', 'priceFallback']
 
 function committedSnapshot() {
   const s = {}
@@ -336,8 +349,25 @@ watch(() => JSON.stringify(committedSnapshot()), syncFromStore)
 function onMainCategory(value) {
   pending.mainCategory = value
   pending.subCategory = []
-  filters.fetchSubcategories(value.length === 1 ? value[0] : null)
+  filters.fetchSubcategories(value, pending.mainCategoryName)
 }
+
+// Same cascade for the storefront main category.
+function onMainCategoryName(value) {
+  pending.mainCategoryName = value
+  pending.subCategory = []
+  filters.fetchSubcategories(pending.mainCategory, value)
+}
+
+// The Vertical is derived from main category, so the options follow the staged
+// vertical, and switching it drops any main category it now rules out.
+const mainCategoryOptions = computed(() =>
+  mainCategoriesForVertical(filters.mainCategories, pending.vertical))
+watch(() => pending.vertical, (v) => {
+  const fits = new Set(mainCategoriesForVertical(pending.mainCategoryName, v))
+  if (pending.mainCategoryName.every(m => fits.has(m))) return
+  onMainCategoryName(pending.mainCategoryName.filter(m => fits.has(m)))
+})
 
 const pendingSnapStr = computed(() => {
   const s = {}
@@ -352,7 +382,7 @@ const isDirty = computed(() =>
   pendingSnapStr.value !== JSON.stringify(committedSnapshot()) || pillsDirty.value)
 
 const pendingChanges = computed(() =>
-  [pending.mainCategory, pending.subCategory, pending.globalTier, pending.brand, pending.competitor, pending.fpNames]
+  [pending.mainCategory, pending.mainCategoryName, pending.subCategory, pending.globalTier, pending.brand, pending.competitor, pending.fpNames]
     .reduce((n, a) => n + a.length, 0)
   + (pending.vertical ? 1 : 0)
   + (pending.brandScope ? 1 : 0)
@@ -364,7 +394,7 @@ const pendingChanges = computed(() =>
 // Gates the "Selected:" chip row and Clear All, so brandScope has to be counted
 // or its chip never appears when it is the only thing set.
 const pendingHasFilters = computed(() =>
-  !!(pending.mainCategory.length || pending.subCategory.length || pending.globalTier.length ||
+  !!(pending.mainCategory.length || pending.mainCategoryName.length || pending.subCategory.length || pending.globalTier.length ||
      pending.brand.length || pending.competitor.length || pending.fpNames.length ||
      pending.vertical || pending.brandScope || !pending.includePrivateLabel || pending.privateLabelOnly)
 )
@@ -376,7 +406,7 @@ function applyFilters() {
   // Atomic commit → the views' watchers refetch once and the URL syncs once.
   // Commit the pills in the same tick, so one Apply is one refetch.
   filters.visibleCompetitors = [...filters.pendingVisibleCompetitors]
-  filters.applySnapshot({ ...pending, visibleCompetitors: [...filters.pendingVisibleCompetitors], mainCategory: [...pending.mainCategory], subCategory: [...pending.subCategory], globalTier: [...pending.globalTier], subcatTier: [...pending.subcatTier], actionType: [...pending.actionType], brand: [...pending.brand], competitor: [...pending.competitor], fpNames: [...pending.fpNames] })
+  filters.applySnapshot({ ...pending, visibleCompetitors: [...filters.pendingVisibleCompetitors], mainCategory: [...pending.mainCategory], mainCategoryName: [...pending.mainCategoryName], subCategory: [...pending.subCategory], globalTier: [...pending.globalTier], subcatTier: [...pending.subcatTier], actionType: [...pending.actionType], brand: [...pending.brand], competitor: [...pending.competitor], fpNames: [...pending.fpNames] })
 }
 
 function clearFilters() {

@@ -46,7 +46,10 @@ export const dataApi = {
 
 export const filtersApi = {
   getCategories: () => api.get('/filters/categories'),
-  getSubcategories: (main) => api.get('/filters/subcategories', { params: { main } }),
+  // Storefront main category (main_category_name) — /categories is commercial.
+  getMainCategories: () => api.get('/filters/main-categories'),
+  getSubcategories: (main, mainCategoryName) =>
+    api.get('/filters/subcategories', { params: { main, main_category_name: mainCategoryName } }),
   getTiers: () => api.get('/filters/tiers'),
   getCompetitors: () => api.get('/filters/competitors'),
   getFPs: () => api.get('/filters/fps'),

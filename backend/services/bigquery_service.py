@@ -615,6 +615,7 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 "competitor": "competitor_name",
                 "brand": "brand_name",
                 "main_category": "commercial_category_name",
+                "main_category_name": "main_category_name",
                 "sub_category": "sub_category_name",
                 "global_tier": "global_tier",
                 "subcat_tier": "subcat_tier",
@@ -1045,6 +1046,8 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         filtered = source.copy()
         if filters.get("main_category"):
             filtered = self._multi_match(filtered, "commercial_category_name", filters["main_category"])
+        if filters.get("main_category_name"):
+            filtered = self._multi_match(filtered, "main_category_name", filters["main_category_name"])
         if filters.get("sub_category"):
             filtered = self._multi_match(filtered, "sub_category_name", filters["sub_category"])
         if filters.get("global_tier"):
@@ -1780,18 +1783,32 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
     def get_week_over_week(self) -> list[dict]:
         return []  # No historical data available
 
-    def get_filter_options(self, main_category: Optional[str] = None) -> dict:
+    def get_filter_options(
+        self,
+        main_category: Optional[str] = None,
+        main_category_name: Optional[str] = None,
+        vertical: Optional[str] = None,
+    ) -> dict:
         df = self._df
 
-        if main_category:
-            sub_cats = sorted(
-                [v for v in df[df["commercial_category_name"] == main_category]["sub_category_name"].unique().tolist() if v is not None]
-            )
-        else:
-            sub_cats = sorted([v for v in df["sub_category_name"].unique().tolist() if v is not None])
+        sub_df = df
+        for col, raw in (("commercial_category_name", main_category),
+                         ("main_category_name", main_category_name)):
+            vals = [v.strip() for v in str(raw or "").split(",") if v.strip()]
+            if vals:
+                sub_df = sub_df[sub_df[col].isin(vals)]
+        sub_cats = sorted([v for v in sub_df["sub_category_name"].unique().tolist() if v is not None])
+
+        storefront = [v for v in df["main_category_name"].unique().tolist() if v is not None]
+        vert = str(vertical or "").strip().lower()
+        if vert == "beauty":
+            storefront = [v for v in storefront if v.lower() == "fragrances & beauty"]
+        elif vert == "supermarket":
+            storefront = [v for v in storefront if v.lower() != "fragrances & beauty"]
 
         return {
             "main_categories": sorted([v for v in df["commercial_category_name"].unique().tolist() if v is not None]),
+            "storefront_main_categories": sorted(storefront),
             "sub_categories": sub_cats,
             "global_tiers": ["Top+", "Top", "Medium", "Low", "Very Low"],
             "subcat_tiers": ["Top+", "Top", "Medium", "Low", "Very Low"],

@@ -84,14 +84,14 @@ function persistViews() {
 
 // Filter state fields captured in a saved view (state shape: camelCase + arrays/flags).
 const SNAP_KEYS = [
-  'mainCategory', 'subCategory', 'globalTier', 'subcatTier', 'actionType',
+  'mainCategory', 'mainCategoryName', 'subCategory', 'globalTier', 'subcatTier', 'actionType',
   'brand', 'competitor', 'fpNames', 'includePrivateLabel', 'privateLabelOnly', 'priceFallback',
 ]
 
 // API-param key → state key, for normalizing views saved in the older (broken)
 // activeFilters shape so they still apply correctly.
 const API_TO_STATE = {
-  main_category: 'mainCategory', sub_category: 'subCategory', global_tier: 'globalTier',
+  main_category: 'mainCategory', main_category_name: 'mainCategoryName', sub_category: 'subCategory', global_tier: 'globalTier',
   subcat_tier: 'subcatTier', action_type: 'actionType', brand: 'brand',
   competitor: 'competitor', fp_names: 'fpNames',
 }

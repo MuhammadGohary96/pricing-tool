@@ -11,12 +11,23 @@ def get_categories(request: Request):
     return {"categories": options["main_categories"]}
 
 
+@router.get("/main-categories")
+def get_main_categories(request: Request, vertical: Optional[str] = Query(None)):
+    # Storefront main category (main_category_name) — not the commercial
+    # category that /categories serves. Narrowed by the Vertical it derives.
+    svc = request.app.state.data_service
+    options = svc.get_filter_options(vertical=vertical)
+    return {"main_categories": options["storefront_main_categories"]}
+
+
 @router.get("/subcategories")
 def get_subcategories(
-    request: Request, main: Optional[str] = Query(None)
+    request: Request,
+    main: Optional[str] = Query(None, description="commercial category (comma-separated)"),
+    main_category_name: Optional[str] = Query(None, description="storefront main category (comma-separated)"),
 ):
     svc = request.app.state.data_service
-    options = svc.get_filter_options(main_category=main)
+    options = svc.get_filter_options(main_category=main, main_category_name=main_category_name)
     return {"subcategories": options["sub_categories"]}
 
 

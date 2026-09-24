@@ -34,6 +34,7 @@ class BlendedPIRow(BaseModel):
     group_key: str
     sub_category_name: Optional[str] = None
     commercial_category_name: Optional[str] = None
+    main_category_name: Optional[str] = None
     blended_pi: Optional[float] = None
     pi_deviation: Optional[float] = None
     direction: str

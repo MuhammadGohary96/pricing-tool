@@ -34,7 +34,7 @@ The one-line-per-term contract. If a PR uses one of these words differently, the
 | **Action type** | The single next step for a (product, competitor) pair: Needs Mapping / Review AI Match / Needs Price for FP / Needs Price Update / Complete. |
 | **Vertical** | Business split: **Beauty** ⇔ `main_category_name = 'Fragrances & Beauty'`; everything else **Supermarket**. |
 | **Commercial category** | The commercial org's taxonomy (`commercial_category_name`). **This is what the app's "Categories" filter and the category roll-up mean by "category".** |
-| **Main category** | The storefront taxonomy (`main_category_name`). Distinct from commercial category; source of the Vertical. |
+| **Main category** | The storefront taxonomy (`main_category_name`). Distinct from commercial category; source of the Vertical. Strict parent of subcategory (each subcategory sits under exactly one main category). In the UI, "Main Category" always means this axis. The legacy `main_category` request param carries *commercial* category, so this axis needs its own param name. |
 | **Tier (global / subcat)** | Revenue-importance banding of products, globally and within a subcategory. |
 | **Private label (PL)** | Breadfast own-brand products; excludable because they have no like-for-like competitor price. |
 | **Sync** | A pull of the two source tables from BigQuery, gated by change detection on their last-modified metadata. |

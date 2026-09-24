@@ -18,6 +18,7 @@ router = APIRouter(prefix="/api/commercial", tags=["commercial"])
 
 def _filters(
     main_category: Optional[str] = Query(None),
+    main_category_name: Optional[str] = Query(None),
     sub_category: Optional[str] = Query(None),
     global_tier: Optional[str] = Query(None),
     subcat_tier: Optional[str] = Query(None),
@@ -35,6 +36,8 @@ def _filters(
     params = {}
     if main_category:
         params["main_category"] = main_category
+    if main_category_name:
+        params["main_category_name"] = main_category_name
     if sub_category:
         params["sub_category"] = sub_category
     if global_tier:
@@ -111,6 +114,10 @@ def _serialize_pi_points(raw_pis):
     ]
 
 
+# Blended-PI grains: subcategory, or a roll-up to either category axis.
+_GROUP_BYS = ("sub_category", "commercial_category", "main_category")
+
+
 @router.get("/blended-pi")
 def get_blended_pi(
     request: Request,
@@ -118,9 +125,9 @@ def get_blended_pi(
     group_by: str = Query("sub_category"),
 ):
     # Product-level aggregate — unaffected by the competitor price fallback.
-    # group_by: 'sub_category' (default) | 'commercial_category' (rolled up).
+    # group_by: 'sub_category' (default) | 'commercial_category' | 'main_category' (rolled up).
     svc = request.app.state.data_service
-    gb = group_by if group_by in ("sub_category", "commercial_category") else "sub_category"
+    gb = group_by if group_by in _GROUP_BYS else "sub_category"
     df = svc.get_blended_pi_by_subcategory(filters, group_by=gb)
     all_competitors = set()
     items = []
@@ -169,6 +176,7 @@ def get_blended_pi(
             group_key=str(row.get("group_key", row.get("sub_category_name")) or ""),
             sub_category_name=row.get("sub_category_name"),
             commercial_category_name=row.get("commercial_category_name"),
+            main_category_name=row.get("main_category_name"),
             blended_pi=_safe(row.get("blended_pi")),
             pi_deviation=_safe(row.get("pi_deviation")),
             direction=row["direction"],
@@ -401,6 +409,7 @@ def _blended_rows(df, comps):
         vals = [v for v in pis.values() if v is not None]
         out.append({
             "commercial_category_name": row.get("commercial_category_name") or "",
+            "main_category_name": row.get("main_category_name") or "",
             "sub_category_name": row.get("sub_category_name") or "",
             "min_pi": min(vals) if vals else None,
             "max_pi": max(vals) if vals else None,
@@ -422,24 +431,27 @@ def _blended_rows(df, comps):
 
 def _blended_sheets(rows, comps, group_by):
     is_subcat = group_by == "sub_category"
+    # Identity columns per grain. Main category is a roll-up on its own axis, so
+    # it carries no commercial category (one main spans several).
+    if group_by == "main_category":
+        idents = [("main_category_name", "MAIN CATEGORY")]
+    else:
+        idents = [("commercial_category_name", "COMMERCIAL CATEGORY")]
+        if is_subcat:
+            idents.append(("sub_category_name", "SUBCATEGORY"))
 
     def base_cols(width=26):
-        cols = [{"field": "commercial_category_name", "header": "COMMERCIAL CATEGORY", "width": width}]
-        if is_subcat:
-            cols.append({"field": "sub_category_name", "header": "SUBCATEGORY", "width": width})
-        return cols
+        return [{"field": f, "header": h, "width": width} for f, h in idents]
 
     def base_vals(r):
-        v = {"commercial_category_name": r["commercial_category_name"]}
-        if is_subcat:
-            v["sub_category_name"] = r["sub_category_name"]
-        return v
+        return {f: r[f] for f, _ in idents}
 
     # Sheet 1 reproduces what is on screen: every competitor's PI side by side,
     # so a row can be read across without opening seven tabs.
     grid = {
         "name": "Blended PI",
-        "title": "Blended PI by " + ("subcategory" if is_subcat else "commercial category"),
+        "title": "Blended PI by " + {"sub_category": "subcategory",
+                                     "main_category": "main category"}.get(group_by, "commercial category"),
         "note": "PI = Breadfast price ÷ competitor price. Above 1.00 means Breadfast is more expensive. "
                 "Blank = nothing priced on both sides in that row.",
         "columns": [
@@ -569,7 +581,7 @@ def export_workbook(
         specs = [_products_sheet(payload, comps)]
         name = "Products_Price_Position.xlsx"
     else:
-        gb = group_by if group_by in ("sub_category", "commercial_category") else "sub_category"
+        gb = group_by if group_by in _GROUP_BYS else "sub_category"
         df = svc.get_blended_pi_by_subcategory(filters, group_by=gb)
         # Same competitor set the table draws columns for: the union of the
         # per-row PI dicts, keys included even where the value is null.
