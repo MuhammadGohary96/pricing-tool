@@ -212,6 +212,8 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         if filters:
             if filters.get("main_category"):
                 filtered = self._multi_match(filtered, "commercial_category_name", filters["main_category"])
+            if filters.get("main_category_name"):
+                filtered = self._multi_match(filtered, "main_category_name", filters["main_category_name"])
             if filters.get("sub_category"):
                 filtered = self._multi_match(filtered, "sub_category_name", filters["sub_category"])
             if filters.get("global_tier"):
@@ -270,24 +272,47 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             ).fetchall()
         return [r[0] for r in rows]
 
-    def get_filter_options(self, main_category: Optional[str] = None) -> dict:
+    def get_filter_options(
+        self,
+        main_category: Optional[str] = None,
+        main_category_name: Optional[str] = None,
+        vertical: Optional[str] = None,
+    ) -> dict:
+        """Option lists for the filter bar.
+
+        `main_category` (commercial category) and `main_category_name`
+        (storefront main category) each narrow the subcategory list — to the
+        intersection when both are set. `vertical` narrows the main-category
+        list, since the Vertical is itself derived from main category.
+        """
+        def _split(raw):
+            return [v.strip() for v in str(raw or "").split(",") if v.strip()]
+
         con = self._duckdb_conn
         with self._duckdb_lock:
             mains = [r[0] for r in con.execute(
                 "SELECT DISTINCT commercial_category_name FROM global_base "
                 "WHERE commercial_category_name IS NOT NULL ORDER BY 1"
             ).fetchall()]
-            if main_category:
-                subs = [r[0] for r in con.execute(
-                    "SELECT DISTINCT sub_category_name FROM global_base "
-                    "WHERE sub_category_name IS NOT NULL AND commercial_category_name = ? ORDER BY 1",
-                    [main_category],
-                ).fetchall()]
-            else:
-                subs = [r[0] for r in con.execute(
-                    "SELECT DISTINCT sub_category_name FROM global_base "
-                    "WHERE sub_category_name IS NOT NULL ORDER BY 1"
-                ).fetchall()]
+
+            v = str(vertical or "").strip().lower()
+            vert_sql = {
+                "beauty": " AND LOWER(main_category_name) = 'fragrances & beauty'",
+                "supermarket": " AND LOWER(main_category_name) <> 'fragrances & beauty'",
+            }.get(v, "")
+            storefront = [r[0] for r in con.execute(
+                "SELECT DISTINCT main_category_name FROM global_base "
+                "WHERE main_category_name IS NOT NULL" + vert_sql + " ORDER BY 1"
+            ).fetchall()]
+
+            sub_sql = "SELECT DISTINCT sub_category_name FROM global_base WHERE sub_category_name IS NOT NULL"
+            sub_params: list = []
+            for col, vals in (("commercial_category_name", _split(main_category)),
+                              ("main_category_name", _split(main_category_name))):
+                if vals:
+                    sub_sql += f" AND {col} IN ({', '.join(['?'] * len(vals))})"
+                    sub_params.extend(vals)
+            subs = [r[0] for r in con.execute(sub_sql + " ORDER BY 1", sub_params).fetchall()]
             brands = [r[0] for r in con.execute(
                 "SELECT DISTINCT brand_name FROM global_base WHERE brand_name IS NOT NULL ORDER BY 1"
             ).fetchall()]
@@ -296,6 +321,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             ).fetchall()]
         return {
             "main_categories": mains,
+            "storefront_main_categories": storefront,
             "sub_categories": subs,
             "global_tiers": ["Top+", "Top", "Medium", "Low", "Very Low"],
             "subcat_tiers": ["Top+", "Top", "Medium", "Low", "Very Low"],
@@ -336,6 +362,9 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         # and what the category roll-up groups on), so it must filter that column
         # — not main_category_name — to match the dropdown and the category drill.
         add_in_filter("commercial_category_name", "main_category")
+        # Storefront main category ("Main Category" in the UI) — its own param,
+        # since `main_category` above is already taken by commercial category.
+        add_in_filter("main_category_name", "main_category_name")
         add_in_filter("sub_category_name", "sub_category")
         add_in_filter("global_tier", "global_tier")
         add_in_filter("brand_name", "brand")
@@ -697,13 +726,17 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
           - 'commercial_category': rolled up to one row per commercial category —
             a true quantity-weighted recompute at that grain (not an average of
             subcategory PIs).
+          - 'main_category': the same roll-up at storefront main category.
 
         Each row carries: group_key (the grouped value), blended_pi, per-competitor
         dicts (blended_pis, product_pis, used/eligible/mapped/needs_action counts),
         total revenue, and total/eligible/mapped/needs_action product counts.
         Product-level: unaffected by the competitor price fallback (FP-grain only).
         """
-        grp = "commercial_category_name" if group_by == "commercial_category" else "sub_category_name"
+        grp = {
+            "commercial_category": "commercial_category_name",
+            "main_category": "main_category_name",
+        }.get(group_by, "sub_category_name")
 
         where, params = self._build_where_clause(filters)
         base_cte = self._base_cte(where)
@@ -798,6 +831,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             SELECT
                 __GRP__ AS group_key,
                 ANY_VALUE(commercial_category_name) AS commercial_category_name,
+                ANY_VALUE(main_category_name) AS main_category_name,
                 COUNT(DISTINCT product_id) AS total_product_count,
                 COUNT(DISTINCT product_id) FILTER (WHERE eligible_product) AS eligible_product_count,
                 COUNT(DISTINCT product_id) FILTER (WHERE is_mapped) AS mapped_product_count,
@@ -848,6 +882,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         SELECT
             ua.group_key,
             fc.commercial_category_name,
+            fc.main_category_name,
             ua.blended_pi,
             CAST(ua.used_product_count AS INTEGER) AS used_product_count,
             COALESCE(ur.total_revenue, 0)::DOUBLE AS total_revenue,
@@ -949,6 +984,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         if df.empty:
             return pd.DataFrame(columns=[
                 "group_key", "sub_category_name", "commercial_category_name",
+                "main_category_name",
                 "blended_pi", "used_product_count",
                 "total_revenue", "pi_deviation", "direction",
                 "total_product_count", "eligible_product_count",
@@ -1059,10 +1095,17 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             df[col] = df["group_key"].map(src).apply(lambda x: x if isinstance(x, dict) else {})
 
         # Identity columns per grain: subcategory mode keeps the subcategory name
-        # (commercial category is a carried column); category mode has no single
-        # subcategory, so the group_key IS the commercial category.
+        # (both category axes are carried columns — each subcategory has one main
+        # category); a category roll-up has no single subcategory, so the
+        # group_key IS that category, and the other category axis is blanked
+        # because the two cut across each other.
         if group_by == "commercial_category":
             df["commercial_category_name"] = df["group_key"]
+            df["main_category_name"] = None
+            df["sub_category_name"] = None
+        elif group_by == "main_category":
+            df["main_category_name"] = df["group_key"]
+            df["commercial_category_name"] = None
             df["sub_category_name"] = None
         else:
             df["sub_category_name"] = df["group_key"]
@@ -1586,6 +1629,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
 
         # Breadfast-only dimensions
         add(bf_clauses, bf_params, "commercial_category_name", split("main_category"))
+        add(bf_clauses, bf_params, "main_category_name", split("main_category_name"))
         add(bf_clauses, bf_params, "global_tier", split("global_tier"))
         add(bf_clauses, bf_params, "subcat_tier", split("subcat_tier"))
 
@@ -1778,6 +1822,18 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 "   AND sub_category_name IS NOT NULL)"
             )
             params_comp = list(params_comp) + cats
+        # Main category reaches their side the same way; it is a strict parent of
+        # subcategory, so the bridge translation here is exact.
+        mains = [v.strip() for v in str(f.get("main_category_name") or "").split(",") if v.strip()]
+        if mains:
+            ph = ", ".join(["?"] * len(mains))
+            where_comp += (
+                " AND mapped_bf_sub_category IN ("
+                f"SELECT DISTINCT sub_category_name FROM global_base"
+                f" WHERE main_category_name IN ({ph})"
+                "   AND sub_category_name IS NOT NULL)"
+            )
+            params_comp = list(params_comp) + mains
         return where_comp, params_comp
 
     # ------------------------------------------------------------------

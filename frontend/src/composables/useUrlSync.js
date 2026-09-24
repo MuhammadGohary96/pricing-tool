@@ -2,9 +2,10 @@ import { watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useFiltersStore } from '../stores/filters'
 
-const FILTER_KEYS = ['mainCategory', 'subCategory', 'globalTier', 'subcatTier', 'actionType', 'brand', 'fpNames']
+const FILTER_KEYS = ['mainCategory', 'mainCategoryName', 'subCategory', 'globalTier', 'subcatTier', 'actionType', 'brand', 'fpNames']
 const URL_PARAM_MAP = {
   mainCategory: 'category',
+  mainCategoryName: 'maincat',
   subCategory: 'subcat',
   globalTier: 'tier',
   subcatTier: 'subcat_tier',
@@ -52,7 +53,7 @@ export function useUrlSync() {
       filters.brandScope = query.brands
       changed = true
     }
-    if (changed && query.category) {
+    if (changed && (query.category || query.maincat)) {
       filters.fetchSubcategories()
     }
   }

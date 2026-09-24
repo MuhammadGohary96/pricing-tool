@@ -73,7 +73,12 @@ class PricingDataServiceInterface(ABC):
         ...
 
     @abstractmethod
-    def get_filter_options(self, main_category: Optional[str] = None) -> dict:
+    def get_filter_options(
+        self,
+        main_category: Optional[str] = None,
+        main_category_name: Optional[str] = None,
+        vertical: Optional[str] = None,
+    ) -> dict:
         ...
 
     @abstractmethod

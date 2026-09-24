@@ -6,6 +6,7 @@ router = APIRouter(prefix="/api/executive", tags=["executive"])
 
 def _filters(
     main_category: Optional[str] = Query(None),
+    main_category_name: Optional[str] = Query(None),
     sub_category: Optional[str] = Query(None),
     global_tier: Optional[str] = Query(None),
     brand: Optional[str] = Query(None),
@@ -21,6 +22,8 @@ def _filters(
     params = {}
     if main_category:
         params["main_category"] = main_category
+    if main_category_name:
+        params["main_category_name"] = main_category_name
     if sub_category:
         params["sub_category"] = sub_category
     if global_tier:

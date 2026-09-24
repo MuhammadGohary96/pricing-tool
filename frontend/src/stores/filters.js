@@ -1,9 +1,25 @@
 import { defineStore } from 'pinia'
 import { filtersApi } from '../api/client'
 
+// The Vertical is derived from storefront main category: Beauty is this one
+// main category, Supermarket is every other.
+const BEAUTY_MAIN_CATEGORY = 'fragrances & beauty'
+
+/** Main-category options that fit a vertical ('' | 'Beauty' | 'Supermarket'). */
+export function mainCategoriesForVertical(all, vertical) {
+  const v = String(vertical || '').toLowerCase()
+  if (v === 'beauty') return all.filter(m => m.toLowerCase() === BEAUTY_MAIN_CATEGORY)
+  if (v === 'supermarket') return all.filter(m => m.toLowerCase() !== BEAUTY_MAIN_CATEGORY)
+  return all
+}
+
 export const useFiltersStore = defineStore('filters', {
   state: () => ({
+    // NB: `mainCategory` is the COMMERCIAL category (legacy name, kept because
+    // it is in saved views and shared URLs). The storefront main category —
+    // "Main Category" in the UI, main_category_name — is `mainCategoryName`.
     mainCategory: [],
+    mainCategoryName: [],
     subCategory: [],
     globalTier: [],
     subcatTier: [],
@@ -36,6 +52,7 @@ export const useFiltersStore = defineStore('filters', {
     // product×competitor modal, flagged estimated. Default OFF.
     priceFallback: false,
     categories: [],
+    mainCategories: [],
     subcategories: [],
     globalTiers: [],
     subcatTiers: [],
@@ -49,6 +66,7 @@ export const useFiltersStore = defineStore('filters', {
     activeFilters(state) {
       const params = {}
       if (state.mainCategory.length) params.main_category = state.mainCategory.join(',')
+      if (state.mainCategoryName.length) params.main_category_name = state.mainCategoryName.join(',')
       if (state.subCategory.length) params.sub_category = state.subCategory.join(',')
       if (state.globalTier.length) params.global_tier = state.globalTier.join(',')
       if (state.subcatTier.length) params.subcat_tier = state.subcatTier.join(',')
@@ -66,6 +84,7 @@ export const useFiltersStore = defineStore('filters', {
     hasActiveFilters(state) {
       return !!(
         state.mainCategory.length ||
+        state.mainCategoryName.length ||
         state.subCategory.length ||
         state.globalTier.length ||
         state.subcatTier.length ||
@@ -92,8 +111,11 @@ export const useFiltersStore = defineStore('filters', {
         const cached = sessionStorage.getItem(CACHE_KEY)
         if (cached) {
           const { data, ts } = JSON.parse(cached)
-          if (Date.now() - ts < CACHE_TTL) {
+          // A cache written before a list existed is a miss, or that dropdown
+          // stays empty until the TTL runs out.
+          if (Date.now() - ts < CACHE_TTL && Array.isArray(data.mainCategories)) {
             this.categories = data.categories
+            this.mainCategories = data.mainCategories
             this.globalTiers = data.globalTiers
             this.subcatTiers = data.subcatTiers
             this.actionTypes = data.actionTypes
@@ -107,13 +129,15 @@ export const useFiltersStore = defineStore('filters', {
       } catch {}
 
       try {
-        const [catRes, tierRes, compRes, fpsRes] = await Promise.all([
+        const [catRes, mainRes, tierRes, compRes, fpsRes] = await Promise.all([
           filtersApi.getCategories(),
+          filtersApi.getMainCategories(),
           filtersApi.getTiers(),
           filtersApi.getCompetitors(),
           filtersApi.getFPs(),
         ])
         this.categories = catRes.data.categories
+        this.mainCategories = mainRes.data.main_categories || []
         this.globalTiers = tierRes.data.global_tiers
         this.subcatTiers = tierRes.data.subcat_tiers
         this.actionTypes = tierRes.data.action_types
@@ -126,6 +150,7 @@ export const useFiltersStore = defineStore('filters', {
             ts: Date.now(),
             data: {
               categories: this.categories,
+              mainCategories: this.mainCategories,
               globalTiers: this.globalTiers,
               subcatTiers: this.subcatTiers,
               actionTypes: this.actionTypes,
@@ -142,13 +167,17 @@ export const useFiltersStore = defineStore('filters', {
       }
     },
 
-    async fetchSubcategories(mainOverride) {
+    async fetchSubcategories(commercialOverride, mainNameOverride) {
       try {
-        // Override lets the FilterBar load subcategory options for a *staged*
-        // (not-yet-applied) category selection. Falls back to the committed one.
-        const committed = this.mainCategory.length === 1 ? this.mainCategory[0] : null
-        const main = mainOverride === undefined ? committed : mainOverride
-        const res = await filtersApi.getSubcategories(main)
+        // Overrides let the FilterBar load subcategory options for a *staged*
+        // (not-yet-applied) selection. Each falls back to the committed one.
+        // Both category axes narrow the list — to their intersection when set.
+        const commercial = commercialOverride === undefined ? this.mainCategory : commercialOverride
+        const mainName = mainNameOverride === undefined ? this.mainCategoryName : mainNameOverride
+        const res = await filtersApi.getSubcategories(
+          commercial?.length ? commercial.join(',') : null,
+          mainName?.length ? mainName.join(',') : null,
+        )
         this.subcategories = res.data.subcategories
       } catch (err) {
         console.error('Failed to fetch subcategories:', err)
@@ -157,7 +186,17 @@ export const useFiltersStore = defineStore('filters', {
 
     async setFilter(key, value) {
       this[key] = value
-      if (key === 'mainCategory') {
+      if (key === 'vertical') {
+        // Drop main categories the new vertical rules out.
+        const fits = new Set(mainCategoriesForVertical(this.mainCategoryName, value))
+        const kept = this.mainCategoryName.filter(m => fits.has(m))
+        if (kept.length !== this.mainCategoryName.length) {
+          this.mainCategoryName = kept
+          this.subCategory = []
+          await this.fetchSubcategories()
+        }
+      }
+      if (key === 'mainCategory' || key === 'mainCategoryName') {
         this.subCategory = []
         await this.fetchSubcategories()
       }
@@ -165,6 +204,7 @@ export const useFiltersStore = defineStore('filters', {
 
     clearAll() {
       this.mainCategory = []
+      this.mainCategoryName = []
       this.subCategory = []
       this.globalTier = []
       this.subcatTier = []
@@ -188,6 +228,7 @@ export const useFiltersStore = defineStore('filters', {
     // silently flipping privateLabel / priceFallback.
     applySnapshot(snap = {}) {
       this.mainCategory = Array.isArray(snap.mainCategory) ? [...snap.mainCategory] : []
+      this.mainCategoryName = Array.isArray(snap.mainCategoryName) ? [...snap.mainCategoryName] : []
       this.subCategory = Array.isArray(snap.subCategory) ? [...snap.subCategory] : []
       this.globalTier = Array.isArray(snap.globalTier) ? [...snap.globalTier] : []
       this.subcatTier = Array.isArray(snap.subcatTier) ? [...snap.subcatTier] : []

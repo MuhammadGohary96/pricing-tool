@@ -93,6 +93,7 @@
         style="max-height: 420px;"
         @select="onSubcategorySelect"
         @select-category="onCategorySelect"
+        @select-main-category="onMainCategorySelect"
         @select-product="onSelectProduct"
         @set-group-by="store.setBlendedGroupBy"
       />
@@ -205,6 +206,7 @@ onMounted(async () => {
 watchDebounced(
   () => [
     filters.mainCategory,
+    filters.mainCategoryName,
     filters.subCategory,
     filters.globalTier,
     filters.subcatTier,
@@ -241,6 +243,11 @@ function onSubcategorySelect(subCategory) {
 // cascade reset + reload subcategory options.
 function onCategorySelect(commercialCategory) {
   filters.setFilter('mainCategory', commercialCategory ? [commercialCategory] : [])
+}
+
+// Main-category roll-up drill: same pattern, on the storefront axis.
+function onMainCategorySelect(mainCategory) {
+  filters.setFilter('mainCategoryName', mainCategory ? [mainCategory] : [])
 }
 
 function onSelectProduct({ productName, subcategory }) {

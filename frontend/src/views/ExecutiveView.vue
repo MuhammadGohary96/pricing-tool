@@ -305,6 +305,7 @@ onUnmounted(() => {
 watchDebounced(
   () => [
     filters.mainCategory,
+    filters.mainCategoryName,
     filters.subCategory,
     filters.globalTier,
     filters.subcatTier,

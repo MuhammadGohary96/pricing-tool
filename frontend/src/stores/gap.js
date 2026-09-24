@@ -56,6 +56,7 @@ export const useGapStore = defineStore('gap', {
       const f = useFiltersStore()
       const p = {}
       if (f.mainCategory.length) p.main_category = f.mainCategory.join(',')
+      if (f.mainCategoryName.length) p.main_category_name = f.mainCategoryName.join(',')
       if (f.subCategory.length) p.sub_category = f.subCategory.join(',')
       if (f.brand.length) p.brand = f.brand.join(',')
       if (f.vertical) p.vertical = f.vertical

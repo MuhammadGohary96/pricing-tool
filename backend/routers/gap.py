@@ -19,6 +19,7 @@ router = APIRouter(prefix="/api/gap", tags=["gap"])
 def _filters(
     competitor: Optional[str] = Query(None),
     main_category: Optional[str] = Query(None),
+    main_category_name: Optional[str] = Query(None),
     sub_category: Optional[str] = Query(None),
     brand: Optional[str] = Query(None),
     global_tier: Optional[str] = Query(None),
@@ -40,6 +41,8 @@ def _filters(
         params["competitor"] = competitor
     if main_category:
         params["main_category"] = main_category
+    if main_category_name:
+        params["main_category_name"] = main_category_name
     if sub_category:
         params["sub_category"] = sub_category
     if brand:
