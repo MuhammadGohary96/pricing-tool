@@ -1,6 +1,8 @@
 from pydantic import BaseModel
 from typing import Optional
 
+from backend.models.types import NullableStr
+
 
 class CommercialKPIs(BaseModel):
     total_products: int
@@ -32,9 +34,9 @@ class BlendedPIRow(BaseModel):
     # group_key = the value grouped on (subcategory name, or commercial category
     # name in the rolled-up view). sub_category_name is null in category mode.
     group_key: str
-    sub_category_name: Optional[str] = None
-    commercial_category_name: Optional[str] = None
-    main_category_name: Optional[str] = None
+    sub_category_name: NullableStr = None
+    commercial_category_name: NullableStr = None
+    main_category_name: NullableStr = None
     blended_pi: Optional[float] = None
     pi_deviation: Optional[float] = None
     direction: str
@@ -112,7 +114,7 @@ class WorklistRow(BaseModel):
     tier_order: int
     action_type: str
     action_symbol: str
-    competitor_name: Optional[str] = None
+    competitor_name: NullableStr = None
     similarity_score: Optional[float] = None
     bf_sale_price: float
     competitor_sale_price: Optional[float] = None
@@ -130,7 +132,7 @@ class MatchReviewRow(BaseModel):
     bf_product_name: str
     bf_brand: str
     bf_price: float
-    competitor_name: Optional[str] = None
+    competitor_name: NullableStr = None
     suggested_competitor_name: str
     similarity_score: float
     estimated_competitor_price: float
