@@ -104,6 +104,7 @@
         :page="store.currentPage"
         :page-size="store.pageSize"
         :side="store.productSide"
+        :competitor="store.competitor || ''"
         :search-query="store.searchQuery"
         :export-fetcher="() => exportRows('products')"
         @page="store.setPage($event)"

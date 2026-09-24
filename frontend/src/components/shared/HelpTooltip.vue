@@ -7,11 +7,16 @@
     @focusin="open"
     @focusout="close"
   >
-    <button
-      type="button"
-      class="w-4 h-4 rounded-full bg-grey-100 text-grey-500 text-micro font-bold flex items-center justify-center hover:bg-brand-50 hover:text-brand-primary transition-colors focus:outline-none focus:ring-1 focus:ring-brand-primary"
-      :aria-label="`Help: ${text}`"
-    >?</button>
+    <!-- Default trigger is the "?" dot; a slot swaps in any other trigger (a
+         badge, say) and reuses the clipping-proof bubble below. A slotted
+         trigger should be focusable itself, so keyboard users get the tip too. -->
+    <slot>
+      <button
+        type="button"
+        class="w-4 h-4 rounded-full bg-grey-100 text-grey-500 text-micro font-bold flex items-center justify-center hover:bg-brand-50 hover:text-brand-primary transition-colors focus:outline-none focus:ring-1 focus:ring-brand-primary"
+        :aria-label="`Help: ${text}`"
+      >?</button>
+    </slot>
 
     <!-- Teleported to <body> on purpose. These question marks live inside table
          headers, and every table here sits in a wrapper with overflow-x: auto

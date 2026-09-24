@@ -109,6 +109,10 @@
               :title="row.main_category_name || ''"
             >
               {{ row.main_category_name || '—' }}
+              <span v-if="row.weight_normalized_count || row.weight_mismatch_count" class="inline-flex items-center gap-0.5 ml-1 align-middle">
+                <WeightBadge v-if="row.weight_normalized_count" status="blend" :count="row.weight_normalized_count" :of="row.used_product_count" />
+                <WeightBadge v-if="row.weight_mismatch_count" status="blend-mismatch" :count="row.weight_mismatch_count" />
+              </span>
             </td>
             <td
               v-else
@@ -118,9 +122,19 @@
               :title="row.commercial_category_name || ''"
             >
               {{ row.commercial_category_name || '—' }}
+              <template v-if="groupBy === 'commercial_category'">
+              <span v-if="row.weight_normalized_count || row.weight_mismatch_count" class="inline-flex items-center gap-0.5 ml-1 align-middle">
+                <WeightBadge v-if="row.weight_normalized_count" status="blend" :count="row.weight_normalized_count" :of="row.used_product_count" />
+                <WeightBadge v-if="row.weight_mismatch_count" status="blend-mismatch" :count="row.weight_mismatch_count" />
+              </span>
+              </template>
             </td>
             <td v-if="groupBy === 'sub_category'" class="px-3 py-1.5 text-body text-grey-900 text-center truncate" style="max-width: 180px" :title="row.sub_category_name">
               {{ row.sub_category_name }}
+              <span v-if="row.weight_normalized_count || row.weight_mismatch_count" class="inline-flex items-center gap-0.5 ml-1 align-middle">
+                <WeightBadge v-if="row.weight_normalized_count" status="blend" :count="row.weight_normalized_count" :of="row.used_product_count" />
+                <WeightBadge v-if="row.weight_mismatch_count" status="blend-mismatch" :count="row.weight_mismatch_count" />
+              </span>
             </td>
             <td class="px-3 py-1.5 text-center font-mono text-body font-bold" :class="piTextClass(rowMinPI(row))">
               <span class="text-[10px] mr-0.5 opacity-70">{{ piArrow(rowMinPI(row)) }}</span>{{ rowMinPI(row)?.toFixed(2) ?? '—' }}
@@ -142,7 +156,13 @@
               :key="'val-' + comp"
               class="px-2 py-1.5 text-center font-mono text-body font-bold whitespace-nowrap"
               :class="[compPiClass(row.competitor_blended_pis?.[comp]), selectedCompetitor === comp ? 'bg-brand-50' : '']"
-            ><span v-if="row.competitor_blended_pis?.[comp] != null" class="text-[10px] mr-0.5 opacity-70">{{ piArrow(row.competitor_blended_pis[comp]) }}</span>{{ row.competitor_blended_pis?.[comp]?.toFixed(2) ?? '—' }}</td>
+            ><span v-if="row.competitor_blended_pis?.[comp] != null" class="text-[10px] mr-0.5 opacity-70">{{ piArrow(row.competitor_blended_pis[comp]) }}</span>{{ row.competitor_blended_pis?.[comp]?.toFixed(2) ?? '—' }}<WeightBadge
+                v-if="row.competitor_weight_normalized_counts?.[comp]"
+                class="ml-1 align-middle font-sans"
+                status="blend"
+                :count="row.competitor_weight_normalized_counts[comp]"
+                :of="row.competitor_used_counts?.[comp] ?? 0"
+              /></td>
             <!-- Trailing columns -->
             <td class="px-3 py-1.5 text-body text-grey-700 text-center font-mono">{{ row.total_product_count }}</td>
             <td class="px-3 py-1.5 text-body text-center font-mono">
@@ -217,6 +237,7 @@
 <script setup>
 import { ref, computed, watch, watchEffect } from 'vue'
 import PIStripPlot from '../shared/PIStripPlot.vue'
+import WeightBadge from '../shared/WeightBadge.vue'
 import HelpTooltip from '../shared/HelpTooltip.vue'
 import ExportButton from '../shared/ExportButton.vue'
 import CompetitorLogo from '../shared/CompetitorLogo.vue'

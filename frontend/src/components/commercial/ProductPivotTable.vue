@@ -171,6 +171,8 @@
                 >{{ displayRegularPrice(row).toFixed(2) }}</span>
                 <!-- Sale price (BQ) -->
                 <span class="text-grey-900 font-mono">{{ displaySalePrice(row)?.toFixed(2) ?? '—' }}</span>
+                <!-- Our pack size (Fruits & Vegetables only) -->
+                <SizeChip class="mt-0.5" :value="row.bf_size_value" :unit="row.bf_size_unit" title="Our pack size" />
               </div>
             </td>
             <!-- Worst PI (dynamic: max across visible competitors) -->
@@ -179,7 +181,14 @@
               :class="[piBgClass(effectiveWorstPI(row)), piTextClass(effectiveWorstPI(row))]"
             >
               <div class="flex flex-col items-end gap-0.5">
-                <span><span v-if="effectiveWorstPI(row) != null" class="text-[10px] mr-0.5 opacity-70">{{ piArrow(effectiveWorstPI(row)) }}</span>{{ effectiveWorstPI(row)?.toFixed(2) ?? '—' }}</span>
+                <span class="inline-flex items-center gap-1">
+                  <WeightBadge
+                    v-if="worstCompetitorName(row) && row[`${worstCompetitorName(row)}_weight`]"
+                    v-bind="weightProps(row, worstCompetitorName(row))"
+                    compact
+                  />
+                  <span><span v-if="effectiveWorstPI(row) != null" class="text-[10px] mr-0.5 opacity-70">{{ piArrow(effectiveWorstPI(row)) }}</span>{{ effectiveWorstPI(row)?.toFixed(2) ?? '—' }}</span>
+                </span>
                 <button
                   v-if="worstCompetitorName(row)"
                   class="text-micro text-grey-400 hover:text-brand-primary transition-colors font-sans font-normal"
@@ -197,6 +206,10 @@
               <td v-if="!compactMode" class="px-3 py-2 text-center text-body text-grey-600 font-mono whitespace-nowrap" :title="`${comp} price`" :style="compIdx(comp) % 2 ? { background: '#FAFAFA' } : {}">
                 <div class="flex flex-col items-end gap-0.5">
                   <span>{{ row[`${comp}_price`]?.toFixed(2) ?? '—' }}</span>
+                  <SizeChip
+                    :value="row[`${comp}_size_value`]" :unit="row[`${comp}_size_unit`]" :title="`${comp} pack size`"
+                    :flagged="row[`${comp}_weight`] === 'mismatch'"
+                  />
                   <span
                     v-if="row[`${comp}_action`]"
                     class="inline-block px-1.5 py-px rounded-full font-bold leading-tight"
@@ -215,6 +228,13 @@
               >
                 <div class="flex flex-col items-end gap-0.5">
                   <span><span v-if="row[`${comp}_pi`] != null" class="text-[10px] mr-0.5 opacity-70">{{ piArrow(row[`${comp}_pi`]) }}</span>{{ row[`${comp}_pi`]?.toFixed(2) ?? '—' }}</span>
+                  <!-- Weight normalization (F&V): this PI is per kg, or its sizes are flagged -->
+                  <WeightBadge v-if="row[`${comp}_weight`]" v-bind="weightProps(row, comp)" />
+                  <SizeChip
+                    v-if="compactMode"
+                    :value="row[`${comp}_size_value`]" :unit="row[`${comp}_size_unit`]" :title="`${comp} pack size`"
+                    :flagged="row[`${comp}_weight`] === 'mismatch'"
+                  />
                   <span
                     v-if="compactMode && row[`${comp}_action`]"
                     class="inline-block px-1.5 py-px rounded-full font-bold leading-tight"
@@ -265,6 +285,8 @@ import TierBadge from '../shared/TierBadge.vue'
 import EmptyState from '../shared/EmptyState.vue'
 import ExportButton from '../shared/ExportButton.vue'
 import CompetitorLogo from '../shared/CompetitorLogo.vue'
+import SizeChip from '../shared/SizeChip.vue'
+import WeightBadge from '../shared/WeightBadge.vue'
 import ProductPricingDetailModal from './ProductPricingDetailModal.vue'
 import { Search as SearchIcon, Loader2, X, ChevronLeft, ChevronRight, ListFilter, ArrowUp, ArrowDown, ChevronsUpDown } from 'lucide-vue-next'
 import { piTextClass, piBgClass, piArrow } from '../../utils/piColor'
@@ -345,6 +367,18 @@ const tableContainerRef = ref(null)
 const detailProductId = ref(null)
 function openDetail(row) {
   detailProductId.value = row.product_id
+}
+
+// Props for the weight badge on one competitor's PI (Fruits & Vegetables).
+function weightProps(row, comp) {
+  return {
+    status: row[`${comp}_weight`],
+    competitor: comp,
+    bfSize: row.bf_size_value, bfUnit: row.bf_size_unit,
+    compSize: row[`${comp}_size_value`], compUnit: row[`${comp}_size_unit`],
+    compPrice: row[`${comp}_price`], ratio: row[`${comp}_size_ratio`],
+    pi: row[`${comp}_pi`], rawPi: row[`${comp}_raw_pi`],
+  }
 }
 
 function worstCompetitorName(row) {

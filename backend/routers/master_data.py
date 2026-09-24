@@ -72,6 +72,18 @@ def get_match_reviews(
     return svc.get_match_reviews(filters, page=page, page_size=page_size)
 
 
+@router.get("/size-mismatches")
+def get_size_mismatches(
+    request: Request,
+    filters: dict = Depends(_filters),
+):
+    # Fruits & Vegetables pairs whose pack sizes are too far apart to compare
+    # (their PI stays per pack): a review list, not an action type, so no
+    # existing count moves.
+    svc = request.app.state.data_service
+    return svc.get_size_mismatches(filters)
+
+
 @router.get("/staleness-heatmap")
 def get_staleness_heatmap(request: Request, filters: dict = Depends(_filters)):
     svc = request.app.state.data_service

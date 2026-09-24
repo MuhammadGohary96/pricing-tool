@@ -79,6 +79,7 @@ export const masterDataApi = {
   getWorklist: (params) => api.get('/master-data/worklist', { params }),
   getMatchReviews: (params) => api.get('/master-data/match-reviews', { params }),
   getStalenessHeatmap: (params) => api.get('/master-data/staleness-heatmap', { params }),
+  getSizeMismatches: (params) => api.get('/master-data/size-mismatches', { params }),
 }
 
 export const competitorProductsApi = {

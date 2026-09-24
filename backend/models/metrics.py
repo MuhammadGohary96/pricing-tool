@@ -72,6 +72,11 @@ class BlendedPIRow(BaseModel):
     competitor_matched_fresh_counts: dict[str, int] = {}
     competitor_no_match_counts: dict[str, int] = {}
     competitor_our_only_counts: dict[str, int] = {}
+    # Weight normalization (F&V): products in this blend whose PI is compared
+    # per kg rather than per pack, and products flagged for a size review.
+    weight_normalized_count: int = 0
+    weight_mismatch_count: int = 0
+    competitor_weight_normalized_counts: dict[str, int] = {}
 
 
 class BlendedPITable(BaseModel):

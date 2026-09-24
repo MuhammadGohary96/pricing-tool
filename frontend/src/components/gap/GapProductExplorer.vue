@@ -55,7 +55,11 @@
         <tbody class="divide-y divide-grey-50">
           <tr v-for="row in items" :key="row.competitor_product_key" class="hover:bg-brand-50 transition-colors">
             <td class="px-4 py-3">
-              <div class="text-body font-semibold text-grey-900 max-w-[300px] truncate" :title="row.product_name">{{ row.product_name }}</div>
+              <div class="flex items-center gap-1.5 max-w-[340px]">
+                <span class="text-body font-semibold text-grey-900 truncate" :title="row.product_name">{{ row.product_name }}</span>
+                <!-- Their pack size (only where the bridge lands it in Fruits & Vegetables) -->
+                <SizeChip class="shrink-0" :value="row.comp_size_value" :unit="row.comp_size_unit" title="Their pack size" />
+              </div>
               <div class="text-caption text-grey-400">{{ row.classification }}</div>
             </td>
             <td class="px-4 py-3 text-body text-grey-700">{{ row.brand_name || '—' }}</td>
@@ -170,16 +174,38 @@
             <td class="px-4 py-3 text-center text-body font-mono text-grey-600">
               {{ row.best_similarity != null ? `${Math.round(row.best_similarity * 100)}%` : '—' }}
             </td>
-            <td class="px-4 py-3 text-center text-body font-mono text-grey-700">{{ money(row.bf_sale_price) }}</td>
-            <td class="px-4 py-3 text-center text-body font-mono text-grey-700">{{ money(row.comp_sale_price) }}</td>
+            <td class="px-4 py-3 text-center text-body font-mono text-grey-700">
+              <div class="flex flex-col items-center gap-0.5">
+                {{ money(row.bf_sale_price) }}
+                <SizeChip :value="row.bf_size_value" :unit="row.bf_size_unit" title="Our pack size" />
+              </div>
+            </td>
+            <td class="px-4 py-3 text-center text-body font-mono text-grey-700">
+              <div class="flex flex-col items-center gap-0.5">
+                {{ money(row.comp_sale_price) }}
+                <SizeChip :value="row.comp_size_value" :unit="row.comp_size_unit" title="Their pack size" :flagged="!!row.is_weight_mismatch" />
+              </div>
+            </td>
             <td class="px-4 py-3 text-center">
-              <span v-if="row.sale_PI != null"
-                    class="font-mono text-body font-bold px-1.5 py-0.5 rounded-md"
-                    :class="piBgClass(row.sale_PI)">
-                <span :class="piTextClass(row.sale_PI)">{{ piArrow(row.sale_PI) }}</span>
-                {{ row.sale_PI.toFixed(2) }}
-              </span>
-              <span v-else class="text-grey-300">—</span>
+              <div class="flex flex-col items-center gap-0.5">
+                <span v-if="row.sale_PI != null"
+                      class="font-mono text-body font-bold px-1.5 py-0.5 rounded-md"
+                      :class="piBgClass(row.sale_PI)">
+                  <span :class="piTextClass(row.sale_PI)">{{ piArrow(row.sale_PI) }}</span>
+                  {{ row.sale_PI.toFixed(2) }}
+                </span>
+                <span v-else class="text-grey-300">—</span>
+                <!-- Weight normalization (F&V): PI compared per kg, or sizes flagged -->
+                <WeightBadge
+                  v-if="row.is_weight_normalized || row.is_weight_mismatch"
+                  :status="row.is_weight_normalized ? 'normalized' : 'mismatch'"
+                  :competitor="competitor"
+                  :bf-size="row.bf_size_value" :bf-unit="row.bf_size_unit"
+                  :comp-size="row.comp_size_value" :comp-unit="row.comp_size_unit"
+                  :comp-price="row.comp_sale_price" :ratio="row.size_ratio"
+                  :pi="row.sale_PI" :raw-pi="row.raw_sale_PI"
+                />
+              </div>
             </td>
             <!-- Read left to right as a funnel; the first "no" is the reason.
                  Deliberately three marks rather than three columns of ticks: the
@@ -221,6 +247,8 @@ import ExportButton from '../shared/ExportButton.vue'
 import EmptyState from '../shared/EmptyState.vue'
 import HelpTooltip from '../shared/HelpTooltip.vue'
 import TierBadge from '../shared/TierBadge.vue'
+import SizeChip from '../shared/SizeChip.vue'
+import WeightBadge from '../shared/WeightBadge.vue'
 import { piTextClass, piBgClass, piArrow } from '../../utils/piColor'
 
 const props = defineProps({
@@ -231,6 +259,8 @@ const props = defineProps({
   side: { type: String, default: 'competitor' },
   searchQuery: { type: String, default: '' },
   exportFetcher: { type: Function, required: true },
+  // The competitor every figure is "against", named in the weight tooltip.
+  competitor: { type: String, default: '' },
 })
 const emit = defineEmits(['page', 'search', 'side', 'sort'])
 
