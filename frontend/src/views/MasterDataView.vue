@@ -49,6 +49,14 @@
           <StalenessHeatmap :data="store.staleness" />
         </div>
       </div>
+
+      <!-- Fruits & Vegetables pairs whose pack sizes cannot be compared. Only
+           shown when there is something to review. -->
+      <SizeReviewPanel
+        v-if="store.sizeMismatchesTotal > 0"
+        :items="store.sizeMismatches"
+        :total="store.sizeMismatchesTotal"
+      />
     </div>
   </PageShell>
 </template>
@@ -64,6 +72,7 @@ import ActionBreakdown from '../components/master-data/ActionBreakdown.vue'
 import PriorityWorklist from '../components/master-data/PriorityWorklist.vue'
 import MatchReviewPanel from '../components/master-data/MatchReviewPanel.vue'
 import StalenessHeatmap from '../components/master-data/StalenessHeatmap.vue'
+import SizeReviewPanel from '../components/master-data/SizeReviewPanel.vue'
 import { useUrlSync } from '../composables/useUrlSync'
 import PageShell from '../components/shared/PageShell.vue'
 import PageHeader from '../components/shared/PageHeader.vue'

@@ -10,6 +10,9 @@ export const useMasterDataStore = defineStore('masterData', {
     worklistTotal: 0,
     matchReviews: [],
     matchReviewsTotal: 0,
+    // Fruits & Vegetables pairs flagged for a pack-size review (PI left per pack)
+    sizeMismatches: [],
+    sizeMismatchesTotal: 0,
     staleness: null,
     loading: false,
     error: null,
@@ -31,6 +34,7 @@ export const useMasterDataStore = defineStore('masterData', {
           this.fetchWorklist(),
           this.fetchMatchReviews(),
           this.fetchStaleness(),
+          this.fetchSizeMismatches(),
         ])
       } catch (err) {
         this.error = err.message || 'Failed to load master data'
@@ -73,6 +77,12 @@ export const useMasterDataStore = defineStore('masterData', {
       })
       this.matchReviews = res.data.items || []
       this.matchReviewsTotal = res.data.total_count || 0
+    },
+
+    async fetchSizeMismatches() {
+      const res = await masterDataApi.getSizeMismatches(this._params())
+      this.sizeMismatches = res.data.items || []
+      this.sizeMismatchesTotal = res.data.total_count || 0
     },
 
     async fetchStaleness() {

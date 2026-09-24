@@ -31,6 +31,7 @@
                 <span class="text-micro font-semibold text-grey-500 uppercase tracking-wide">BF Price</span>
                 <span class="font-mono text-2xl font-bold text-grey-900">{{ fmt(data.product.bf_sale_price) }}</span>
                 <span class="text-caption text-grey-500">EGP</span>
+                <SizeChip class="self-center" :value="data.product.bf_size_value" :unit="data.product.bf_size_unit" title="Our pack size" />
                 <span
                   v-if="data.product.bf_regular_price && data.product.bf_regular_price !== data.product.bf_sale_price"
                   class="font-mono text-caption text-grey-400 line-through"
@@ -95,6 +96,17 @@
                       <CompetitorLogo :name="comp.competitor_name" />
                       <span class="text-caption font-bold text-grey-700">{{ comp.competitor_name }}</span>
                     </div>
+                    <!-- Their pack size, and how this pair's PI treats it (F&V) -->
+                    <div v-if="comp.size_value != null || comp.weight" class="flex items-center justify-end gap-1 mt-0.5">
+                      <SizeChip
+                        :value="comp.size_value" :unit="comp.size_unit" :title="`${comp.competitor_name} pack size`"
+                        :flagged="comp.weight === 'mismatch'"
+                      />
+                      <WeightBadge
+                        v-if="comp.weight"
+                        v-bind="weightProps(comp, { price: comp.agg_price, pi: comp.agg_pi, bf: data.product.bf_sale_price })"
+                      />
+                    </div>
                   </th>
                 </tr>
               </thead>
@@ -116,17 +128,33 @@
                     <!-- priced (fresh) -->
                     <div v-if="cell.state === 'priced'" class="flex flex-col items-end gap-1">
                       <span class="font-mono text-caption font-medium text-grey-700">{{ fmt(cell.price) }}</span>
-                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-micro font-bold" :class="[piBgClass(cell.pi), piTextClass(cell.pi)]">
-                        <span class="text-[9px]">{{ piArrow(cell.pi) }}</span>
-                        <span class="font-mono">{{ cell.pi != null ? cell.pi.toFixed(2) : '—' }}</span>
+                      <span class="inline-flex items-center gap-1">
+                        <WeightBadge
+                          v-if="cell.weight"
+                          v-bind="weightProps(compByName(cell.competitor_name), { price: cell.price, pi: cell.pi, bf: row.bf_sale_price })"
+                          :status="cell.weight"
+                          compact
+                        />
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-micro font-bold" :class="[piBgClass(cell.pi), piTextClass(cell.pi)]">
+                          <span class="text-[9px]">{{ piArrow(cell.pi) }}</span>
+                          <span class="font-mono">{{ cell.pi != null ? cell.pi.toFixed(2) : '—' }}</span>
+                        </span>
                       </span>
                     </div>
                     <!-- estimated (fallback fill) -->
                     <div v-else-if="cell.state === 'estimated'" class="flex flex-col items-end gap-1" :title="`Estimated — typical price across fulfillment points (no fresh price at ${row.fp_name})`">
                       <span class="font-mono text-caption font-medium text-grey-500 inline-flex items-center gap-0.5"><span class="text-[9px]">≈</span>{{ fmt(cell.price) }}</span>
-                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-micro font-bold ring-1 ring-dashed ring-brand-light opacity-80" :class="[piBgClass(cell.pi), piTextClass(cell.pi)]">
-                        <span class="text-[9px]">≈</span>
-                        <span class="font-mono">{{ cell.pi != null ? cell.pi.toFixed(2) : '—' }}</span>
+                      <span class="inline-flex items-center gap-1">
+                        <WeightBadge
+                          v-if="cell.weight"
+                          v-bind="weightProps(compByName(cell.competitor_name), { price: cell.price, pi: cell.pi, bf: row.bf_sale_price })"
+                          :status="cell.weight"
+                          compact
+                        />
+                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-micro font-bold ring-1 ring-dashed ring-brand-light opacity-80" :class="[piBgClass(cell.pi), piTextClass(cell.pi)]">
+                          <span class="text-[9px]">≈</span>
+                          <span class="font-mono">{{ cell.pi != null ? cell.pi.toFixed(2) : '—' }}</span>
+                        </span>
                       </span>
                     </div>
                     <!-- outdated — only a stale price exists; shown for reference, never blended -->
@@ -201,6 +229,8 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { X, Clock, Unlink2, AlertTriangle } from 'lucide-vue-next'
 import CompetitorLogo from '../shared/CompetitorLogo.vue'
+import SizeChip from '../shared/SizeChip.vue'
+import WeightBadge from '../shared/WeightBadge.vue'
 import PillButton from '../shared/PillButton.vue'
 import { commercialApi } from '../../api/client'
 import { useFiltersStore } from '../../stores/filters'
@@ -257,6 +287,24 @@ const summaryChips = computed(() => {
 
 function compIdx(name) {
   return data.value?.competitors?.findIndex(c => c.competitor_name === name) ?? 0
+}
+
+function compByName(name) {
+  return data.value?.competitors?.find(c => c.competitor_name === name) || {}
+}
+
+// Weight badge props for one competitor (F&V). `at` is the price/PI being
+// explained — a cell's, or the pair's aggregate — and the BF price it was
+// computed from, so the per-pack PI can be shown beside the per-kg one.
+function weightProps(comp, at) {
+  return {
+    status: comp.weight,
+    competitor: comp.competitor_name,
+    bfSize: data.value?.product?.bf_size_value, bfUnit: data.value?.product?.bf_size_unit,
+    compSize: comp.size_value, compUnit: comp.size_unit,
+    compPrice: at.price, ratio: comp.size_ratio, pi: at.pi,
+    rawPi: at.bf && at.price ? at.bf / at.price : null,
+  }
 }
 
 function fmt(v) {

@@ -66,10 +66,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
 
         self._duckdb_conn = duckdb.connect(":memory:", read_only=False)
         self._duckdb_conn.execute("PRAGMA threads=4")
-        self._duckdb_conn.execute(
-            f"CREATE OR REPLACE VIEW fp_grain AS "
-            f"SELECT * FROM read_parquet('{self._parquet_path}')"
-        )
+        self._create_fp_grain_view()
         self._assert_gap_schema()
         self._materialize_global_base()
         self._materialize_comp_catalogue()
@@ -110,6 +107,33 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         (row_count,) = self._duckdb_conn.execute("SELECT COUNT(*) FROM fp_grain").fetchone()
         logger.info(
             f"[DuckDB] Ready — {row_count:,} rows, total pre-warm {time.time() - t0:.1f}s"
+        )
+
+    # Weight-normalization columns (docs/FP_granularity_pricing.sql STEP 11b).
+    # A Parquet written before the model carried them — the PVC cache survives
+    # deploys — gets NULL placeholders instead of a binder error, and NULL reads
+    # as "not normalized" everywhere, so every number stays what it was.
+    _WEIGHT_COLS = {
+        "bf_size_value": "DOUBLE", "bf_size_unit": "VARCHAR",
+        "comp_size_value": "DOUBLE", "comp_size_unit": "VARCHAR",
+        "size_ratio": "DOUBLE", "size_status": "VARCHAR",
+        "raw_sale_PI": "DOUBLE", "competitor_sale_price_normalized": "DOUBLE",
+    }
+
+    def _create_fp_grain_view(self) -> None:
+        src = f"read_parquet('{self._parquet_path}')"
+        have = {
+            r[0] for r in self._duckdb_conn.execute(
+                f"SELECT column_name FROM (DESCRIBE SELECT * FROM {src})"
+            ).fetchall()
+        }
+        placeholders = "".join(
+            f", CAST(NULL AS {t}) AS {c}" for c, t in self._WEIGHT_COLS.items() if c not in have
+        )
+        if placeholders:
+            logger.info("[DuckDB] Parquet predates weight normalization; size columns read as NULL")
+        self._duckdb_conn.execute(
+            f"CREATE OR REPLACE VIEW fp_grain AS SELECT *{placeholders} FROM {src}"
         )
 
     def _assert_gap_schema(self) -> None:
@@ -173,10 +197,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         """Re-export `_df` to Parquet and reload the DuckDB view (called after BG refresh)."""
         with self._duckdb_lock:
             write_parquet(self._df, self._parquet_path)
-            self._duckdb_conn.execute(
-                f"CREATE OR REPLACE VIEW fp_grain AS "
-                f"SELECT * FROM read_parquet('{self._parquet_path}')"
-            )
+            self._create_fp_grain_view()
             self._assert_gap_schema()
             self._materialize_global_base()
             self._materialize_comp_catalogue()
@@ -423,7 +444,12 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
     # ------------------------------------------------------------------
     _BASE_CTE = """
     WITH scoped AS (
-        SELECT * FROM fp_grain
+        -- comp_pi_price: the competitor price a PI is computed on. For weight-
+        -- normalized F&V rows it is their price scaled to our pack
+        -- (docs/FP_granularity_pricing.sql STEP 11b); everywhere else it IS
+        -- competitor_sale_price, so every modal, PI and blend is unchanged.
+        SELECT *, COALESCE(competitor_sale_price_normalized, competitor_sale_price) AS comp_pi_price
+        FROM fp_grain
         WHERE row_type = 'breadfast'
         {and_where}
     ),
@@ -440,30 +466,36 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             GROUP BY product_id, bf_sale_price
         ) WHERE rn = 1
     ),
-    -- Competitor modal price from FRESH observations
+    -- Competitor modal price from FRESH observations. The modal is taken on
+    -- comp_pi_price (the PI basis); the raw price at that modal rides along
+    -- for display — on a normalized pair the screen shows their real price.
     comp_fresh AS (
-        SELECT product_id, competitor_id, competitor_sale_price AS comp_fresh_modal FROM (
-            SELECT product_id, competitor_id, competitor_sale_price,
+        SELECT product_id, competitor_id,
+               comp_pi_price AS comp_fresh_modal, raw_price AS comp_fresh_raw FROM (
+            SELECT product_id, competitor_id, comp_pi_price,
+                   MIN(competitor_sale_price) AS raw_price,
                    ROW_NUMBER() OVER (
                        PARTITION BY product_id, competitor_id
-                       ORDER BY COUNT(*) DESC, competitor_sale_price ASC
+                       ORDER BY COUNT(*) DESC, comp_pi_price ASC
                    ) AS rn
             FROM scoped
             WHERE competitor_sale_price > 0 AND is_recent_competitor = TRUE
-            GROUP BY product_id, competitor_id, competitor_sale_price
+            GROUP BY product_id, competitor_id, comp_pi_price
         ) WHERE rn = 1
     ),
     -- Competitor modal price from ALL observations (fallback when no fresh)
     comp_all AS (
-        SELECT product_id, competitor_id, competitor_sale_price AS comp_all_modal FROM (
-            SELECT product_id, competitor_id, competitor_sale_price,
+        SELECT product_id, competitor_id,
+               comp_pi_price AS comp_all_modal, raw_price AS comp_all_raw FROM (
+            SELECT product_id, competitor_id, comp_pi_price,
+                   MIN(competitor_sale_price) AS raw_price,
                    ROW_NUMBER() OVER (
                        PARTITION BY product_id, competitor_id
-                       ORDER BY COUNT(*) DESC, competitor_sale_price ASC
+                       ORDER BY COUNT(*) DESC, comp_pi_price ASC
                    ) AS rn
             FROM scoped
             WHERE competitor_sale_price > 0
-            GROUP BY product_id, competitor_id, competitor_sale_price
+            GROUP BY product_id, competitor_id, comp_pi_price
         ) WHERE rn = 1
     ),
     -- Per-(product, competitor) carry-through. ANY_VALUE for fields that are
@@ -547,7 +579,22 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             -- and it must sit at the collapsed grain, where action_type is the
             -- recomputed one.
             ANY_VALUE(competitor_product_key)       AS competitor_product_key,
-            BOOL_OR(matched_comp_in_catalogue)      AS matched_comp_in_catalogue
+            BOOL_OR(matched_comp_in_catalogue)      AS matched_comp_in_catalogue,
+
+            -- ── Weight normalization (F&V; FP_granularity_pricing.sql STEP 11b)
+            -- Our size is a product constant. Theirs follows the counterpart,
+            -- which can differ by FP, so value and unit come from ONE struct
+            -- (MIN, so the pick is deterministic); the flags are BOOL_OR for
+            -- the same reason as the gap flags above.
+            ANY_VALUE(bf_size_value)                AS bf_size_value,
+            ANY_VALUE(bf_size_unit)                 AS bf_size_unit,
+            struct_extract(MIN(struct_pack(v := comp_size_value, u := comp_size_unit))
+                FILTER (WHERE comp_size_value IS NOT NULL), 'v') AS comp_size_value,
+            struct_extract(MIN(struct_pack(v := comp_size_value, u := comp_size_unit))
+                FILTER (WHERE comp_size_value IS NOT NULL), 'u') AS comp_size_unit,
+            COALESCE(BOOL_OR(size_status = 'normalized'), FALSE)    AS is_weight_normalized,
+            COALESCE(BOOL_OR(size_status = 'mismatch'), FALSE)      AS is_weight_mismatch,
+            MAX(size_ratio) FILTER (WHERE size_status = 'normalized') AS size_ratio
             -- Deliberately NOT carried: mapped_bf_sub_category. On
             -- row_type='breadfast' rows it only echoes sub_category_name, so it
             -- adds no information, and _apply_filters materializes every
@@ -559,13 +606,19 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
     base AS (
         SELECT
             pm.*,
-            COALESCE(cf.comp_fresh_modal, ca.comp_all_modal) AS competitor_sale_price,
+            -- Their real (per-pack) price, for display. The PI below is on the
+            -- normalized basis; on every pair that is not normalized the two
+            -- are the same number.
+            COALESCE(cf.comp_fresh_raw, ca.comp_all_raw) AS competitor_sale_price,
             bm.bf_modal AS bf_sale_price,
             -- "now" prices sourced from BQ (no live Catalog-API fetch):
             -- now_price = regular price, now_sale_price = modal sale price.
             pm.bf_regular_price AS now_price,
             bm.bf_modal         AS now_sale_price,
             bm.bf_modal / COALESCE(cf.comp_fresh_modal, ca.comp_all_modal) AS sale_PI,
+            -- The same PI on their per-pack price: what a normalized PI would
+            -- have read without the correction (tooltip only).
+            bm.bf_modal / COALESCE(cf.comp_fresh_raw, ca.comp_all_raw)      AS raw_sale_PI,
             -- Recomputed flags (match pandas _aggregate_to_global)
             (cf.comp_fresh_modal IS NOT NULL)             AS is_recent_competitor,
             (ca.comp_all_modal   IS NOT NULL)             AS has_PI,
@@ -630,7 +683,9 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
     # ------------------------------------------------------------------
     _FP_BASE_CTE = """
     WITH scoped AS (
-        SELECT * FROM fp_grain
+        -- comp_pi_price: see _BASE_CTE.
+        SELECT *, COALESCE(competitor_sale_price_normalized, competitor_sale_price) AS comp_pi_price
+        FROM fp_grain
         WHERE row_type = 'breadfast'
         {and_where}
     ),
@@ -647,27 +702,31 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         ) WHERE rn = 1
     ),
     fp_comp_fresh AS (
-        SELECT product_id, competitor_id, fp_id, competitor_sale_price AS comp_fresh_modal FROM (
-            SELECT product_id, competitor_id, fp_id, competitor_sale_price,
+        SELECT product_id, competitor_id, fp_id,
+               comp_pi_price AS comp_fresh_modal, raw_price AS comp_fresh_raw FROM (
+            SELECT product_id, competitor_id, fp_id, comp_pi_price,
+                   MIN(competitor_sale_price) AS raw_price,
                    ROW_NUMBER() OVER (
                        PARTITION BY product_id, competitor_id, fp_id
-                       ORDER BY COUNT(*) DESC, competitor_sale_price ASC
+                       ORDER BY COUNT(*) DESC, comp_pi_price ASC
                    ) AS rn
             FROM scoped
             WHERE competitor_sale_price > 0 AND is_recent_competitor = TRUE
-            GROUP BY product_id, competitor_id, fp_id, competitor_sale_price
+            GROUP BY product_id, competitor_id, fp_id, comp_pi_price
         ) WHERE rn = 1
     ),
     fp_comp_all AS (
-        SELECT product_id, competitor_id, fp_id, competitor_sale_price AS comp_all_modal FROM (
-            SELECT product_id, competitor_id, fp_id, competitor_sale_price,
+        SELECT product_id, competitor_id, fp_id,
+               comp_pi_price AS comp_all_modal, raw_price AS comp_all_raw FROM (
+            SELECT product_id, competitor_id, fp_id, comp_pi_price,
+                   MIN(competitor_sale_price) AS raw_price,
                    ROW_NUMBER() OVER (
                        PARTITION BY product_id, competitor_id, fp_id
-                       ORDER BY COUNT(*) DESC, competitor_sale_price ASC
+                       ORDER BY COUNT(*) DESC, comp_pi_price ASC
                    ) AS rn
             FROM scoped
             WHERE competitor_sale_price > 0
-            GROUP BY product_id, competitor_id, fp_id, competitor_sale_price
+            GROUP BY product_id, competitor_id, fp_id, comp_pi_price
         ) WHERE rn = 1
     ),
     fp_pair AS (
@@ -677,7 +736,8 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             ANY_VALUE(competitor_name)      AS competitor_name,
             ANY_VALUE(avg_daily_quantity)   AS avg_daily_quantity,
             ANY_VALUE(eligible_product)     AS eligible_product,
-            BOOL_OR(is_mapped)              AS is_mapped
+            BOOL_OR(is_mapped)              AS is_mapped,
+            COALESCE(BOOL_OR(size_status = 'normalized'), FALSE) AS is_weight_normalized
         FROM scoped
         GROUP BY product_id, competitor_id, fp_id
     ),
@@ -685,7 +745,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         SELECT
             p.*,
             bm.bf_modal                                       AS bf_sale_price,
-            COALESCE(cf.comp_fresh_modal, ca.comp_all_modal)  AS competitor_sale_price,
+            COALESCE(cf.comp_fresh_raw, ca.comp_all_raw)      AS competitor_sale_price,
             bm.bf_modal / COALESCE(cf.comp_fresh_modal, ca.comp_all_modal) AS sale_PI,
             (p.eligible_product
                 AND ca.comp_all_modal   IS NOT NULL
@@ -843,7 +903,12 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 COUNT(DISTINCT product_id) FILTER (WHERE is_mapped) AS mapped_product_count,
                 COUNT(DISTINCT product_id) FILTER (
                     WHERE eligible_product AND action_type != 'Complete'
-                ) AS needs_action_count
+                ) AS needs_action_count,
+                -- Weight normalization (F&V): products in the blend whose PI is
+                -- compared per kg, and products flagged for a size review.
+                COUNT(DISTINCT product_id) FILTER (
+                    WHERE used_product AND is_weight_normalized) AS weight_normalized_count,
+                COUNT(DISTINCT product_id) FILTER (WHERE is_weight_mismatch) AS weight_mismatch_count
             FROM base_tmp
             GROUP BY __GRP__
         ),
@@ -902,7 +967,9 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             CAST(COALESCE(gc.potential_match_count, 0)    AS INTEGER) AS potential_match_count,
             gc.addressable_pct,
             CAST(COALESCE(gc.our_only_count, 0)          AS INTEGER) AS our_only_count,
-            CAST(COALESCE(cs.comp_only_products, 0)      AS INTEGER) AS comp_only_products
+            CAST(COALESCE(cs.comp_only_products, 0)      AS INTEGER) AS comp_only_products,
+            CAST(COALESCE(fc.weight_normalized_count, 0) AS INTEGER) AS weight_normalized_count,
+            CAST(COALESCE(fc.weight_mismatch_count, 0)   AS INTEGER) AS weight_mismatch_count
         FROM used_agg ua
         LEFT JOIN used_rev ur USING (group_key)
         LEFT JOIN full_counts fc USING (group_key)
@@ -945,6 +1012,8 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                                - COUNT(DISTINCT product_id) FILTER (
                                      WHERE is_confirmed_no_match), 0), 1)
                                                               AS comp_addressable_pct,
+                CAST(COUNT(DISTINCT product_id) FILTER (
+                    WHERE used_product AND is_weight_normalized) AS INTEGER) AS comp_weight_normalized_count,
                 LIST({
                     'product_name': product_name,
                     'sale_PI': sale_PI,
@@ -971,6 +1040,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             ca.comp_fresh_count,
             ca.comp_our_only_count,
             ca.comp_addressable_pct,
+            ca.comp_weight_normalized_count,
             CAST(COALESCE(cco.comp_only_count, 0) AS INTEGER) AS comp_only_count,
             ca.comp_product_pis,
             sta.total_active AS comp_eligible_count
@@ -997,14 +1067,14 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 "mapped_product_count", "needs_action_count",
                 "matched_fresh_count", "confirmed_no_match_count",
                 "potential_match_count", "addressable_pct", "comp_only_products",
-                "our_only_count",
+                "our_only_count", "weight_normalized_count", "weight_mismatch_count",
                 "product_pis",
                 "competitor_blended_pis", "competitor_product_pis",
                 "competitor_used_counts", "competitor_needs_action_counts",
                 "competitor_eligible_counts", "competitor_mapped_counts",
                 "competitor_addressable_pcts", "competitor_comp_only_counts",
                 "competitor_matched_fresh_counts", "competitor_no_match_counts",
-                "competitor_our_only_counts",
+                "competitor_our_only_counts", "competitor_weight_normalized_counts",
             ])
 
         # Derived columns
@@ -1039,6 +1109,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         comp_fresh: dict[str, dict] = {}
         comp_nomatch: dict[str, dict] = {}
         comp_our_only: dict[str, dict] = {}
+        comp_wn: dict[str, dict] = {}
 
         def _safe_list(v):
             if v is None:
@@ -1074,6 +1145,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             comp_fresh.setdefault(key, {})[comp] = _safe_int(row.comp_fresh_count)
             comp_nomatch.setdefault(key, {})[comp] = _safe_int(row.comp_no_match_count)
             comp_our_only.setdefault(key, {})[comp] = _safe_int(row.comp_our_only_count)
+            comp_wn.setdefault(key, {})[comp] = _safe_int(row.comp_weight_normalized_count)
 
         df["competitor_blended_pis"] = df["group_key"].map(comp_blended).apply(
             lambda x: x if isinstance(x, dict) else {}
@@ -1097,7 +1169,8 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                          ("competitor_comp_only_counts", comp_only),
                          ("competitor_matched_fresh_counts", comp_fresh),
                          ("competitor_no_match_counts", comp_nomatch),
-                         ("competitor_our_only_counts", comp_our_only)):
+                         ("competitor_our_only_counts", comp_our_only),
+                         ("competitor_weight_normalized_counts", comp_wn)):
             df[col] = df["group_key"].map(src).apply(lambda x: x if isinstance(x, dict) else {})
 
         # Identity columns per grain: subcategory mode keeps the subcategory name
@@ -1736,6 +1809,23 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 -- naming none. Populated for exactly the mapped products.
                 CASE WHEN COUNT(DISTINCT competitor_name) = 1
                      THEN ANY_VALUE(competitor_product_name) END AS competitor_product_name,
+                -- Weight normalization (F&V). Our size is a product constant;
+                -- theirs and the PI's treatment are per competitor, so they are
+                -- guarded like the prices above.
+                ANY_VALUE(bf_size_value)                        AS bf_size_value,
+                ANY_VALUE(bf_size_unit)                         AS bf_size_unit,
+                CASE WHEN COUNT(DISTINCT competitor_name) = 1
+                     THEN ANY_VALUE(comp_size_value) END        AS comp_size_value,
+                CASE WHEN COUNT(DISTINCT competitor_name) = 1
+                     THEN ANY_VALUE(comp_size_unit) END         AS comp_size_unit,
+                CASE WHEN COUNT(DISTINCT competitor_name) = 1
+                     THEN BOOL_OR(is_weight_normalized) END     AS is_weight_normalized,
+                CASE WHEN COUNT(DISTINCT competitor_name) = 1
+                     THEN BOOL_OR(is_weight_mismatch) END       AS is_weight_mismatch,
+                CASE WHEN COUNT(DISTINCT competitor_name) = 1
+                     THEN ANY_VALUE(size_ratio) END             AS size_ratio,
+                CASE WHEN COUNT(DISTINCT competitor_name) = 1
+                     THEN ANY_VALUE(raw_sale_PI) END            AS raw_sale_PI,
                 -- The three flags Commercial counts, at product grain. They form
                 -- a funnel and are most useful read as one: eligible (in the top
                 -- 80% of revenue) -> updated (both sides priced recently) ->
@@ -1763,7 +1853,9 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 -- COLUMN_MAP renames competitor_last_updated_day on load
                 competitor_price_updated_at AS comp_last_seen,
                 classification,
-                competitor_has_v2_catalogue
+                competitor_has_v2_catalogue,
+                comp_size_value,
+                comp_size_unit
             FROM comp_catalogue
             WHERE TRUE{where_comp}
         )
@@ -2483,7 +2575,9 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 bridge_level,
                 category_level_1, category_level_2, category_level_3,
                 comp_last_seen,
-                classification
+                classification,
+                comp_size_value,
+                comp_size_unit
             FROM comp_prod
             """
             sortable = {
@@ -2519,7 +2613,15 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
                 sale_PI,
                 eligible_product,
                 updated,
-                used_product
+                used_product,
+                bf_size_value,
+                bf_size_unit,
+                comp_size_value,
+                comp_size_unit,
+                is_weight_normalized,
+                is_weight_mismatch,
+                size_ratio,
+                raw_sale_PI
             FROM bf_prod
             """
             sortable = {

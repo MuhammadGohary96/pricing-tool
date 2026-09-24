@@ -35,6 +35,11 @@ class PricingDataServiceInterface(ABC):
     ) -> dict:
         ...
 
+    def get_size_mismatches(self, filters: dict = None, limit: int = 200) -> dict:
+        # Weight normalization comes from the BigQuery model; a source without
+        # it (the mock) simply has nothing flagged.
+        return {"items": [], "total_count": 0}
+
     @abstractmethod
     def get_match_reviews(
         self, filters: dict = None, page: int = 1, page_size: int = 20

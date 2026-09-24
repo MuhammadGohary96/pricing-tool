@@ -24,6 +24,8 @@
 -- PIPELINE (one CTE per step)
 --   STEP 0a  competitor_registry        the 7 benchmarked competitors
 --   STEP 0a2 current_mapping            THE mapping truth (dim, v2, non-NULL)
+--   STEP 0a3 weight_normalized_scope    main categories compared per kg / piece
+--            product_sizes, bf_sizes    pack sizes, canonical g / pcs
 --   STEP 0b  fp_registry                active fulfillment points
 --   STEP 0c  fps_available_products     (product, fp) live in app ≤7d
 --   STEPS 1–5  scored_products          revenue/quantity metrics, tiers, scores
@@ -31,7 +33,8 @@
 --   STEP 8   competitor_clean           freshest fact row per pair×fp, gated
 --                                       to current mapping; per-FP sale_PI
 --   STEP 9   competitor_mapping         one counterpart per (product, comp)
---   STEP 11  products_with_pi           assembly: products × competitors × fps
+--   STEP 11  products_with_pi_raw       assembly: products × competitors × fps
+--   STEP 11b size_eval → products_with_pi  weight normalization of sale_PI (F&V)
 --   STEP 12  rec_base → ai_match_candidates  matcher output, read once
 --   STEP 13  final_product_data         eligibility, action_type, classification
 --   STEPS 15–20 (NEW 1–7)               gap layer: brand overlap, category
@@ -76,6 +79,77 @@ current_mapping AS (
       -- v2 only: a mapping onto an uncrawled v1 row can never price — it
       -- reads as unmapped and surfaces as re-mapping work.
       AND cp.pricing_tool_version = 'v2'
+),
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- STEP 0a3 ▸ WEIGHT NORMALIZATION — SCOPE + PACK SIZES
+-- Loose produce is sold by weight, so a 3 kg bag mapped to a 1 kg bag must be
+-- compared per kg, not per pack. Piece counts are read (to flag gaps) but never
+-- normalized. Scope is OUR main category; add a row here to
+-- widen it. Packaged goods stay per pack: there a size gap is a mapping issue.
+--
+-- Sizes come from dim_competitor_products.base_unit / base_unit_value, which
+-- carries Breadfast too (competitor 'Breadfast', competitor_product_id = our
+-- product_id). Units collapse to two dimensions: mass in grams, and piece
+-- count. Anything else ('unit', ml, cm…) has no size here — 'unit' is 1 on
+-- nearly every Amazon row, so it says nothing.
+-- ─────────────────────────────────────────────────────────────────────────────
+weight_normalized_scope AS (
+    SELECT 'Fruits & Vegetables' AS main_category_name
+),
+
+product_sizes AS (
+    SELECT
+        competitor_id,
+        competitor_product_key,
+        competitor_product_id,
+        CASE
+            WHEN u IN ('g', 'gm', 'gram', 'grams', 'kg', 'lb', 'lbs', 'جم', 'جرام') THEN 'g'
+            WHEN u IN ('pcs', 'pc', 'piece', 'pieces')                              THEN 'pcs'
+        END AS size_unit,
+        CASE
+            WHEN u IN ('g', 'gm', 'gram', 'grams', 'جم', 'جرام') THEN v
+            WHEN u = 'kg'                                         THEN v * 1000
+            WHEN u IN ('lb', 'lbs')                               THEN v * 453.592
+            WHEN u IN ('pcs', 'pc', 'piece', 'pieces')            THEN v
+        END AS size_value
+    FROM (
+        SELECT
+            competitor_id,
+            competitor_product_key,
+            competitor_product_id,
+            LOWER(TRIM(base_unit))                AS u,
+            SAFE_CAST(base_unit_value AS FLOAT64) AS v
+        FROM `followbreadfast.l03_marts.dim_competitor_products`
+        WHERE pricing_tool_version = 'v2'
+    )
+    WHERE v > 0
+      AND u IN ('g', 'gm', 'gram', 'grams', 'kg', 'lb', 'lbs', 'جم', 'جرام',
+                'pcs', 'pc', 'piece', 'pieces')
+    -- One size per key; the dim can repeat a key.
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY competitor_id, competitor_product_key
+        ORDER BY competitor_product_id
+    ) = 1
+),
+
+-- Our own sizes, keyed by product_id.
+bf_sizes AS (
+    SELECT
+        SAFE_CAST(ps.competitor_product_id AS INT64) AS product_id,
+        ps.size_value,
+        ps.size_unit
+    FROM product_sizes ps
+    INNER JOIN `followbreadfast.l03_marts.dim_competitors` c
+        ON c.competitor_id = ps.competitor_id
+    WHERE c.competitor_name = 'Breadfast'
+    -- One row per product, value and unit taken TOGETHER (two ANY_VALUEs
+    -- could pair one row's value with another's unit).
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY SAFE_CAST(ps.competitor_product_id AS INT64)
+        ORDER BY ps.competitor_product_key
+    ) = 1
 ),
 
 
@@ -392,7 +466,7 @@ competitor_mapping AS (
 -- BF price for PI rows comes from the comparison fact (bf_eod); SCD is the
 -- fallback + the source of BF freshness (the daily fact has no BF-price age).
 -- ─────────────────────────────────────────────────────────────────────────────
-products_with_pi AS (
+products_with_pi_raw AS (
     SELECT
         s.* EXCEPT (is_recent_breadfast, bf_sale_price, breadfast_last_updated_day),
 
@@ -422,7 +496,19 @@ products_with_pi AS (
         (s.is_recent_breadfast AND pi.is_recent_competitor) AS prices_recently_updated,
 
         -- Product-level mapping flag (carries across FPs)
-        (cm.competitor_product_id IS NOT NULL) AS is_mapped
+        (cm.competitor_product_id IS NOT NULL) AS is_mapped,
+
+        -- Pack sizes, in scope only (NULL elsewhere, so nothing downstream
+        -- has to repeat the scope test). The competitor side is the
+        -- counterpart THIS FP was priced from; with no price here, the
+        -- displayed counterpart.
+        -- COALESCE: a NULL main category must read out of scope, not unknown.
+        COALESCE(s.main_category_name IN (SELECT main_category_name FROM weight_normalized_scope),
+                 FALSE)                                  AS in_weight_scope,
+        bs.size_value AS bf_size_value,
+        bs.size_unit  AS bf_size_unit,
+        cs.size_value AS comp_size_value,
+        cs.size_unit  AS comp_size_unit
     FROM products_enriched_prices s
     CROSS JOIN competitor_registry cr
     LEFT JOIN competitor_mapping cm
@@ -432,6 +518,74 @@ products_with_pi AS (
         ON s.product_id = pi.bf_product_id
         AND s.fp_id = pi.fp_id
         AND cr.competitor_id = pi.competitor_id
+    LEFT JOIN bf_sizes bs
+        ON bs.product_id = s.product_id
+    LEFT JOIN product_sizes cs
+        ON  cs.competitor_id = cr.competitor_id
+        AND cs.competitor_product_key = COALESCE(pi.competitor_product_key, cm.competitor_product_key)
+),
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- STEP 11b ▸ WEIGHT NORMALIZATION (F&V)
+-- size_ratio = our size ÷ theirs, same dimension only (grams never convert to
+-- pieces). size_status:
+--   normalized   — MASS only: weights differ by > 10% and ≤ 5×; compare per kg.
+--                  Their price is scaled to our pack, so
+--                  sale_PI = BF ÷ (comp × size_ratio) = raw_sale_PI ÷ size_ratio.
+--   equal        — within 10%: the same pack; PI left raw.
+--   mismatch     — weights more than 5× apart, or piece counts more than 10%
+--                  apart: a bad size or a bad mapping. PI left raw (we cannot
+--                  tell which side is wrong) and flagged for review.
+--   incomparable — a size missing, or mass vs pieces. PI left raw.
+--   NULL         — out of scope (not F&V), or not mapped.
+-- sale_PI is replaced IN PLACE (the UNION below is positional); raw_sale_PI
+-- keeps the fp_sale_price_index-parity value.
+-- ─────────────────────────────────────────────────────────────────────────────
+size_eval AS (
+    SELECT
+        r.* EXCEPT (in_weight_scope, bf_size_value, bf_size_unit, comp_size_value, comp_size_unit),
+        IF(r.in_weight_scope, r.bf_size_value,   NULL) AS bf_size_value,
+        IF(r.in_weight_scope, r.bf_size_unit,    NULL) AS bf_size_unit,
+        -- Their size only for a mapped pair: an unmapped one has no counterpart,
+        -- and a size next to a "Review Match" would read as a match.
+        IF(r.in_weight_scope AND r.is_mapped, r.comp_size_value, NULL) AS comp_size_value,
+        IF(r.in_weight_scope AND r.is_mapped, r.comp_size_unit,  NULL) AS comp_size_unit,
+        IF(r.in_weight_scope AND r.bf_size_unit = r.comp_size_unit,
+           SAFE_DIVIDE(r.bf_size_value, r.comp_size_value), NULL) AS size_ratio,
+        CASE
+            WHEN NOT r.in_weight_scope THEN NULL
+            -- No counterpart, nothing to compare: not "incomparable".
+            WHEN NOT r.is_mapped       THEN NULL
+            WHEN r.bf_size_value IS NULL OR r.comp_size_value IS NULL
+                 OR r.bf_size_unit != r.comp_size_unit             THEN 'incomparable'
+            WHEN GREATEST(r.bf_size_value / r.comp_size_value,
+                          r.comp_size_value / r.bf_size_value) <= 1.10 THEN 'equal'
+            -- Piece counts are never normalized: competitors write "1 pcs" for
+            -- one PACK (Seoudi's beetroot, Rabbit's corn — same price as our
+            -- 5- and 3-packs), so a count gap is a review item, not a ratio.
+            WHEN r.bf_size_unit = 'pcs'                                  THEN 'mismatch'
+            WHEN GREATEST(r.bf_size_value / r.comp_size_value,
+                          r.comp_size_value / r.bf_size_value) > 5     THEN 'mismatch'
+            ELSE 'normalized'
+        END AS size_status,
+        r.sale_PI AS raw_sale_PI
+    FROM products_with_pi_raw r
+),
+
+products_with_pi AS (
+    SELECT
+        * REPLACE (
+            IF(size_status = 'normalized',
+               SAFE_CAST(SAFE_DIVIDE(sale_PI, size_ratio) AS NUMERIC),
+               sale_PI) AS sale_PI
+        ),
+        -- Their price scaled to our pack — the price the app takes its modal
+        -- of, so every blend inherits the normalization.
+        IF(size_status = 'normalized',
+           SAFE_CAST(competitor_sale_price * size_ratio AS NUMERIC),
+           competitor_sale_price) AS competitor_sale_price_normalized
+    FROM size_eval
 ),
 
 
@@ -937,7 +1091,10 @@ brand_variants AS (
 -- =============================================================================
 SELECT
     'breadfast'                                    AS row_type,
-    f.*,
+    -- Size columns move to the END (UNION ALL is positional; the competitor
+    -- branch appends the same list).
+    f.* EXCEPT (bf_size_value, bf_size_unit, comp_size_value, comp_size_unit,
+                size_ratio, size_status, raw_sale_PI, competitor_sale_price_normalized),
     -- scope flags (app toggles)
     bu.is_beauty,
     bu.is_private_label,
@@ -978,7 +1135,16 @@ SELECT
     cc.competitor_has_v2_catalogue,
     -- Catalogue totals: not derivable downstream (comp rows are unpaired only).
     cc.comp_active_products,
-    cc.comp_active_products_shared
+    cc.comp_active_products_shared,
+    -- Weight normalization (STEP 11b)
+    f.bf_size_value,
+    f.bf_size_unit,
+    f.comp_size_value,
+    f.comp_size_unit,
+    f.size_ratio,
+    f.size_status,
+    f.raw_sale_PI,
+    f.competitor_sale_price_normalized
 FROM final_product_data AS f
 LEFT JOIN bf_universe_enriched AS bu ON bu.product_id = f.product_id
 LEFT JOIN comp_brand           AS cb ON cb.competitor_id = f.competitor_id AND cb.brand_key = bu.brand_key
@@ -1088,7 +1254,17 @@ SELECT
     cc.competitor_has_v2_catalogue,
     cc.comp_active_products,
     -- Same position as the breadfast branch: UNION ALL matches by ordinal.
-    cc.comp_active_products_shared
+    cc.comp_active_products_shared,
+    -- Weight normalization: only their own size, and only where the bridge
+    -- lands the product in an in-scope main category of ours.
+    CAST(NULL AS FLOAT64) AS bf_size_value,
+    CAST(NULL AS STRING)  AS bf_size_unit,
+    IF(ws.sub_category_name IS NOT NULL, cps.size_value, NULL) AS comp_size_value,
+    IF(ws.sub_category_name IS NOT NULL, cps.size_unit,  NULL) AS comp_size_unit,
+    CAST(NULL AS FLOAT64) AS size_ratio,
+    CAST(NULL AS STRING)  AS size_status,
+    CAST(NULL AS NUMERIC) AS raw_sale_PI,
+    CAST(NULL AS NUMERIC) AS competitor_sale_price_normalized
 FROM comp_products AS cp
 LEFT JOIN paired_comp_keys AS pk
     ON  pk.competitor_id          = cp.competitor_id
@@ -1113,5 +1289,15 @@ LEFT JOIN path_beauty AS pb
     AND pb.l2 = IFNULL(cp.category_level_2, '(none)')
     AND pb.l3 = IFNULL(cp.category_level_3, '(none)')
 LEFT JOIN competitor_catalogue AS cc ON cc.competitor_id = cp.competitor_id
+LEFT JOIN product_sizes AS cps
+    ON  cps.competitor_id          = cp.competitor_id
+    AND cps.competitor_product_key = cp.competitor_product_key
+LEFT JOIN (
+    SELECT DISTINCT sub_category_name
+    FROM product_base
+    WHERE main_category_name IN (SELECT main_category_name FROM weight_normalized_scope)
+) AS ws
+    ON ws.sub_category_name = COALESCE(pme.primary_map.bf_sub_category,
+                                       pml.primary_map.bf_sub_category)
 WHERE cp.is_active_7d = 1
   AND pk.competitor_product_key IS NULL)

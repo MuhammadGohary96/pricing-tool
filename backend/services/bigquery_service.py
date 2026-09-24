@@ -148,9 +148,34 @@ SELECT
     -- Nestle. The flag says which way it was established; the variants string is
     -- the evidence, "brand:count|brand:count", NULL when the names agree.
     shared_brand_by_match,
-    comp_brand_variants
+    comp_brand_variants{weight_cols}
 FROM `{project}.{dataset}.{table}`
 """
+
+# Weight normalization (docs/FP_granularity_pricing.sql STEP 11b). Optional on
+# purpose: a table built before the model carried these columns must still
+# load, so on "Unrecognized name" the query is re-run with NULL placeholders,
+# which read as "not normalized" everywhere. Keeps an app deploy safe to ship
+# ahead of the model rebuild.
+WEIGHT_COLS_SELECT = """,
+    CAST(bf_size_value AS FLOAT64)                    AS bf_size_value,
+    bf_size_unit,
+    CAST(comp_size_value AS FLOAT64)                  AS comp_size_value,
+    comp_size_unit,
+    CAST(size_ratio AS FLOAT64)                       AS size_ratio,
+    size_status,
+    CAST(raw_sale_PI AS FLOAT64)                      AS raw_sale_PI,
+    CAST(competitor_sale_price_normalized AS FLOAT64) AS competitor_sale_price_normalized"""
+
+WEIGHT_COLS_NULL = """,
+    CAST(NULL AS FLOAT64) AS bf_size_value,
+    CAST(NULL AS STRING)  AS bf_size_unit,
+    CAST(NULL AS FLOAT64) AS comp_size_value,
+    CAST(NULL AS STRING)  AS comp_size_unit,
+    CAST(NULL AS FLOAT64) AS size_ratio,
+    CAST(NULL AS STRING)  AS size_status,
+    CAST(NULL AS FLOAT64) AS raw_sale_PI,
+    CAST(NULL AS FLOAT64) AS competitor_sale_price_normalized"""
 
 COMPETITOR_BQ_QUERY = """
 SELECT
@@ -256,14 +281,17 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         if self._startup_status and "progress_callback" in self._startup_status:
             progress_callback = self._startup_status["progress_callback"]
 
-        query = FPS_QUERY.format(
-            project=self._project,
-            dataset=self._dataset,
-            table=self._table,
-        )
+        def _query(weight_cols: str) -> str:
+            return FPS_QUERY.format(
+                project=self._project,
+                dataset=self._dataset,
+                table=self._table,
+                weight_cols=weight_cols,
+            )
+
         print("[BigQuery] Submitting query...")
         t0 = time.time()
-        job = self._client.query(query)
+        job = self._client.query(_query(WEIGHT_COLS_SELECT))
         print(f"[BigQuery] Job submitted ({job.job_id}), waiting for BQ execution...")
 
         # Report progress via callback or startup_status
@@ -279,7 +307,17 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         # IPC). This replaces the old row-by-row dict() loop, which was the
         # dominant cold-load cost. Falls back to the REST iterator if the
         # Storage API is unavailable (e.g. missing bigquery.readsessions IAM).
-        rows = job.result()  # Wait for query completion, returns RowIterator
+        from google.api_core.exceptions import BadRequest
+        try:
+            rows = job.result()  # Wait for query completion, returns RowIterator
+        except BadRequest as exc:
+            # The table predates the weight-normalization columns. Load without
+            # them rather than failing the whole load.
+            if "Unrecognized name" not in str(exc):
+                raise
+            print("[BigQuery] Weight-normalization columns not in the table yet; loading without them")
+            job = self._client.query(_query(WEIGHT_COLS_NULL))
+            rows = job.result()
         total_rows = rows.total_rows or 0
         t1 = time.time()
 
@@ -456,13 +494,20 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             "global_tier", "bf_sale_price", "bf_regular_price",
             "now_price", "now_sale_price",
             "total_revenue", "eligible_product", "used_product", "weighted_score",
+            # Weight normalization (F&V): our pack size. NULL outside F&V.
+            "bf_size_value", "bf_size_unit",
         ]
         product_df = df.drop_duplicates("product_id")[[c for c in base_cols if c in df.columns]].copy()
 
+        # Per-competitor size columns ride along only where the base carries
+        # them (the DuckDB path); the legacy pandas aggregate does not.
+        size_cols = [c for c in ("comp_size_value", "comp_size_unit", "is_weight_normalized",
+                                 "is_weight_mismatch", "size_ratio", "raw_sale_PI") if c in df.columns]
         for comp in competitors:
             comp_cols = ["product_id", "competitor_sale_price", "sale_PI", "action_type", "days_since_update"]
             if "classification" in df.columns:
                 comp_cols.append("classification")
+            comp_cols += size_cols
             comp_df = df[df["competitor_name"] == comp][comp_cols].drop_duplicates("product_id")
             product_df = product_df.merge(
                 comp_df.rename(columns={
@@ -471,6 +516,7 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                     "action_type": f"{comp}_action",
                     "days_since_update": f"{comp}_days_stale",
                     "classification": f"{comp}_classification",
+                    **{c: f"{comp}__{c}" for c in size_cols},
                 }),
                 on="product_id", how="left",
             )
@@ -542,6 +588,17 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 pass
             return val
 
+        def _num(val):
+            return _s(float(val)) if val is not None and pd.notna(val) else None
+
+        def _str(val):
+            # pandas 3 hands a NULL string over as NaN, which is not JSON.
+            return val if isinstance(val, str) else None
+
+        def _flag(val):
+            # A merged bool column holds NaN where the competitor has no row.
+            return val is not None and bool(pd.notna(val)) and bool(val)
+
         items = []
         for _, row in page_df.iterrows():
             item = {
@@ -561,6 +618,8 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 "worst_pi": _s(float(row["worst_pi"])) if pd.notna(row.get("worst_pi")) else None,
                 "weighted_score": _s(float(row["weighted_score"])) if pd.notna(row.get("weighted_score")) else None,
                 "action_counts": row.get("_action_counts", {}),
+                "bf_size_value": _num(row.get("bf_size_value")),
+                "bf_size_unit": _str(row.get("bf_size_unit")),
             }
             for comp in competitors:
                 price_key = f"{comp}_price"
@@ -573,6 +632,17 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 item[action_key] = row.get(action_key)
                 item[days_key] = int(row[days_key]) if pd.notna(row.get(days_key)) else None
                 item[class_key] = row.get(class_key) if pd.notna(row.get(class_key)) else None
+                # Weight normalization: their size, and whether this PI is
+                # compared per kg ('normalized') or flagged ('mismatch').
+                item[f"{comp}_size_value"] = _num(row.get(f"{comp}__comp_size_value"))
+                item[f"{comp}_size_unit"] = _str(row.get(f"{comp}__comp_size_unit"))
+                item[f"{comp}_weight"] = (
+                    "normalized" if _flag(row.get(f"{comp}__is_weight_normalized"))
+                    else "mismatch" if _flag(row.get(f"{comp}__is_weight_mismatch"))
+                    else None
+                )
+                item[f"{comp}_size_ratio"] = _num(row.get(f"{comp}__size_ratio"))
+                item[f"{comp}_raw_pi"] = _num(row.get(f"{comp}__raw_sale_PI"))
             items.append(item)
 
         return {"items": items, "total_count": total, "competitors": competitors,
@@ -650,6 +720,38 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 return None
             return v
 
+        # Weight normalization (F&V): a PI is computed on _pi_price — their price
+        # scaled to our pack on normalized rows, the raw price everywhere else —
+        # while the matrix still shows their real price.
+        sub = sub.copy()
+        if "competitor_sale_price_normalized" in sub.columns:
+            sub["_pi_price"] = sub["competitor_sale_price_normalized"].fillna(sub["competitor_sale_price"])
+        else:
+            sub["_pi_price"] = sub["competitor_sale_price"]
+
+        def _modal_pair(frame):
+            """(PI-basis modal, their real price at that modal)."""
+            basis = _modal(frame["_pi_price"])
+            if basis is None:
+                return None, None
+            raw = frame.loc[frame["_pi_price"] == basis, "competitor_sale_price"]
+            return basis, (float(raw.min()) if not raw.dropna().empty else basis)
+
+        def _weight(frame):
+            if "size_status" not in frame.columns:
+                return None
+            statuses = set(frame["size_status"].dropna())
+            return "normalized" if "normalized" in statuses else "mismatch" if "mismatch" in statuses else None
+
+        def _size(frame, value_col, unit_col):
+            if value_col not in frame.columns:
+                return None, None
+            sized = frame[frame[value_col].notna()]
+            if sized.empty:
+                return None, None
+            r = sized.sort_values(value_col).iloc[0]
+            return float(r[value_col]), (r[unit_col] if isinstance(r[unit_col], str) else None)
+
         first = sub.iloc[0]
         # Product-level BF prices (modal of fresh BF rows, fall back to all)
         bf_recent = sub[sub.get("is_recent_breadfast", False) == True]  # noqa: E712
@@ -686,27 +788,36 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             # chips. A pair with no fresh price anywhere has no fresh modal, so it never
             # produces an estimate and drops out of the chip ranking (it cannot be
             # judged on a stale price).
-            fresh_modal = _modal(fresh["competitor_sale_price"]) if not fresh.empty else None
+            fresh_modal, fresh_raw = _modal_pair(fresh) if not fresh.empty else (None, None)
             # Cross-FP stale modal — only for a pair with NO fresh price anywhere. Used
             # solely to fill the matrix (badged "outdated") when the estimate toggle is
             # on; it never feeds the blend, used counts, or chips.
             stale_only = fresh.empty and not priced.empty
-            stale_modal = _modal(priced["competitor_sale_price"]) if stale_only else None
+            stale_modal, stale_raw = _modal_pair(priced) if stale_only else (None, None)
             stale_days_s = priced["days_since_update"].dropna() if "days_since_update" in priced else pd.Series([], dtype=float)
             stale_days = int(stale_days_s.min()) if (stale_only and not stale_days_s.empty) else None
             agg_pi = round(bf_sale / fresh_modal, 4) if (bf_sale and fresh_modal) else None
+            comp_size = _size(cdf, "comp_size_value", "comp_size_unit")
             comp_meta[comp] = {
                 "competitor_name": comp,
                 "is_mapped": is_mapped,
                 "competitor_product_name": comp_product_name,
                 "similarity_score": _s(sim),
                 "action": action,
-                "agg_price": _s(fresh_modal),   # Min/Max chips read this (fresh-only)
+                "agg_price": _s(fresh_raw),     # Min/Max chips read this (fresh-only)
                 "agg_pi": _s(agg_pi),
                 "fresh_modal": fresh_modal,
+                "fresh_raw": fresh_raw,
                 "stale_only": stale_only,
                 "stale_modal": _s(stale_modal),
+                "stale_raw": _s(stale_raw),
                 "stale_days": stale_days,
+                # Weight normalization: their size and how the PI treats it.
+                "size_value": comp_size[0],
+                "size_unit": comp_size[1],
+                "weight": _weight(cdf),
+                "size_ratio": _s(float(cdf["size_ratio"].dropna().max()))
+                              if "size_ratio" in cdf.columns and cdf["size_ratio"].notna().any() else None,
             }
 
         # Build the matrix rows (one per FP)
@@ -726,7 +837,7 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 meta = comp_meta[comp]
                 cell = {"competitor_name": comp, "state": "not_mapped",
                         "price": None, "pi": None, "days_since_update": None,
-                        "is_estimated": False, "is_outdated": False}
+                        "is_estimated": False, "is_outdated": False, "weight": None}
                 if not meta["is_mapped"]:
                     cells.append(cell)
                     continue
@@ -735,11 +846,12 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 fresh = priced[priced.get("is_recent_competitor", False) == True] if not priced.empty else priced  # noqa: E712
                 if not fresh.empty:
                     # Observed FRESH price at this FP — trusted, always blended.
-                    price = _modal(fresh["competitor_sale_price"])
+                    basis, price = _modal_pair(fresh)
                     days = fresh["days_since_update"].dropna()
                     cell["price"] = _s(price)
                     cell["days_since_update"] = int(days.min()) if not days.empty else None
-                    pi = (fp_bf / price) if (fp_bf and price) else None
+                    cell["weight"] = _weight(fresh)
+                    pi = (fp_bf / basis) if (fp_bf and basis) else None
                     cell["pi"] = _s(round(pi, 4)) if pi is not None else None
                     cell["state"] = "priced"
                     priced_fresh += 1
@@ -749,7 +861,8 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                     # ESTIMATED: no fresh price at this FP, but the pair IS fresh at
                     # some FP → fill with its FRESH modal. Counts toward the blend.
                     est = meta["fresh_modal"]
-                    cell["price"] = _s(est)
+                    cell["price"] = _s(meta["fresh_raw"])
+                    cell["weight"] = meta["weight"]
                     cell["pi"] = _s(round(fp_bf / est, 4))
                     cell["state"] = "estimated"
                     cell["is_estimated"] = True
@@ -759,11 +872,12 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                     # OUTDATED (observed): a competitor price is observed at THIS FP but
                     # isn't fresh. Show the local stale modal, flagged outdated — never
                     # blended. Always shown where actually observed, in either mode.
-                    price = _modal(priced["competitor_sale_price"])
+                    basis, price = _modal_pair(priced)
                     days = priced["days_since_update"].dropna()
                     cell["price"] = _s(price)
                     cell["days_since_update"] = int(days.min()) if not days.empty else None
-                    cell["pi"] = _s(round(fp_bf / price, 4)) if (fp_bf and price) else None
+                    cell["weight"] = _weight(priced)
+                    cell["pi"] = _s(round(fp_bf / basis, 4)) if (fp_bf and basis) else None
                     cell["state"] = "outdated"
                     cell["is_outdated"] = True
                     outdated_cells += 1
@@ -774,7 +888,8 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                     # blend, used count, and chips. With the toggle OFF this branch is
                     # skipped, so unobserved FPs stay "no_price" (no stale fill).
                     out = meta["stale_modal"]
-                    cell["price"] = _s(out)
+                    cell["price"] = _s(meta["stale_raw"])
+                    cell["weight"] = meta["weight"]
                     cell["pi"] = _s(round(fp_bf / out, 4)) if fp_bf else None
                     cell["days_since_update"] = meta["stale_days"]
                     cell["state"] = "outdated"
@@ -789,6 +904,7 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
         overall_action = _REV[max((_PRIO.get(m["action"], 0) for m in comp_meta.values()), default=0)]
 
         bf_updated = sub["bf_price_updated_at"].dropna()
+        bf_size = _size(sub, "bf_size_value", "bf_size_unit")
         return {
             "found": True,
             "product": {
@@ -801,10 +917,13 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
                 "bf_sale_price": _s(bf_sale),
                 "bf_regular_price": _s(float(first["bf_regular_price"])) if pd.notna(first.get("bf_regular_price")) else None,
                 "bf_price_updated_at": str(bf_updated.max()) if not bf_updated.empty else None,
+                "bf_size_value": bf_size[0],
+                "bf_size_unit": bf_size[1],
             },
             "competitors": [
                 {k: v for k, v in comp_meta[c].items()
-                 if k not in ("fresh_modal", "stale_only", "stale_modal", "stale_days")}
+                 if k not in ("fresh_modal", "fresh_raw", "stale_only", "stale_modal",
+                              "stale_raw", "stale_days")}
                 for c in competitors
             ],
 
@@ -1476,6 +1595,40 @@ class BigQueryPricingDataService(PricingDataServiceInterface):
             })
 
         return {"items": items, "total_count": total_count}
+
+    def get_size_mismatches(self, filters: dict = None, limit: int = 200) -> dict:
+        """Fruits & Vegetables pairs flagged for a pack-size review: weights more
+        than 5x apart, or piece counts that differ (docs/FP_granularity_pricing.sql
+        STEP 11b). Their PI is left per pack, so this list is where they surface
+        for master data to fix the size or the mapping. Empty when the data
+        predates weight normalization."""
+        df = self._apply_filters(self._df, filters)
+        if "is_weight_mismatch" not in df.columns:
+            return {"items": [], "total_count": 0}
+        flagged = df[df["is_weight_mismatch"] == True]  # noqa: E712
+        flagged = flagged.sort_values("total_revenue", ascending=False, na_position="last")
+
+        def _num(v):
+            return float(v) if v is not None and pd.notna(v) and not math.isinf(float(v)) else None
+
+        def _str(v):
+            return v if isinstance(v, str) else None
+
+        items = [{
+            "product_id": str(r["product_id"]),
+            "product_name": _str(r.get("product_name")),
+            "sub_category_name": _str(r.get("sub_category_name")),
+            "competitor_name": _str(r.get("competitor_name")),
+            "competitor_product_name": _str(r.get("competitor_product_name")),
+            "bf_size_value": _num(r.get("bf_size_value")),
+            "bf_size_unit": _str(r.get("bf_size_unit")),
+            "comp_size_value": _num(r.get("comp_size_value")),
+            "comp_size_unit": _str(r.get("comp_size_unit")),
+            "bf_sale_price": _num(r.get("bf_sale_price")),
+            "competitor_sale_price": _num(r.get("competitor_sale_price")),
+            "sale_PI": _num(r.get("sale_PI")),
+        } for _, r in flagged.head(limit).iterrows()]
+        return {"items": items, "total_count": int(len(flagged))}
 
     def get_match_reviews(
         self, filters: dict = None, page: int = 1, page_size: int = 20

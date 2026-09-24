@@ -171,6 +171,7 @@ def get_blended_pi(
         comp_fresh = _cdict("competitor_matched_fresh_counts")
         comp_nomatch = _cdict("competitor_no_match_counts")
         comp_our_only = _cdict("competitor_our_only_counts")
+        comp_wn = _cdict("competitor_weight_normalized_counts")
 
         items.append(BlendedPIRow(
             group_key=str(row.get("group_key", row.get("sub_category_name")) or ""),
@@ -204,6 +205,9 @@ def get_blended_pi(
             competitor_matched_fresh_counts={k: int(v or 0) for k, v in comp_fresh.items()},
             competitor_no_match_counts={k: int(v or 0) for k, v in comp_nomatch.items()},
             competitor_our_only_counts={k: int(v or 0) for k, v in comp_our_only.items()},
+            weight_normalized_count=int(row.get("weight_normalized_count", 0) or 0),
+            weight_mismatch_count=int(row.get("weight_mismatch_count", 0) or 0),
+            competitor_weight_normalized_counts={k: int(v or 0) for k, v in comp_wn.items()},
         ))
     return BlendedPITable(items=items, competitors=sorted(all_competitors))
 
