@@ -733,10 +733,16 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         total revenue, and total/eligible/mapped/needs_action product counts.
         Product-level: unaffected by the competitor price fallback (FP-grain only).
         """
-        grp = {
+        grp_col = {
             "commercial_category": "commercial_category_name",
             "main_category": "main_category_name",
         }.get(group_by, "sub_category_name")
+        # Group on '' rather than NULL. A product with no value on this axis
+        # still forms a group, and a NULL key breaks it twice over: the
+        # USING (group_key) joins below never match NULL (so the group's counts
+        # read 0), and pandas 3 hands the NULL back as NaN, which the response
+        # model rejects — a 500 for the whole table.
+        grp = f"COALESCE({grp_col}, '')"
 
         where, params = self._build_where_clause(filters)
         base_cte = self._base_cte(where)
@@ -751,7 +757,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         # one of OUR subcategories, never onto a commercial category. In category
         # grain the CTE is present but empty so the join below stays uniform.
         comp_where, comp_params = self._comp_side_where(filters)
-        if grp == "sub_category_name":
+        if grp_col == "sub_category_name":
             comp_side_sql = f"""
         comp_side AS (
             SELECT mapped_bf_sub_category AS group_key, COUNT(*) AS comp_only_products
@@ -768,7 +774,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
 
         # The same count, split BY competitor, so the table's "They only" column
         # follows the selected competitor header instead of staying pooled.
-        if grp == "sub_category_name":
+        if grp_col == "sub_category_name":
             comp_only_join = f"""
         LEFT JOIN (
             SELECT mapped_bf_sub_category AS group_key, competitor_name,
@@ -1109,6 +1115,13 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             df["sub_category_name"] = None
         else:
             df["sub_category_name"] = df["group_key"]
+
+        # pandas 3 returns a SQL NULL in a string column as NaN (a float), not
+        # None — e.g. a subcategory whose products all lack a commercial
+        # category. Hand back real None so the API model and the workbook
+        # export both see "missing", not a float.
+        for col in ("sub_category_name", "commercial_category_name", "main_category_name"):
+            df[col] = df[col].astype(object).where(df[col].notna(), None)
 
         return df.reset_index(drop=True)
 

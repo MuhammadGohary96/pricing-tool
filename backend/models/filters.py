@@ -1,11 +1,13 @@
 from pydantic import BaseModel
 from typing import Optional
 
+from backend.models.types import NullableStr
+
 
 class FilterParams(BaseModel):
-    main_category: Optional[str] = None
-    main_category_name: Optional[str] = None
-    sub_category: Optional[str] = None
-    global_tier: Optional[str] = None
-    subcat_tier: Optional[str] = None
-    action_type: Optional[str] = None
+    main_category: NullableStr = None
+    main_category_name: NullableStr = None
+    sub_category: NullableStr = None
+    global_tier: NullableStr = None
+    subcat_tier: NullableStr = None
+    action_type: NullableStr = None
