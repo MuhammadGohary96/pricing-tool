@@ -1,5 +1,6 @@
 import math
 import os
+import shutil
 import threading
 from contextlib import asynccontextmanager
 
@@ -79,14 +80,10 @@ async def lifespan(app: FastAPI):
             "total": 0,
             "progress_callback": progress_callback,
         })
-        # Rewrite the fp-grain Parquet so DuckDB queries the refreshed data,
-        # then persist the full Parquet cache. Done BEFORE returning so the
-        # hot-swap is consistent.
-        if hasattr(svc, "refresh_parquet"):
-            try:
-                svc.refresh_parquet()
-            except Exception as exc:
-                logger.error(f"[Background] refresh_parquet failed: {exc}")
+        # The new service's DuckDB init already wrote the fp-grain Parquet and
+        # built its tables (writing again cost two more full-dataset copies);
+        # persist the rest of the cache and the sync marker. Done BEFORE
+        # returning so the hot-swap is consistent.
         try:
             save_parquet_cache(svc)
             logger.info("[Background] Parquet cache saved")
@@ -94,10 +91,17 @@ async def lifespan(app: FastAPI):
             logger.error(f"[Background] save_parquet_cache failed: {exc}")
         return svc
 
+    def _on_refresh_complete(svc):
+        # The old service became unreachable at the swap; hand its memory back
+        # to the OS so the pod returns to its steady-state budget.
+        from backend.services.duckdb_service import release_memory
+        release_memory()
+        logger.info("[Background] Refresh complete, data updated")
+
     def _start_background_refresh():
         app.state.background_loader.start_background_load(
             _background_load_func,
-            on_complete=lambda svc: logger.info("[Background] Refresh complete, data updated"),
+            on_complete=_on_refresh_complete,
             on_error=lambda err: logger.error(f"[Background] Refresh failed: {err}"),
         )
 
@@ -156,6 +160,9 @@ async def lifespan(app: FastAPI):
 
     def _load_data():
         """Load data: Parquet cache → legacy pickle → fresh BigQuery."""
+        # Spill folders left behind by a killed process would pile up on the
+        # PVC; nothing in this process has opened a DuckDB connection yet.
+        shutil.rmtree(settings.DUCKDB_TEMP_DIR, ignore_errors=True)
         try:
             fp_path = Path(settings.DUCKDB_PARQUET_PATH)
 

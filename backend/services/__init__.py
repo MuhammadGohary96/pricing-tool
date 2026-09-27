@@ -138,7 +138,10 @@ def save_parquet_cache(service) -> None:
     from backend.services import parquet_cache as pc
 
     fp_path = Path(settings.DUCKDB_PARQUET_PATH)
-    pc.write_parquet(service._df, fp_path)
+    # A DuckDB-backed service wrote the fp-grain Parquet during its own init and
+    # then dropped the pandas frame; writing it again would rebuild a full copy.
+    if getattr(service, "_df", None) is not None:
+        pc.write_parquet(service._df, fp_path)
 
     comp = getattr(service, "_competitor_df", None)
     if comp is not None and not comp.empty:
