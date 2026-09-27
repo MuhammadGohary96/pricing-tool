@@ -50,6 +50,15 @@ Do **not** run multiple workers (`gunicorn -w N`) on one machine: each worker wo
 
 First boot with no Parquet cache pulls from BigQuery (a few minutes); subsequent boots rehydrate from the cache in seconds.
 
+### Memory budget (fixed by the cluster admin)
+
+The pod gets **request 3Gi, limit 12Gi**, and those numbers will not grow. The app is designed to fit them:
+
+- **Steady state ≤ 3 GiB.** Above its request the pod is the first one evicted when a node runs short on memory.
+- **Refresh peak ≤ 8 GiB.** Crossing 12 GiB at any moment is an OOM kill, and a refresh killed mid-way is retried by the next boot, which turns one kill into a restart loop. The 4 GiB margin absorbs traffic and allocator fragmentation.
+
+Verify both in a Linux container capped at 7 GiB. That is stricter than production, and macOS numbers are not comparable: its memory compression hides usage from RSS.
+
 ## Data freshness
 
 The smart refresh checks the latest `modified` time across **both** source tables (pricing **and** competitor) and pulls only when **either** changed — so a competitor-only update is no longer missed. The "Synced X ago" badge reflects that combined timestamp.

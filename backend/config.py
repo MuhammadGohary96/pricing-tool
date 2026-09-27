@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     USE_DUCKDB: bool = True  # Feature flag: route filter queries through DuckDB
     DUCKDB_PARQUET_PATH: str = "cache/pricing_data/fp_grain.parquet"
     COMPETITOR_PARQUET_PATH: str = "cache/pricing_data/competitor_grain.parquet"
+    # DuckDB memory cap PER CONNECTION; beyond it DuckDB spills to disk. A refresh
+    # briefly holds two connections (old serving, new building). Uncapped, DuckDB
+    # takes 80% of the container's memory. See PRODUCTION.md "Memory budget".
+    DUCKDB_MEMORY_LIMIT: str = "1.5GB"
+    # Spill root; each connection gets its own subfolder (on the PVC in prod).
+    DUCKDB_TEMP_DIR: str = "cache/duckdb_tmp"
     # Parquet-only cache: rehydrate in-memory frames from Parquet on startup
     # instead of the legacy multi-GB pickle.
     USE_PARQUET_CACHE: bool = True

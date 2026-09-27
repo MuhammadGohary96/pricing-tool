@@ -13,19 +13,34 @@ Modal price aggregation matches pandas exactly: pick smallest value among the
 most-frequent (tie-breaker on value ascending), validated in Phase 0 spike.
 """
 
+import ctypes
+import gc
 import logging
 import threading
+import uuid
 from pathlib import Path
 from typing import Optional
 
 import duckdb
 import pandas as pd
 
+from backend.config import settings
 from backend.services.bigquery_service import BigQueryPricingDataService
 from backend.services.parquet_cache import exists as parquet_exists, is_fresh, write_parquet
 from backend.utils.calculations import pi_direction
 
 logger = logging.getLogger(__name__)
+
+
+def release_memory() -> None:
+    """Collect garbage and hand freed heap back to the OS. glibc keeps freed
+    arenas mapped, so without malloc_trim a dropped DataFrame still counts
+    against the pod's memory limit. No-op off glibc (macOS dev)."""
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except OSError:
+        pass
 
 
 class DuckDBPricingDataService(BigQueryPricingDataService):
@@ -64,7 +79,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
             logger.info("[DuckDB] Writing fp-grain Parquet from in-memory _df")
             write_parquet(self._df, self._parquet_path)
 
-        self._duckdb_conn = duckdb.connect(":memory:", read_only=False)
+        self._duckdb_conn = duckdb.connect(":memory:", read_only=False, config=self._duckdb_config())
         self._duckdb_conn.execute("PRAGMA threads=4")
         self._create_fp_grain_view()
         self._assert_gap_schema()
@@ -108,6 +123,27 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         logger.info(
             f"[DuckDB] Ready — {row_count:,} rows, total pre-warm {time.time() - t0:.1f}s"
         )
+
+        # Serving reads DuckDB only: a boot from the Parquet cache runs with no
+        # pandas frames at all. After a BigQuery load they are dead weight — the
+        # whole dataset held in RAM a second time — so drop them now that the
+        # Parquet and the DuckDB tables are built.
+        self._df = None
+        self._global_df = None
+        release_memory()
+
+    def _duckdb_config(self) -> dict:
+        """Memory cap plus a spill folder of this connection's own. A refresh
+        builds the new service while the old one still serves, and DuckDB
+        deletes its temp folder when a connection closes: with the shared
+        default `.tmp`, closing the old connection pulled the folder out from
+        under the new one mid-query."""
+        root = Path(settings.DUCKDB_TEMP_DIR)
+        root.mkdir(parents=True, exist_ok=True)
+        return {
+            "memory_limit": settings.DUCKDB_MEMORY_LIMIT,
+            "temp_directory": str(root / uuid.uuid4().hex),
+        }
 
     # Weight-normalization columns (docs/FP_granularity_pricing.sql STEP 11b).
     # A Parquet written before the model carried them — the PVC cache survives
@@ -192,18 +228,6 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         )
         (n,) = self._duckdb_conn.execute("SELECT COUNT(*) FROM global_base").fetchone()
         logger.info(f"[DuckDB] Materialized global_base: {n:,} rows in {time.time() - t0:.1f}s")
-
-    def refresh_parquet(self) -> None:
-        """Re-export `_df` to Parquet and reload the DuckDB view (called after BG refresh)."""
-        with self._duckdb_lock:
-            write_parquet(self._df, self._parquet_path)
-            self._create_fp_grain_view()
-            self._assert_gap_schema()
-            self._materialize_global_base()
-            self._materialize_comp_catalogue()
-            logger.info(
-                "[DuckDB] Refreshed Parquet + reopened view + rebuilt global_base + comp_catalogue"
-            )
 
     # ------------------------------------------------------------------
     # OVERRIDDEN — _apply_filters: the single aggregation path for EVERY
@@ -804,13 +828,15 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         # model rejects — a 500 for the whole table.
         grp = f"COALESCE({grp_col}, '')"
 
-        where, params = self._build_where_clause(filters)
-        base_cte = self._base_cte(where)
-
-        # Materialize `base` into a temp table once per request so both
-        # downstream aggregations share the (expensive) modal-price + JOIN work.
+        # Materialize the collapsed base into a temp table once per request so
+        # both downstream aggregations share it. `_collapsed_source` is the
+        # app-wide rule: product-level filters read the pre-built global_base
+        # (so the unfiltered default no longer recomputes 3M rows per request);
+        # only filters that change the collapse itself recompute _BASE_CTE.
         # Lock serializes against concurrent requests on the single connection.
-        materialize_sql = base_cte + " SELECT * FROM base"
+        source, params, materialize = self._collapsed_source(filters)
+        materialize_sql = materialize or (
+            "CREATE OR REPLACE TEMPORARY TABLE base_tmp AS SELECT * FROM " + source)
 
         # Competitor-only products, bridged into our taxonomy. Only meaningful at
         # subcategory grain: the BigQuery bridge maps a competitor category onto
@@ -1050,10 +1076,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         """.replace("__GRP__", grp).replace("__COMP_ONLY_JOIN__", comp_only_join)
 
         with self._duckdb_lock:
-            self._duckdb_conn.execute(
-                "CREATE OR REPLACE TEMPORARY TABLE base_tmp AS " + materialize_sql,
-                params,
-            )
+            self._duckdb_conn.execute(materialize_sql, params)
             df = self._duckdb_conn.execute(sql_subcat, comp_params).df()
             comp_df = self._duckdb_conn.execute(sql_comp, comp_only_params).df()
 
@@ -1295,9 +1318,10 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         temp table; ~100× faster than the pandas implementation on single-FP
         filters. Product-level: unaffected by the competitor price fallback.
         """
-        where, params = self._build_where_clause(filters)
-        base_cte = self._base_cte(where)
-        materialize_sql = base_cte + " SELECT * FROM base"
+        # Same collapse rule as the blended PI table (see _collapsed_source).
+        source, params, materialize = self._collapsed_source(filters)
+        materialize_sql = materialize or (
+            "CREATE OR REPLACE TEMPORARY TABLE base_tmp AS SELECT * FROM " + source)
 
         # KPIs: total / eligible / mapped / needs_action breakdown + blended PI.
         # Computes a "worst action" per product (across competitors) using a
@@ -1482,10 +1506,7 @@ class DuckDBPricingDataService(BigQueryPricingDataService):
         """
 
         with self._duckdb_lock:
-            self._duckdb_conn.execute(
-                "CREATE OR REPLACE TEMPORARY TABLE base_tmp AS " + materialize_sql,
-                params,
-            )
+            self._duckdb_conn.execute(materialize_sql, params)
             kpi_row = self._duckdb_conn.execute(sql_kpis).fetchone()
             comp_df = self._duckdb_conn.execute(sql_comp_pi).df()
             map_df = self._duckdb_conn.execute(sql_mapping_progress).df()
